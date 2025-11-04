@@ -2,15 +2,21 @@ name: Dioxus CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
+# Needed for GitHub Pages deployments
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -66,14 +72,11 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
         run: cargo audit
+
   wasm-build:
     name: Dioxus WASM Build
     runs-on: ubuntu-latest
-    needs:
-      - test
-      - fmt
-      - clippy
-      - cargo-audit
+    needs: [ test, fmt, clippy, cargo-audit ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -88,29 +91,22 @@ jobs:
         run: ./download-models.sh
       - name: Build Dioxus web assets
         run: dx build --release --web
-      - name: Upload Dioxus bundle
-        uses: actions/upload-artifact@v4
+      # Upload the built static site as a Pages artifact
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: dioxus-web-dist
+          # Dioxus web output location (0.5/0.6 default)
           path: target/dx/coppermind/release/web/public
-          if-no-files-found: error
 
-  deploy-pages:
+  deploy:
     name: Deploy to GitHub Pages
-    runs-on: ubuntu-latest
     needs: wasm-build
-    permissions:
-      contents: write
+    runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download Dioxus bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: dioxus-web-dist
-          path: dist-for-deploy
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4.5.0
-        with:
-          branch: gh-pages
-          folder: dist-for-deploy
-          clean: true
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
