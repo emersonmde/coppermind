@@ -113,19 +113,6 @@ fn TestControls() -> Element {
                 }
             }
 
-            div { class: "test-section",
-                h2 { "GPU Embedding Test (Coming Soon)" }
-                p { class: "description", "WebGPU-accelerated embeddings via ONNX/wonnx" }
-                p { class: "description", style: "font-size: 0.9em; opacity: 0.8;",
-                    "Will use wonnx + ONNX models for true GPU acceleration in browser"
-                }
-
-                button {
-                    class: "btn-primary",
-                    disabled: true,
-                    "Test GPU Embeddings (Not Implemented)"
-                }
-            }
         }
     }
 }
