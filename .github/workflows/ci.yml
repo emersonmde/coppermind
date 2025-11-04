@@ -102,6 +102,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install dioxus-cli
         run: cargo install dioxus-cli --locked
+      - name: Download JinaBert model assets
+        run: ./download-models.sh
       - name: Build Dioxus web assets
         run: dx build --release --platform web
       - name: Upload Dioxus bundle
