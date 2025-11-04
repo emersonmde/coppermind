@@ -1,18 +1,18 @@
-use dioxus::prelude::*;
 use crate::cpu::spawn_worker;
+use crate::embedding::{embed_text_chunks, run_embedding, ChunkEmbeddingResult};
 use crate::wgpu::test_webgpu;
-use crate::embedding::{run_embedding, embed_text_chunks, ChunkEmbeddingResult};
+use dioxus::prelude::*;
 
 #[component]
 pub fn TestControls() -> Element {
     let mut cpu_running = use_signal(|| false);
     let mut cpu_results = use_signal(Vec::<String>::new);
-    let gpu_result = use_signal(|| String::new());
-    let embedding_result = use_signal(|| String::new());
+    let gpu_result = use_signal(String::new);
+    let embedding_result = use_signal(String::new);
     let file_processing = use_signal(|| false);
-    let mut file_status = use_signal(|| String::new());
+    let mut file_status = use_signal(String::new);
     let mut file_chunks = use_signal(Vec::<ChunkEmbeddingResult>::new);
-    let mut file_name = use_signal(|| String::new());
+    let mut file_name = use_signal(String::new);
 
     rsx! {
         div { class: "test-controls",
@@ -31,8 +31,8 @@ pub fn TestControls() -> Element {
                             let num_workers = 16;
                             for i in 0..num_workers {
                                 spawn({
-                                    let mut results = cpu_results.clone();
-                                    let mut running = cpu_running.clone();
+                                    let mut results = cpu_results;
+                                    let mut running = cpu_running;
                                     async move {
                                         match spawn_worker(i, "test", 10000).await {
                                             Ok(result) => {
@@ -84,7 +84,7 @@ pub fn TestControls() -> Element {
                 button {
                     class: "btn-primary",
                     onclick: move |_| {
-                        let mut result = gpu_result.clone();
+                        let mut result = gpu_result;
                         spawn(async move {
                             match test_webgpu().await {
                                 Ok(msg) => result.set(msg),
@@ -109,7 +109,7 @@ pub fn TestControls() -> Element {
                 button {
                     class: "btn-primary",
                     onclick: move |_| {
-                        let mut result = embedding_result.clone();
+                        let mut result = embedding_result;
                         spawn(async move {
                             let test_text = "This is a test sentence for text embedding.";
                             match run_embedding(test_text).await {
@@ -148,10 +148,10 @@ pub fn TestControls() -> Element {
                                 file_name.set(first_name.clone());
                                 let file_label = first_name.clone();
                                 let engine = engine.clone();
-                                let mut status = file_status.clone();
-                                let mut chunks = file_chunks.clone();
-                                let mut processing = file_processing.clone();
-                                let mut selected_name = file_name.clone();
+                                let mut status = file_status;
+                                let mut chunks = file_chunks;
+                                let mut processing = file_processing;
+                                let mut selected_name = file_name;
                                 spawn(async move {
                                     processing.set(true);
                                     chunks.set(Vec::new());

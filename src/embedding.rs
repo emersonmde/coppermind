@@ -1,15 +1,15 @@
-use wasm_bindgen::prelude::*;
-use candle_core::{Device, Tensor, DType, Module};
-use candle_nn::{VarBuilder, Activation};
+use candle_core::{DType, Device, Module, Tensor};
+use candle_nn::{Activation, VarBuilder};
 use candle_transformers::models::jina_bert::{BertModel, Config, PositionEmbeddingType};
 use dioxus::prelude::*;
 use once_cell::sync::OnceCell;
 use std::cell::RefCell;
 use std::rc::Rc;
-use tokenizers::tokenizer::{Tokenizer, TruncationParams, TruncationDirection, TruncationStrategy};
+use tokenizers::tokenizer::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
+use wasm_bindgen::prelude::*;
 
-const MODEL_FILE: Asset = asset!("/assets/models/model.safetensors");
-const TOKENIZER_FILE: Asset = asset!("/assets/models/tokenizer.json");
+const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
+const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
 
 /// Configuration for the JinaBert embedding model
 #[derive(Clone)]
@@ -60,19 +60,30 @@ impl EmbeddingModel {
         vocab_size: usize,
         config: JinaBertConfig,
     ) -> Result<Self, String> {
-        web_sys::console::log_1(&format!("📊 Model bytes length: {} bytes ({:.2}MB)",
-            model_bytes.len(),
-            model_bytes.len() as f64 / 1_000_000.0).into());
+        web_sys::console::log_1(
+            &format!("📦 Loading embedding model '{}'", config.model_id.as_str()).into(),
+        );
+        web_sys::console::log_1(
+            &format!(
+                "📊 Model bytes length: {} bytes ({:.2}MB)",
+                model_bytes.len(),
+                model_bytes.len() as f64 / 1_000_000.0
+            )
+            .into(),
+        );
 
         // Use CPU device for WASM
         let device = Device::Cpu;
         web_sys::console::log_1(&"✓ Created CPU device".into());
 
         // Create model config for JinaBert
-        web_sys::console::log_1(&format!("⚙️  Config: {}d hidden, {} layers, {} heads",
-            config.hidden_size,
-            config.num_hidden_layers,
-            config.num_attention_heads).into());
+        web_sys::console::log_1(
+            &format!(
+                "⚙️  Config: {}d hidden, {} layers, {} heads",
+                config.hidden_size, config.num_hidden_layers, config.num_attention_heads
+            )
+            .into(),
+        );
 
         let model_config = Config::new(
             vocab_size,
@@ -88,40 +99,53 @@ impl EmbeddingModel {
             0,     // pad_token_id
             PositionEmbeddingType::Alibi,
         );
-        web_sys::console::log_1(&format!("✓ Created model config (max positions: {})", config.max_position_embeddings).into());
+        web_sys::console::log_1(
+            &format!(
+                "✓ Created model config (max positions: {})",
+                config.max_position_embeddings
+            )
+            .into(),
+        );
 
         // Check safetensors header
         if model_bytes.len() < 8 {
             return Err("Model file too small".to_string());
         }
         let header_size = u64::from_le_bytes([
-            model_bytes[0], model_bytes[1], model_bytes[2], model_bytes[3],
-            model_bytes[4], model_bytes[5], model_bytes[6], model_bytes[7],
+            model_bytes[0],
+            model_bytes[1],
+            model_bytes[2],
+            model_bytes[3],
+            model_bytes[4],
+            model_bytes[5],
+            model_bytes[6],
+            model_bytes[7],
         ]);
-        web_sys::console::log_1(&format!("📋 Safetensors header size: {} bytes", header_size).into());
+        web_sys::console::log_1(
+            &format!("📋 Safetensors header size: {} bytes", header_size).into(),
+        );
 
         // Load model weights from bytes
         // Use F32 for WASM (converts F16 weights on load, following candle-wasm-examples pattern)
         // Pass ownership directly to avoid cloning 62MB in WASM
-        web_sys::console::log_1(&"🔄 Loading VarBuilder from safetensors (converting to F32)...".into());
-        let vb = VarBuilder::from_buffered_safetensors(
-            model_bytes,
-            DType::F32,
-            &device,
-        ).map_err(|e| {
-            let err_msg = format!("Failed to create VarBuilder: {}", e);
-            web_sys::console::error_1(&err_msg.clone().into());
-            err_msg
-        })?;
+        web_sys::console::log_1(
+            &"🔄 Loading VarBuilder from safetensors (converting to F32)...".into(),
+        );
+        let vb = VarBuilder::from_buffered_safetensors(model_bytes, DType::F32, &device).map_err(
+            |e| {
+                let err_msg = format!("Failed to create VarBuilder: {}", e);
+                web_sys::console::error_1(&err_msg.clone().into());
+                err_msg
+            },
+        )?;
         web_sys::console::log_1(&"✓ VarBuilder created successfully".into());
 
         web_sys::console::log_1(&"🔄 Creating BertModel...".into());
-        let model = BertModel::new(vb, &model_config)
-            .map_err(|e| {
-                let err_msg = format!("Failed to create BertModel: {}", e);
-                web_sys::console::error_1(&err_msg.clone().into());
-                err_msg
-            })?;
+        let model = BertModel::new(vb, &model_config).map_err(|e| {
+            let err_msg = format!("Failed to create BertModel: {}", e);
+            web_sys::console::error_1(&err_msg.clone().into());
+            err_msg
+        })?;
         web_sys::console::log_1(&"✓ BertModel created successfully".into());
 
         Ok(Self {
@@ -145,28 +169,32 @@ impl EmbeddingModel {
             .map_err(|e| format!("Failed to unsqueeze: {}", e))?;
 
         // Forward pass
-        let embeddings = self.model.forward(&token_ids)
+        let embeddings = self
+            .model
+            .forward(&token_ids)
             .map_err(|e| format!("Forward pass failed: {}", e))?;
 
         // Apply mean pooling across tokens
-        let (_n_sentence, n_tokens, _hidden_size) = embeddings.dims3()
+        let (_n_sentence, n_tokens, _hidden_size) = embeddings
+            .dims3()
             .map_err(|e| format!("Failed to get dims: {}", e))?;
 
-        let embeddings = embeddings.sum(1)
+        let embeddings = embeddings
+            .sum(1)
             .map_err(|e| format!("Failed to sum: {}", e))?
             .affine(1.0 / n_tokens as f64, 0.0)
             .map_err(|e| format!("Failed to affine: {}", e))?;
 
         // Apply L2 normalization if enabled
         let embeddings = if self.config.normalize_embeddings {
-            normalize_l2(&embeddings)
-                .map_err(|e| format!("Failed to normalize: {}", e))?
+            normalize_l2(&embeddings).map_err(|e| format!("Failed to normalize: {}", e))?
         } else {
             embeddings
         };
 
         // Convert to Vec<f32>
-        let embeddings_vec = embeddings.squeeze(0)
+        let embeddings_vec = embeddings
+            .squeeze(0)
             .map_err(|e| format!("Failed to squeeze: {}", e))?
             .to_vec1::<f32>()
             .map_err(|e| format!("Failed to convert to vec: {}", e))?;
@@ -176,13 +204,21 @@ impl EmbeddingModel {
 
     /// Generate embeddings for a batch of token sequences
     /// batch_token_ids should be a vector of token ID vectors
-    pub fn embed_batch_tokens(&self, batch_token_ids: Vec<Vec<u32>>) -> Result<Vec<Vec<f32>>, String> {
+    #[allow(dead_code)]
+    pub fn embed_batch_tokens(
+        &self,
+        batch_token_ids: Vec<Vec<u32>>,
+    ) -> Result<Vec<Vec<f32>>, String> {
         if batch_token_ids.is_empty() {
             return Ok(vec![]);
         }
 
         // Find max length for padding
-        let max_len = batch_token_ids.iter().map(|ids| ids.len()).max().unwrap_or(0);
+        let max_len = batch_token_ids
+            .iter()
+            .map(|ids| ids.len())
+            .max()
+            .unwrap_or(0);
 
         // Pad all sequences to max length
         let padded: Vec<Vec<u32>> = batch_token_ids
@@ -202,22 +238,25 @@ impl EmbeddingModel {
             .map_err(|e| format!("Failed to create batch tensor: {}", e))?;
 
         // Forward pass
-        let embeddings = self.model.forward(&token_ids)
+        let embeddings = self
+            .model
+            .forward(&token_ids)
             .map_err(|e| format!("Forward pass failed: {}", e))?;
 
         // Apply mean pooling across tokens
-        let (_n_sentence, n_tokens, _hidden_size) = embeddings.dims3()
+        let (_n_sentence, n_tokens, _hidden_size) = embeddings
+            .dims3()
             .map_err(|e| format!("Failed to get dims: {}", e))?;
 
-        let embeddings = embeddings.sum(1)
+        let embeddings = embeddings
+            .sum(1)
             .map_err(|e| format!("Failed to sum: {}", e))?
             .affine(1.0 / n_tokens as f64, 0.0)
             .map_err(|e| format!("Failed to affine: {}", e))?;
 
         // Apply L2 normalization if enabled
         let embeddings = if self.config.normalize_embeddings {
-            normalize_l2(&embeddings)
-                .map_err(|e| format!("Failed to normalize: {}", e))?
+            normalize_l2(&embeddings).map_err(|e| format!("Failed to normalize: {}", e))?
         } else {
             embeddings
         };
@@ -225,7 +264,8 @@ impl EmbeddingModel {
         // Convert to Vec<Vec<f32>>
         let mut result = Vec::new();
         for i in 0..batch_size {
-            let embedding = embeddings.get(i)
+            let embedding = embeddings
+                .get(i)
                 .map_err(|e| format!("Failed to get embedding {}: {}", i, e))?
                 .to_vec1::<f32>()
                 .map_err(|e| format!("Failed to convert embedding to vec: {}", e))?;
@@ -306,7 +346,8 @@ impl WasmEmbeddingModel {
     /// Returns a Float32Array containing the embedding
     #[wasm_bindgen(js_name = embedTokens)]
     pub fn embed_tokens(&self, token_ids: Vec<u32>) -> Result<Vec<f32>, JsValue> {
-        self.model.embed_tokens(token_ids)
+        self.model
+            .embed_tokens(token_ids)
             .map_err(|e| JsValue::from_str(&e))
     }
 
@@ -351,7 +392,7 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
 
     let array_buffer = JsFuture::from(
         resp.array_buffer()
-            .map_err(|e| format!("Failed to get array buffer: {:?}", e))?
+            .map_err(|e| format!("Failed to get array buffer: {:?}", e))?,
     )
     .await
     .map_err(|e| {
@@ -365,16 +406,21 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     let bytes = uint8_array.to_vec();
 
-    web_sys::console::log_1(&format!("✓ Model downloaded: {:.2}MB ({} bytes)",
-        bytes.len() as f64 / 1_000_000.0,
-        bytes.len()).into());
+    web_sys::console::log_1(
+        &format!(
+            "✓ Model downloaded: {:.2}MB ({} bytes)",
+            bytes.len() as f64 / 1_000_000.0,
+            bytes.len()
+        )
+        .into(),
+    );
 
     Ok(bytes)
 }
 
 static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
 thread_local! {
-    static MODEL_CACHE: RefCell<Option<Rc<EmbeddingModel>>> = RefCell::new(None);
+    static MODEL_CACHE: RefCell<Option<Rc<EmbeddingModel>>> = const { RefCell::new(None) };
 }
 
 /// Download and initialize the tokenizer once per session
@@ -423,7 +469,7 @@ fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, String> 
         return Err("Tokenizer returned no tokens".to_string());
     }
 
-    Ok(ids.iter().map(|&id| id as u32).collect())
+    Ok(ids.to_vec())
 }
 
 #[derive(Clone)]
@@ -466,7 +512,7 @@ fn tokenize_into_chunks(
     let encoding = chunk_tokenizer
         .encode(text, false)
         .map_err(|e| format!("Tokenization failed: {}", e))?;
-    let raw_ids: Vec<u32> = encoding.get_ids().iter().map(|&id| id as u32).collect();
+    let raw_ids: Vec<u32> = encoding.get_ids().to_vec();
 
     if raw_ids.is_empty() {
         return Ok(vec![]);
@@ -474,10 +520,10 @@ fn tokenize_into_chunks(
 
     let cls_id = tokenizer
         .token_to_id("[CLS]")
-        .ok_or_else(|| "Tokenizer missing [CLS] token".to_string())? as u32;
+        .ok_or_else(|| "Tokenizer missing [CLS] token".to_string())?;
     let sep_id = tokenizer
         .token_to_id("[SEP]")
-        .ok_or_else(|| "Tokenizer missing [SEP] token".to_string())? as u32;
+        .ok_or_else(|| "Tokenizer missing [SEP] token".to_string())?;
 
     let body_len = max_tokens - 2;
     let mut chunks = Vec::new();
@@ -493,7 +539,10 @@ fn tokenize_into_chunks(
     Ok(chunks)
 }
 
-pub async fn embed_text_chunks(text: &str, chunk_tokens: usize) -> Result<Vec<ChunkEmbeddingResult>, String> {
+pub async fn embed_text_chunks(
+    text: &str,
+    chunk_tokens: usize,
+) -> Result<Vec<ChunkEmbeddingResult>, String> {
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
     let tokenizer = ensure_tokenizer(max_positions).await?;
@@ -505,32 +554,25 @@ pub async fn embed_text_chunks(text: &str, chunk_tokens: usize) -> Result<Vec<Ch
         return Ok(vec![]);
     }
 
-    web_sys::console::log_1(&format!(
-        "🧩 Embedding {} chunks ({} tokens max per chunk)",
-        token_chunks.len(),
-        effective_chunk
-    ).into());
+    web_sys::console::log_1(
+        &format!(
+            "🧩 Embedding {} chunks ({} tokens max per chunk)",
+            token_chunks.len(),
+            effective_chunk
+        )
+        .into(),
+    );
 
     let mut results = Vec::with_capacity(token_chunks.len());
     for (index, ids) in token_chunks.into_iter().enumerate() {
         let tokens = ids.len();
         web_sys::console::log_1(
-            &format!(
-                "🚀 Embedding chunk {} ({} tokens)",
-                index, tokens
-            )
-            .into(),
+            &format!("🚀 Embedding chunk {} ({} tokens)", index, tokens).into(),
         );
         let embedding = model
             .embed_tokens(ids)
             .map_err(|e| format!("Embedding chunk {} failed: {}", index, e))?;
-        web_sys::console::log_1(
-            &format!(
-                "✅ Chunk {} complete ({} tokens)",
-                index, tokens
-            )
-            .into(),
-        );
+        web_sys::console::log_1(&format!("✅ Chunk {} complete ({} tokens)", index, tokens).into());
         results.push(ChunkEmbeddingResult {
             chunk_index: index,
             token_count: tokens,
@@ -557,7 +599,9 @@ pub async fn run_embedding(text: &str) -> Result<String, String> {
         .embed_tokens(token_ids)
         .map_err(|e| format!("Embedding failed: {}", e))?;
 
-    web_sys::console::log_1(&format!("✓ Generated {}-dimensional embedding", embedding.len()).into());
+    web_sys::console::log_1(
+        &format!("✓ Generated {}-dimensional embedding", embedding.len()).into(),
+    );
 
     Ok(format!(
         "✓ Embedding Generated Successfully!\n\n\
@@ -571,9 +615,16 @@ pub async fn run_embedding(text: &str) -> Result<String, String> {
         text,
         token_count,
         embedding.len(),
-        embedding[0], embedding[1], embedding[2], embedding[3],
-        embedding[4], embedding[5], embedding[6], embedding[7],
-        embedding[8], embedding[9]
+        embedding[0],
+        embedding[1],
+        embedding[2],
+        embedding[3],
+        embedding[4],
+        embedding[5],
+        embedding[6],
+        embedding[7],
+        embedding[8],
+        embedding[9]
     ))
 }
 

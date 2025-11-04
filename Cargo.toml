@@ -45,9 +45,4 @@ inherits = "dev"
 [profile.android-dev]
 inherits = "dev"
 
-# Set WASM memory limits for ML model loading
-[target.wasm32-unknown-unknown]
-rustflags = [
-  "-C", "link-arg=--initial-memory=134217728",  # 128MB initial memory
-  "-C", "link-arg=--max-memory=536870912",      # 512MB max memory
-]
+# See `.cargo/config.toml` for WASM-specific rustflags and memory limits.

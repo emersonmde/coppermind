@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# Dioxus project pre-commit hook to mirror CI checks.
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "→ Running cargo fmt -- --check"
+cargo fmt -- --check
+
+echo "→ Running cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+
+echo "→ Running cargo test --verbose"
+cargo test --verbose
+
+echo "→ Running cargo doc --no-deps"
+cargo doc --no-deps
+
+if ! command -v cargo-audit >/dev/null 2>&1; then
+  cat <<'EOF' >&2
+🚫 Missing required tooling: cargo-audit.
+Install it once with:
+  cargo install cargo-audit --locked
+EOF
+  exit 1
+fi
+
+echo "→ Running cargo audit"
+cargo audit
+
+if ! command -v dx >/dev/null 2>&1; then
+  cat <<'EOF' >&2
+🚫 Missing required tooling: dioxus-cli (dx).
+Install it once with:
+  cargo install dioxus-cli --locked
+EOF
+  exit 1
+fi
+
+echo "→ Running dx build --release --platform web"
+dx build --release --platform web
+
+echo "✓ All pre-commit checks passed"

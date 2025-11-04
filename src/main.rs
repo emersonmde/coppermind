@@ -1,10 +1,10 @@
 mod components;
 mod cpu;
-mod wgpu;
 mod embedding;
+mod wgpu;
 
-use dioxus::prelude::*;
 use components::TestControls;
+use dioxus::prelude::*;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -24,4 +24,3 @@ fn App() -> Element {
         }
     }
 }
-

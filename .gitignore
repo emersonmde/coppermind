@@ -13,3 +13,4 @@ dist/
 assets/models/*.safetensors
 assets/models/*.bin
 assets/models/*.onnx
+assets/models/*-tokenizer.json

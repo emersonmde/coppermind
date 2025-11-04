@@ -1,9 +1,13 @@
+use js_sys::{Array, Object, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Worker, MessageEvent, Blob, Url};
-use js_sys::{Object, Reflect, Array};
+use web_sys::{Blob, MessageEvent, Url, Worker};
 
-pub async fn spawn_worker(worker_id: usize, text: &str, iterations: usize) -> Result<String, String> {
+pub async fn spawn_worker(
+    worker_id: usize,
+    text: &str,
+    iterations: usize,
+) -> Result<String, String> {
     let worker_code = r#"
         self.onmessage = function(e) {
             const { workerId, iterations } = e.data;
@@ -24,8 +28,7 @@ pub async fn spawn_worker(worker_id: usize, text: &str, iterations: usize) -> Re
         .map_err(|e| format!("Failed to create blob: {:?}", e))?;
     let url = Url::create_object_url_with_blob(&blob)
         .map_err(|e| format!("Failed to create URL: {:?}", e))?;
-    let worker = Worker::new(&url)
-        .map_err(|e| format!("Failed to create worker: {:?}", e))?;
+    let worker = Worker::new(&url).map_err(|e| format!("Failed to create worker: {:?}", e))?;
 
     let (sender, receiver) = futures_channel::oneshot::channel();
     let sender = std::rc::Rc::new(std::cell::RefCell::new(Some(sender)));
@@ -33,7 +36,7 @@ pub async fn spawn_worker(worker_id: usize, text: &str, iterations: usize) -> Re
     let worker_id_clone = worker_id;
     let onmessage = Closure::wrap(Box::new(move |event: MessageEvent| {
         if let Ok(data) = event.data().dyn_into::<Object>() {
-            if let Ok(_) = Reflect::get(&data, &"workerId".into()) {
+            if Reflect::get(&data, &"workerId".into()).is_ok() {
                 if let Some(sender) = sender.borrow_mut().take() {
                     let _ = sender.send(format!("Worker {} completed", worker_id_clone));
                 }
@@ -49,7 +52,11 @@ pub async fn spawn_worker(worker_id: usize, text: &str, iterations: usize) -> Re
     Reflect::set(&msg, &"text".into(), &JsValue::from(text)).unwrap();
     Reflect::set(&msg, &"iterations".into(), &JsValue::from(iterations)).unwrap();
 
-    worker.post_message(&msg).map_err(|e| format!("Failed to post message: {:?}", e))?;
+    worker
+        .post_message(&msg)
+        .map_err(|e| format!("Failed to post message: {:?}", e))?;
 
-    receiver.await.map_err(|e| format!("Worker timeout: {:?}", e))
+    receiver
+        .await
+        .map_err(|e| format!("Worker timeout: {:?}", e))
 }
