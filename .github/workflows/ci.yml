@@ -21,7 +21,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Download JinaBert model assets
+      - name: Download model assets
         run: ./download-models.sh
       - name: Run tests
         run: cargo test --verbose
@@ -48,7 +48,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Download JinaBert model assets
+      - name: Download model assets
         run: ./download-models.sh
       - name: Lint with Clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Download JinaBert model assets
+      - name: Download model assets
         run: ./download-models.sh
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -85,7 +85,7 @@ jobs:
         with:
           tool: dioxus-cli
       - name: Build Dioxus web assets
-        run: dx build --release --platform web
+        run: dx build --release --web
       - name: Upload Dioxus bundle
         uses: actions/upload-artifact@v4
         with:
