@@ -1,6 +1,7 @@
 [application]
 
 [web.app]
+base_path = "/coppermind"
 
 # HTML title tag content
 title = "Coppermind"
