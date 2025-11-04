@@ -84,6 +84,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: dioxus-cli
+      - name: Download model assets
+        run: ./download-models.sh
       - name: Build Dioxus web assets
         run: dx build --release --web
       - name: Upload Dioxus bundle
