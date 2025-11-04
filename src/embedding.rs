@@ -4,9 +4,15 @@ use candle_nn::{VarBuilder, Activation};
 use candle_transformers::models::jina_bert::{BertModel, Config, PositionEmbeddingType};
 use dioxus::prelude::*;
 use once_cell::sync::OnceCell;
+use std::cell::RefCell;
+use std::rc::Rc;
 use tokenizers::tokenizer::{Tokenizer, TruncationParams, TruncationDirection, TruncationStrategy};
 
+const MODEL_FILE: Asset = asset!("/assets/models/model.safetensors");
+const TOKENIZER_FILE: Asset = asset!("/assets/models/tokenizer.json");
+
 /// Configuration for the JinaBert embedding model
+#[derive(Clone)]
 pub struct JinaBertConfig {
     pub model_id: String,
     pub normalize_embeddings: bool,
@@ -123,6 +129,10 @@ impl EmbeddingModel {
             config,
             device,
         })
+    }
+
+    pub fn max_position_embeddings(&self) -> usize {
+        self.config.max_position_embeddings
     }
 
     /// Generate embedding from token IDs
@@ -363,6 +373,9 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
 }
 
 static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
+thread_local! {
+    static MODEL_CACHE: RefCell<Option<Rc<EmbeddingModel>>> = RefCell::new(None);
+}
 
 /// Download and initialize the tokenizer once per session
 async fn ensure_tokenizer(max_positions: usize) -> Result<&'static Tokenizer, String> {
@@ -370,7 +383,6 @@ async fn ensure_tokenizer(max_positions: usize) -> Result<&'static Tokenizer, St
         return Ok(tokenizer);
     }
 
-    const TOKENIZER_FILE: Asset = asset!("/assets/models/tokenizer.json");
     let tokenizer_url = TOKENIZER_FILE.to_string();
     web_sys::console::log_1(&format!("📚 Tokenizer URL: {}", tokenizer_url).into());
     let tokenizer_bytes = fetch_asset_bytes(&tokenizer_url).await?;
@@ -414,35 +426,136 @@ fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, String> 
     Ok(ids.iter().map(|&id| id as u32).collect())
 }
 
+#[derive(Clone)]
+pub struct ChunkEmbeddingResult {
+    pub chunk_index: usize,
+    pub token_count: usize,
+    pub embedding: Vec<f32>,
+}
+
+async fn get_or_load_model() -> Result<Rc<EmbeddingModel>, String> {
+    if let Some(existing) = MODEL_CACHE.with(|cell| cell.borrow().clone()) {
+        return Ok(existing);
+    }
+
+    let model_url = MODEL_FILE.to_string();
+    web_sys::console::log_1(&"📦 Loading embedding model (cold start)...".into());
+    let model_bytes = fetch_asset_bytes(&model_url).await?;
+    let config = JinaBertConfig::default();
+    let model = EmbeddingModel::from_bytes(model_bytes, 30528, config)?;
+    let model = Rc::new(model);
+    MODEL_CACHE.with(|cell| {
+        cell.borrow_mut().replace(model.clone());
+    });
+    Ok(model)
+}
+
+fn tokenize_into_chunks(
+    tokenizer: &Tokenizer,
+    text: &str,
+    max_tokens: usize,
+) -> Result<Vec<Vec<u32>>, String> {
+    if max_tokens < 2 {
+        return Err("chunk size must be at least 2 tokens to account for special tokens".into());
+    }
+
+    let mut chunk_tokenizer = tokenizer.clone();
+    chunk_tokenizer
+        .with_truncation(None)
+        .map_err(|e| format!("Failed to disable truncation: {}", e))?;
+    let encoding = chunk_tokenizer
+        .encode(text, false)
+        .map_err(|e| format!("Tokenization failed: {}", e))?;
+    let raw_ids: Vec<u32> = encoding.get_ids().iter().map(|&id| id as u32).collect();
+
+    if raw_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let cls_id = tokenizer
+        .token_to_id("[CLS]")
+        .ok_or_else(|| "Tokenizer missing [CLS] token".to_string())? as u32;
+    let sep_id = tokenizer
+        .token_to_id("[SEP]")
+        .ok_or_else(|| "Tokenizer missing [SEP] token".to_string())? as u32;
+
+    let body_len = max_tokens - 2;
+    let mut chunks = Vec::new();
+
+    for body in raw_ids.chunks(body_len) {
+        let mut ids = Vec::with_capacity(body.len() + 2);
+        ids.push(cls_id);
+        ids.extend_from_slice(body);
+        ids.push(sep_id);
+        chunks.push(ids);
+    }
+
+    Ok(chunks)
+}
+
+pub async fn embed_text_chunks(text: &str, chunk_tokens: usize) -> Result<Vec<ChunkEmbeddingResult>, String> {
+    let model = get_or_load_model().await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
+
+    let effective_chunk = chunk_tokens.min(max_positions);
+    let token_chunks = tokenize_into_chunks(tokenizer, text, effective_chunk)?;
+
+    if token_chunks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    web_sys::console::log_1(&format!(
+        "🧩 Embedding {} chunks ({} tokens max per chunk)",
+        token_chunks.len(),
+        effective_chunk
+    ).into());
+
+    let mut results = Vec::with_capacity(token_chunks.len());
+    for (index, ids) in token_chunks.into_iter().enumerate() {
+        let tokens = ids.len();
+        web_sys::console::log_1(
+            &format!(
+                "🚀 Embedding chunk {} ({} tokens)",
+                index, tokens
+            )
+            .into(),
+        );
+        let embedding = model
+            .embed_tokens(ids)
+            .map_err(|e| format!("Embedding chunk {} failed: {}", index, e))?;
+        web_sys::console::log_1(
+            &format!(
+                "✅ Chunk {} complete ({} tokens)",
+                index, tokens
+            )
+            .into(),
+        );
+        results.push(ChunkEmbeddingResult {
+            chunk_index: index,
+            token_count: tokens,
+            embedding,
+        });
+    }
+
+    Ok(results)
+}
+
 /// Main embedding function - loads model and generates embeddings
 pub async fn run_embedding(text: &str) -> Result<String, String> {
     web_sys::console::log_1(&format!("🔮 Generating embedding for: '{}'", text).into());
 
-    // Use the asset! macro to get the proper URL for the model file
-    const MODEL_FILE: Asset = asset!("/assets/models/model.safetensors");
-    let model_url = MODEL_FILE.to_string();
-
-    web_sys::console::log_1(&format!("📂 Model URL: {}", model_url).into());
-
-    // Fetch the model (this will be cached by the browser after first load)
-    let model_bytes = fetch_asset_bytes(&model_url).await?;
-
-    web_sys::console::log_1(&"Creating JinaBert model...".into());
-
-    // Initialize the model (pass ownership to avoid cloning in WASM)
-    let config = JinaBertConfig::default();
-    let tokenizer = ensure_tokenizer(config.max_position_embeddings).await?;
+    let model = get_or_load_model().await?;
+    let tokenizer = ensure_tokenizer(model.max_position_embeddings()).await?;
     let token_ids = tokenize_text(tokenizer, text)?;
     let token_count = token_ids.len();
     web_sys::console::log_1(&format!("🧾 Tokenized into {} tokens", token_count).into());
 
-    let model = EmbeddingModel::from_bytes(model_bytes, 30528, config)?;
-
-    web_sys::console::log_1(&"✓ Model initialized".into());
-
     web_sys::console::log_1(&"Generating embedding vector...".into());
 
-    let embedding = model.embed_tokens(token_ids)?;
+    let embedding = model
+        .embed_tokens(token_ids)
+        .map_err(|e| format!("Embedding failed: {}", e))?;
 
     web_sys::console::log_1(&format!("✓ Generated {}-dimensional embedding", embedding.len()).into());
 
