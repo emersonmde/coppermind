@@ -73,8 +73,12 @@ impl EmbeddingModel {
         );
 
         // Use CPU device for WASM
-        let device = Device::Cpu;
-        web_sys::console::log_1(&"✓ Created CPU device".into());
+        let device = Device::cuda_if_available(0).unwrap();
+        if device.is_cpu() {
+            web_sys::console::log_1(&"✓ Initialized CPU device".into());
+        } else {
+            web_sys::console::log_1(&"✓ Initialized GPU device".into());
+        }
 
         // Create model config for JinaBert
         web_sys::console::log_1(

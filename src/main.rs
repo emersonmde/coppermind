@@ -18,6 +18,15 @@ fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
+        document::Script {
+            r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
+        }
+        document::Script {
+            r#"print(window.coi)"#
+        }
+        // Load the local SW from the root (copied from public/)
+        document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
+
         div { class: "container",
             h1 { "Coppermind" }
             TestControls {}

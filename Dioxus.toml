@@ -1,22 +1,25 @@
 [application]
+asset_dir = "public"
+
+[web.watcher]
+# When watcher is triggered, regenerate the `index.html`
+reload_html = true
+# Which files or dirs will be monitored
+watch_path = ["src", "public"]
 
 [web.app]
 base_path = "/coppermind"
-
 # HTML title tag content
 title = "Coppermind"
 
-# include `assets` in web platform
 [web.resource]
-
 # Additional CSS style files
 style = []
-
 # Additional JavaScript files
 script = []
+#script = ["public/coi-serviceworker.min.js"]
 
 [web.resource.dev]
-
 # Javascript code file
 # serve: [dev-server] only
 script = []
