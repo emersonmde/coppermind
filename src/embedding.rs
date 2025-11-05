@@ -611,14 +611,13 @@ pub async fn embed_text_chunks_streaming(
     web_sys::console::log_1(
         &format!(
             "🧩 Embedding {} chunks ({} tokens max per chunk)",
-            chunk_count,
-            effective_chunk
+            chunk_count, effective_chunk
         )
         .into(),
     );
 
     let (tx, rx) = mpsc::unbounded();
-    
+
     // Spawn a task to process chunks one at a time
     spawn(async move {
         for (index, ids) in token_chunks.into_iter().enumerate() {
@@ -626,11 +625,13 @@ pub async fn embed_text_chunks_streaming(
             web_sys::console::log_1(
                 &format!("🚀 Embedding chunk {} ({} tokens)", index, tokens).into(),
             );
-            
+
             let result = model
                 .embed_tokens(ids)
                 .map(|embedding| {
-                    web_sys::console::log_1(&format!("✅ Chunk {} complete ({} tokens)", index, tokens).into());
+                    web_sys::console::log_1(
+                        &format!("✅ Chunk {} complete ({} tokens)", index, tokens).into(),
+                    );
                     ChunkEmbeddingResult {
                         chunk_index: index,
                         token_count: tokens,
@@ -638,18 +639,20 @@ pub async fn embed_text_chunks_streaming(
                     }
                 })
                 .map_err(|e| format!("Embedding chunk {} failed: {}", index, e));
-            
+
             // Send the result through the channel
             if tx.unbounded_send(result).is_err() {
-                web_sys::console::error_1(&"❌ Failed to send chunk result (receiver dropped)".into());
+                web_sys::console::error_1(
+                    &"❌ Failed to send chunk result (receiver dropped)".into(),
+                );
                 break;
             }
-            
+
             // Yield control to event loop after each chunk to prevent UI blocking
             // This is crucial for maintaining UI responsiveness
             gloo_timers::future::TimeoutFuture::new(0).await;
         }
-        
+
         // Close the channel when done
         tx.close_channel();
     });

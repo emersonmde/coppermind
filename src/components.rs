@@ -167,29 +167,29 @@ pub fn TestControls() -> Element {
                                                 byte_len as f64 / 1024.0
                                             ).into());
                                             status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
-                                            
+
                                             // Use streaming API to process chunks incrementally
                                             match embed_text_chunks_streaming(contents, 512).await {
                                                 Ok(mut receiver) => {
                                                     let mut results = Vec::new();
                                                     let mut total_chunks = 0;
                                                     let mut processed_chunks = 0;
-                                                    
+
                                                     // Process chunks as they arrive
                                                     while let Some(chunk_result) = receiver.next().await {
                                                         match chunk_result {
                                                             Ok(chunk) => {
                                                                 processed_chunks += 1;
                                                                 total_chunks = processed_chunks;
-                                                                
+
                                                                 // Update status with progress
                                                                 status.set(format!(
                                                                     "Embedding {file_label}: chunk {}/{} ({} tokens)",
-                                                                    processed_chunks, 
+                                                                    processed_chunks,
                                                                     total_chunks,
                                                                     chunk.token_count
                                                                 ));
-                                                                
+
                                                                 // Add chunk to results and update UI incrementally
                                                                 results.push(chunk);
                                                                 chunks.set(results.clone());
@@ -202,7 +202,7 @@ pub fn TestControls() -> Element {
                                                             }
                                                         }
                                                     }
-                                                    
+
                                                     // Final status update
                                                     if total_chunks == 0 {
                                                         status.set(format!("File {file_label} did not produce any tokens."));
