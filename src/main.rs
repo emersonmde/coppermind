@@ -21,9 +21,6 @@ fn App() -> Element {
         document::Script {
             r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
         }
-        document::Script {
-            r#"print(window.coi)"#
-        }
         // Load the local SW from the root (copied from public/)
         document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
 
