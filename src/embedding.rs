@@ -601,8 +601,10 @@ pub async fn embed_text_chunks_streaming(
     let effective_chunk = chunk_tokens.min(max_positions);
     let token_chunks = tokenize_into_chunks(tokenizer, text, effective_chunk)?;
 
+    let (tx, rx) = mpsc::unbounded();
+
     if token_chunks.is_empty() {
-        let (tx, rx) = mpsc::unbounded();
+        // No chunks to process, close channel immediately
         tx.close_channel();
         return Ok(rx);
     }
@@ -615,8 +617,6 @@ pub async fn embed_text_chunks_streaming(
         )
         .into(),
     );
-
-    let (tx, rx) = mpsc::unbounded();
 
     // Spawn a task to process chunks one at a time
     spawn(async move {

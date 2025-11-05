@@ -171,7 +171,6 @@ pub fn TestControls() -> Element {
                                             // Use streaming API to process chunks incrementally
                                             match embed_text_chunks_streaming(&contents, 512).await {
                                                 Ok(mut receiver) => {
-                                                    let mut results = Vec::new();
                                                     let mut processed_chunks = 0;
 
                                                     // Process chunks as they arrive
@@ -187,9 +186,8 @@ pub fn TestControls() -> Element {
                                                                     chunk.token_count
                                                                 ));
 
-                                                                // Add chunk to results and update UI incrementally
-                                                                results.push(chunk);
-                                                                chunks.set(results.clone());
+                                                                // Add chunk directly to signal's vector
+                                                                chunks.write().push(chunk);
                                                             }
                                                             Err(e) => {
                                                                 web_sys::console::error_1(&format!("❌ Chunk embedding failed: {e}").into());
