@@ -591,7 +591,7 @@ pub async fn embed_text_chunks(
 /// Process text chunks with streaming results to avoid UI blocking
 /// Returns a receiver that yields chunks as they are processed
 pub async fn embed_text_chunks_streaming(
-    text: String,
+    text: &str,
     chunk_tokens: usize,
 ) -> Result<mpsc::UnboundedReceiver<Result<ChunkEmbeddingResult, String>>, String> {
     let model = get_or_load_model().await?;
@@ -599,7 +599,7 @@ pub async fn embed_text_chunks_streaming(
     let tokenizer = ensure_tokenizer(max_positions).await?;
 
     let effective_chunk = chunk_tokens.min(max_positions);
-    let token_chunks = tokenize_into_chunks(tokenizer, &text, effective_chunk)?;
+    let token_chunks = tokenize_into_chunks(tokenizer, text, effective_chunk)?;
 
     if token_chunks.is_empty() {
         let (tx, rx) = mpsc::unbounded();

@@ -169,10 +169,9 @@ pub fn TestControls() -> Element {
                                             status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
 
                                             // Use streaming API to process chunks incrementally
-                                            match embed_text_chunks_streaming(contents, 512).await {
+                                            match embed_text_chunks_streaming(&contents, 512).await {
                                                 Ok(mut receiver) => {
                                                     let mut results = Vec::new();
-                                                    let mut total_chunks = 0;
                                                     let mut processed_chunks = 0;
 
                                                     // Process chunks as they arrive
@@ -180,13 +179,11 @@ pub fn TestControls() -> Element {
                                                         match chunk_result {
                                                             Ok(chunk) => {
                                                                 processed_chunks += 1;
-                                                                total_chunks = processed_chunks;
 
                                                                 // Update status with progress
                                                                 status.set(format!(
-                                                                    "Embedding {file_label}: chunk {}/{} ({} tokens)",
+                                                                    "Embedding {file_label}: chunk {} ({} tokens)",
                                                                     processed_chunks,
-                                                                    total_chunks,
                                                                     chunk.token_count
                                                                 ));
 
@@ -204,10 +201,10 @@ pub fn TestControls() -> Element {
                                                     }
 
                                                     // Final status update
-                                                    if total_chunks == 0 {
+                                                    if processed_chunks == 0 {
                                                         status.set(format!("File {file_label} did not produce any tokens."));
                                                     } else {
-                                                        status.set(format!("✓ Embedded {total_chunks} chunks from {file_label}"));
+                                                        status.set(format!("✓ Embedded {processed_chunks} chunks from {file_label}"));
                                                     }
                                                 }
                                                 Err(e) => {
