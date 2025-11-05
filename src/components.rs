@@ -1,7 +1,8 @@
 use crate::cpu::spawn_worker;
-use crate::embedding::{embed_text_chunks, run_embedding, ChunkEmbeddingResult};
+use crate::embedding::{embed_text_chunks_streaming, run_embedding, ChunkEmbeddingResult};
 use crate::wgpu::test_webgpu;
 use dioxus::prelude::*;
+use futures_util::StreamExt;
 
 #[component]
 pub fn TestControls() -> Element {
@@ -166,22 +167,48 @@ pub fn TestControls() -> Element {
                                                 byte_len as f64 / 1024.0
                                             ).into());
                                             status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
-                                            match embed_text_chunks(&contents, 512).await {
-                                                Ok(results) => {
-                                                    let chunk_count = results.len();
-                                                    if chunk_count == 0 {
+                                            
+                                            // Use streaming API to process chunks incrementally
+                                            match embed_text_chunks_streaming(contents, 512).await {
+                                                Ok(mut receiver) => {
+                                                    let mut results = Vec::new();
+                                                    let mut total_chunks = 0;
+                                                    let mut processed_chunks = 0;
+                                                    
+                                                    // Process chunks as they arrive
+                                                    while let Some(chunk_result) = receiver.next().await {
+                                                        match chunk_result {
+                                                            Ok(chunk) => {
+                                                                processed_chunks += 1;
+                                                                total_chunks = processed_chunks;
+                                                                
+                                                                // Update status with progress
+                                                                status.set(format!(
+                                                                    "Embedding {file_label}: chunk {}/{} ({} tokens)",
+                                                                    processed_chunks, 
+                                                                    total_chunks,
+                                                                    chunk.token_count
+                                                                ));
+                                                                
+                                                                // Add chunk to results and update UI incrementally
+                                                                results.push(chunk);
+                                                                chunks.set(results.clone());
+                                                            }
+                                                            Err(e) => {
+                                                                web_sys::console::error_1(&format!("❌ Chunk embedding failed: {e}").into());
+                                                                status.set(format!("Embedding failed: {e}"));
+                                                                selected_name.set(String::new());
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    // Final status update
+                                                    if total_chunks == 0 {
                                                         status.set(format!("File {file_label} did not produce any tokens."));
                                                     } else {
-                                                        for chunk in results.iter() {
-                                                            web_sys::console::log_1(&format!(
-                                                                "📦 Chunk {} embedded ({} tokens)",
-                                                                chunk.chunk_index,
-                                                                chunk.token_count
-                                                            ).into());
-                                                        }
-                                                        status.set(format!("✓ Embedded {chunk_count} chunks from {file_label}"));
+                                                        status.set(format!("✓ Embedded {total_chunks} chunks from {file_label}"));
                                                     }
-                                                    chunks.set(results);
                                                 }
                                                 Err(e) => {
                                                     web_sys::console::error_1(&format!("❌ Embedding failed: {e}").into());

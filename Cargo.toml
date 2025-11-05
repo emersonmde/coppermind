@@ -16,6 +16,8 @@ web-sys = { version = "0.3", features = [
 ] }
 js-sys = "0.3"
 futures-channel = "0.3"
+futures-util = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
 candle-core = "0.8.0"
 candle-nn = "0.8.0"
 candle-transformers = "0.8.0"

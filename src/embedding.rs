@@ -2,6 +2,7 @@ use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::{Activation, VarBuilder};
 use candle_transformers::models::jina_bert::{BertModel, Config, PositionEmbeddingType};
 use dioxus::prelude::*;
+use futures_channel::mpsc;
 use once_cell::sync::OnceCell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -585,6 +586,75 @@ pub async fn embed_text_chunks(
     }
 
     Ok(results)
+}
+
+/// Process text chunks with streaming results to avoid UI blocking
+/// Returns a receiver that yields chunks as they are processed
+pub async fn embed_text_chunks_streaming(
+    text: String,
+    chunk_tokens: usize,
+) -> Result<mpsc::UnboundedReceiver<Result<ChunkEmbeddingResult, String>>, String> {
+    let model = get_or_load_model().await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
+
+    let effective_chunk = chunk_tokens.min(max_positions);
+    let token_chunks = tokenize_into_chunks(tokenizer, &text, effective_chunk)?;
+
+    if token_chunks.is_empty() {
+        let (tx, rx) = mpsc::unbounded();
+        tx.close_channel();
+        return Ok(rx);
+    }
+
+    let chunk_count = token_chunks.len();
+    web_sys::console::log_1(
+        &format!(
+            "🧩 Embedding {} chunks ({} tokens max per chunk)",
+            chunk_count,
+            effective_chunk
+        )
+        .into(),
+    );
+
+    let (tx, rx) = mpsc::unbounded();
+    
+    // Spawn a task to process chunks one at a time
+    spawn(async move {
+        for (index, ids) in token_chunks.into_iter().enumerate() {
+            let tokens = ids.len();
+            web_sys::console::log_1(
+                &format!("🚀 Embedding chunk {} ({} tokens)", index, tokens).into(),
+            );
+            
+            let result = model
+                .embed_tokens(ids)
+                .map(|embedding| {
+                    web_sys::console::log_1(&format!("✅ Chunk {} complete ({} tokens)", index, tokens).into());
+                    ChunkEmbeddingResult {
+                        chunk_index: index,
+                        token_count: tokens,
+                        embedding,
+                    }
+                })
+                .map_err(|e| format!("Embedding chunk {} failed: {}", index, e));
+            
+            // Send the result through the channel
+            if tx.unbounded_send(result).is_err() {
+                web_sys::console::error_1(&"❌ Failed to send chunk result (receiver dropped)".into());
+                break;
+            }
+            
+            // Yield control to event loop after each chunk to prevent UI blocking
+            // This is crucial for maintaining UI responsiveness
+            gloo_timers::future::TimeoutFuture::new(0).await;
+        }
+        
+        // Close the channel when done
+        tx.close_channel();
+    });
+
+    Ok(rx)
 }
 
 /// Main embedding function - loads model and generates embeddings
