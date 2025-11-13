@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
 const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
 
-/// Configuration for the JinaBert embedding model
+/// Configuration for the JinaBERT embedding model
 #[derive(Clone)]
 pub struct JinaBertConfig {
     pub model_id: String,
@@ -26,8 +26,9 @@ pub struct JinaBertConfig {
 impl Default for JinaBertConfig {
     fn default() -> Self {
         // Default config for jinaai/jina-embeddings-v2-small-en
-        // Limit max_position_embeddings so WASM does not allocate multi-GB ALiBi tensors
-        // (ALiBi bias size is heads * seq_len^2). 1024 keeps memory < ~32MB for 8 heads.
+        // ALiBi bias memory scales as heads * seq_len^2 * 4 bytes
+        // At 2048 tokens: 8 heads * 2048^2 * 4 = ~128MB (fits in 4GB WASM memory)
+        // Model supports up to 8192 tokens via ALiBi positional embeddings
         Self {
             model_id: "jinaai/jina-embeddings-v2-small-en".to_string(),
             normalize_embeddings: true,
@@ -35,7 +36,7 @@ impl Default for JinaBertConfig {
             num_hidden_layers: 4,
             num_attention_heads: 8,
             intermediate_size: 2048,
-            max_position_embeddings: 1024,
+            max_position_embeddings: 2048,
         }
     }
 }

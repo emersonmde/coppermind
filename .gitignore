@@ -14,3 +14,20 @@ assets/models/*.safetensors
 assets/models/*.bin
 assets/models/*.onnx
 assets/models/*-tokenizer.json
+
+# Local storage and search indexes (native desktop)
+data/
+storage/
+indexes/
+.coppermind/
+*.index
+*.bincode
+
+# Temporary test files
+*.tmp
+test_data/
+
+# Debug and log files
+*.log
+debug/
+logs/

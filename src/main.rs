@@ -1,6 +1,8 @@
 mod components;
 mod cpu;
 mod embedding;
+mod search;
+mod storage;
 mod wgpu;
 
 use components::TestControls;
@@ -10,6 +12,8 @@ const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
+    // Initialize cross-platform logger (web console + desktop stdout)
+    dioxus::logger::init(dioxus::logger::tracing::Level::INFO).expect("logger failed to init");
     dioxus::launch(App);
 }
 
@@ -17,12 +21,21 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS }
-        document::Script {
-            r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
+
+        // CSS loading: asset! macro has issues on desktop, use include_str! as workaround
+        if cfg!(target_arch = "wasm32") {
+            document::Stylesheet { href: MAIN_CSS }
+        } else {
+            style { {include_str!("../assets/main.css")} }
         }
-        // Load the local SW from the root (copied from public/)
-        document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
+
+        // COEP Service Worker only needed for web (SharedArrayBuffer support)
+        if cfg!(target_arch = "wasm32") {
+            document::Script {
+                r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
+            }
+            document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
+        }
 
         div { class: "container",
             h1 { "Coppermind" }

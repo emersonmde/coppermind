@@ -1,4 +1,6 @@
 [application]
+# Asset directory: public/assets/ contains CSS, icons, etc.
+# Source assets are in assets/, copied to public/assets/ for builds
 asset_dir = "public"
 
 [web.watcher]

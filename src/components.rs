@@ -1,7 +1,36 @@
 use crate::cpu::spawn_worker;
 use crate::embedding::{embed_text_chunks, run_embedding, ChunkEmbeddingResult};
+use crate::search::types::{Document, DocumentMetadata};
+use crate::search::HybridSearchEngine;
+use crate::storage::StorageError;
 use crate::wgpu::test_webgpu;
+use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
+
+// Mock storage for testing
+struct MockStorage;
+
+#[async_trait::async_trait(?Send)]
+impl crate::storage::StorageBackend for MockStorage {
+    async fn save(&self, _key: &str, _data: &[u8]) -> Result<(), StorageError> {
+        Ok(())
+    }
+    async fn load(&self, _key: &str) -> Result<Vec<u8>, StorageError> {
+        Err(StorageError::NotFound("test".to_string()))
+    }
+    async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
+        Ok(false)
+    }
+    async fn delete(&self, _key: &str) -> Result<(), StorageError> {
+        Ok(())
+    }
+    async fn list_keys(&self) -> Result<Vec<String>, StorageError> {
+        Ok(vec![])
+    }
+    async fn clear(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+}
 
 #[component]
 pub fn TestControls() -> Element {
@@ -104,7 +133,7 @@ pub fn TestControls() -> Element {
 
             div { class: "test-section",
                 h2 { "Text Embedding Test" }
-                p { class: "description", "JinaBert text embeddings using Candle ML framework" }
+                p { class: "description", "JinaBERT text embeddings using Candle ML framework" }
 
                 button {
                     class: "btn-primary",
@@ -155,16 +184,16 @@ pub fn TestControls() -> Element {
                                 spawn(async move {
                                     processing.set(true);
                                     chunks.set(Vec::new());
-                                    web_sys::console::log_1(&format!("📂 Selected file: {file_label}").into());
+                                    info!("📂 Selected file: {file_label}");
                                     status.set(format!("Reading {file_label}..."));
                                     match engine.read_file_to_string(&file_label).await {
                                         Some(contents) => {
                                             let byte_len = contents.len();
-                                            web_sys::console::log_1(&format!(
+                                            info!(
                                                 "🧮 File size: {} bytes (~{:.2} KB)",
                                                 byte_len,
                                                 byte_len as f64 / 1024.0
-                                            ).into());
+                                            );
                                             status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
                                             match embed_text_chunks(&contents, 512).await {
                                                 Ok(results) => {
@@ -173,25 +202,25 @@ pub fn TestControls() -> Element {
                                                         status.set(format!("File {file_label} did not produce any tokens."));
                                                     } else {
                                                         for chunk in results.iter() {
-                                                            web_sys::console::log_1(&format!(
+                                                            info!(
                                                                 "📦 Chunk {} embedded ({} tokens)",
                                                                 chunk.chunk_index,
                                                                 chunk.token_count
-                                                            ).into());
+                                                            );
                                                         }
                                                         status.set(format!("✓ Embedded {chunk_count} chunks from {file_label}"));
                                                     }
                                                     chunks.set(results);
                                                 }
                                                 Err(e) => {
-                                                    web_sys::console::error_1(&format!("❌ Embedding failed: {e}").into());
+                                                    error!("❌ Embedding failed: {e}");
                                                     status.set(format!("Embedding failed: {e}"));
                                                     selected_name.set(String::new());
                                                 }
                                             }
                                         }
                                         None => {
-                                            web_sys::console::error_1(&format!("❌ Failed to read {file_label}").into());
+                                            error!("❌ Failed to read {file_label}");
                                             status.set(format!("Failed to read {file_label}"));
                                             selected_name.set(String::new());
                                         }
@@ -246,6 +275,109 @@ pub fn TestControls() -> Element {
                             }
                         }
                     }
+                }
+            }
+
+            div { class: "test-section",
+                h2 { "Hybrid Search Test" }
+                p { class: "description", "Test vector (semantic) + keyword (BM25) search with RRF fusion" }
+
+                button {
+                    class: "btn-primary",
+                    onclick: move |_| {
+                        spawn(async move {
+                            info!("🔍 Testing Hybrid Search...");
+
+                            // Create mock storage and hybrid search engine
+                            let storage = MockStorage;
+                            let mut engine = match HybridSearchEngine::new(storage, 512).await {
+                                Ok(e) => {
+                                    info!("✓ HybridSearchEngine created (embedding_dim=512)");
+                                    e
+                                }
+                                Err(e) => {
+                                    error!("❌ Failed to create engine: {:?}", e);
+                                    return;
+                                }
+                            };
+
+                            // Add test documents
+                            let docs = vec![
+                                (
+                                    "Machine learning is a subset of artificial intelligence",
+                                    vec![0.9, 0.1, 0.0, 0.3, 0.5], // Dummy 5D embedding for demo
+                                ),
+                                (
+                                    "Deep neural networks are powerful for pattern recognition",
+                                    vec![0.8, 0.2, 0.1, 0.4, 0.6],
+                                ),
+                                (
+                                    "Natural language processing enables computers to understand text",
+                                    vec![0.7, 0.3, 0.2, 0.5, 0.4],
+                                ),
+                            ];
+
+                            // Pad embeddings to 512 dimensions
+                            for (i, (text, mut embedding)) in docs.into_iter().enumerate() {
+                                // Pad to 512 dimensions
+                                embedding.resize(512, 0.0);
+
+                                let doc = Document {
+                                    text: text.to_string(),
+                                    metadata: DocumentMetadata {
+                                        filename: Some(format!("doc{}.txt", i + 1)),
+                                        source: None,
+                                        created_at: i as u64,
+                                    },
+                                };
+
+                                match engine.add_document(doc, embedding).await {
+                                    Ok(doc_id) => {
+                                        info!(
+                                            "✓ Added document {}: {:?}",
+                                            doc_id.as_u64(),
+                                            text
+                                        );
+                                    }
+                                    Err(e) => {
+                                        error!("❌ Failed to add document: {:?}", e);
+                                    }
+                                }
+                            }
+
+                            // Perform hybrid search
+                            info!("🔎 Searching for 'machine learning neural networks'...");
+
+                            let query_embedding = {
+                                let mut emb = vec![0.85, 0.15, 0.05, 0.35, 0.55];
+                                emb.resize(512, 0.0);
+                                emb
+                            };
+
+                            match engine.search(&query_embedding, "machine learning neural networks", 3).await {
+                                Ok(results) => {
+                                    info!("📊 Final RRF fused results (top {}):", results.len());
+                                    for (i, result) in results.iter().enumerate() {
+                                        info!(
+                                            "  {}. [RRF: {:.4}] {}",
+                                            i + 1,
+                                            result.score,
+                                            result.text
+                                        );
+                                    }
+                                    info!("🎉 Hybrid search test completed successfully!");
+                                }
+                                Err(e) => {
+                                    error!("❌ Search failed: {:?}", e);
+                                }
+                            }
+                        });
+                    },
+                    "Test Hybrid Search"
+                }
+
+                div { class: "results",
+                    "Check browser console for detailed search results"
                 }
             }
 
