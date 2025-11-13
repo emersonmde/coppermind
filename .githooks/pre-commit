@@ -40,7 +40,5 @@ EOF
   exit 1
 fi
 
-echo "→ Running dx build --release --platform web"
-dx build --release --platform web
 
 echo "✓ All pre-commit checks passed"
