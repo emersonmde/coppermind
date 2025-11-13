@@ -196,155 +196,322 @@ Once storage and search are implemented, add a new view for actual semantic sear
 > **NOTE:** Milestones 2-3 below are superseded by **ADR-0001: Hybrid Search Architecture**
 > See `docs/adr-0001-hybrid-search-architecture.md` for the updated architecture using USearch + BM25.
 
-### Milestone 1.5: Non-Blocking Compute Operations (IMMEDIATE) 🎯
-**Goal:** Ensure ALL computationally expensive operations run off the main thread
+### Milestone 1.5: Parallel Embedding with wasm-bindgen-rayon (NEXT) 🎯
+**Goal:** Implement true parallel CPU-bound embedding using Rayon in WASM
 
 **Current Problem:**
-- **Embedding** (components.rs:109-128, 155-200): Blocks main thread despite using `spawn()`
-  - `run_embedding()` and `embed_text_chunks()` are CPU-intensive synchronous work
-  - UI freezes for seconds during processing
-- **WebGPU** (components.rs:86-102): `test_webgpu()` may block during shader compilation
-- **General Issue:** `spawn()` creates async task but doesn't move compute off main thread
-- Poor user experience, violates browser responsiveness best practices
+- **Web Platform:** Embedding blocks main thread, UI freezes during inference
+- **Attempted Solutions:**
+  - ❌ Web Worker with separate WASM instance: Failed (full app module includes DOM APIs)
+  - ❌ Dioxus logger incompatibility in worker context
+- **Root Cause:** Need true multi-threading, not just async task isolation
+- **Best Solution:** wasm-bindgen-rayon for automatic parallelism
 
-**Current Status Check:**
-- ✅ **CPU Workers Test** (components.rs:32-77): Already uses Web Workers correctly
-- ⚠️ **GPU Test**: May block during shader compilation/execution
-- ❌ **Embedding Test**: Blocks main thread
-- ❌ **File Embedding**: Blocks main thread (major issue)
+**Why wasm-bindgen-rayon:**
+- ✅ True multi-threading with SharedArrayBuffer (COOP/COEP already configured)
+- ✅ Automatic work distribution across CPU cores
+- ✅ Proven to work with Candle (3x speedup in Candle PR #3063)
+- ✅ Minimal code changes (`.par_iter()` instead of `.iter()`)
+- ✅ No separate worker binary needed
+- ✅ Scales with CPU core count
 
-**Solution: Web Workers for All Heavy Compute**
+**Implementation Plan:**
 
-Move ALL CPU/GPU-intensive operations to dedicated Web Workers:
+### Phase 1: Prerequisites & Setup ⚙️
 
-**Implementation Tasks:**
-- [ ] **Audit All Compute Operations**
-  - Review `src/wgpu.rs`, `src/embedding.rs`, `src/components.rs`
-  - Identify any synchronous CPU/GPU-intensive functions
-  - Ensure all run in Web Workers (web) or spawn_blocking (desktop)
+- [ ] **1.1 Install nightly Rust toolchain**
+  ```bash
+  rustup toolchain install nightly-2024-08-02
+  rustup component add rust-src --toolchain nightly-2024-08-02
+  ```
 
-- [ ] **Create Embedding Worker** (Priority 1 - biggest UX issue)
-  - New file: `src/worker/embedding_worker.rs`
-  - Initialize JinaBERT model inside worker
-  - Listen for embedding requests via `postMessage`
-  - Return embeddings via message passing
-  - Handle errors gracefully
+- [ ] **1.2 Create rust-toolchain.toml**
+  ```toml
+  [toolchain]
+  channel = "nightly-2024-08-02"
+  components = ["rust-src"]
+  targets = ["wasm32-unknown-unknown"]
+  ```
 
-- [ ] **Verify WebGPU Non-Blocking** (Priority 2)
-  - Check if `test_webgpu()` blocks during shader compilation
-  - If blocking: Move WebGPU compute to worker
-  - Ensure shader compilation happens asynchronously
-  - Test with large compute workloads (verify UI stays responsive)
+- [ ] **1.3 Update .cargo/config.toml**
+  ```toml
+  [target.wasm32-unknown-unknown]
+  rustflags = [
+    "--cfg", "getrandom_backend=\"wasm_js\"",
+    "-C", "link-arg=--initial-memory=268435456",      # 128MB initial
+    "-C", "link-arg=--max-memory=4294967296",          # 4GB max
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",  # ADD THIS
+  ]
 
-- [ ] **Worker Message Protocol**
-  ```rust
-  // Message types (pseudo-code)
-  enum WorkerMessage {
-      // From main → worker
-      InitModel { model_bytes: Vec<u8> },
-      EmbedText { request_id: u64, text: String, chunk_tokens: usize },
-      EmbedBatch { request_id: u64, texts: Vec<String> },
+  [unstable]
+  build-std = ["panic_abort", "std"]  # ADD THIS - rebuild stdlib with atomics
+  ```
 
-      // From worker → main
-      ModelReady,
-      Progress { request_id: u64, chunk_index: usize, total_chunks: usize },
-      ChunkComplete { request_id: u64, chunk: ChunkEmbeddingResult },
-      Complete { request_id: u64, chunks: Vec<ChunkEmbeddingResult> },
-      Error { request_id: u64, error: String },
+- [ ] **1.4 Add dependencies**
+  ```toml
+  [dependencies]
+  rayon = "1.8"
+  wasm-bindgen-rayon = "1.2"
+
+  [target.'cfg(target_arch = "wasm32")'.dependencies]
+  # Already have: gloo-timers, getrandom
+  ```
+
+- [ ] **1.5 Update Dioxus.toml (if needed)**
+  Check if Dioxus CLI supports custom WASM flags, or if manual build script needed
+
+### Phase 2: JavaScript Initialization 📜
+
+- [ ] **2.1 Create worker pool init script**
+  **File:** `public/init-rayon.js`
+  ```javascript
+  import init, { initThreadPool } from './wasm/coppermind.js';
+
+  export async function initializeRayon() {
+    await init();
+
+    // Initialize thread pool with number of CPU cores
+    const threads = navigator.hardwareConcurrency || 4;
+    console.log(`🧵 Initializing Rayon thread pool with ${threads} threads`);
+
+    await initThreadPool(threads);
+    console.log('✓ Rayon thread pool ready');
   }
   ```
 
-- [ ] **Update Components**
-  - Modify `TestControls` file upload handler
-  - Send text to worker instead of calling `embed_text_chunks` directly
-  - Handle progress updates (show per-chunk progress)
-  - Update UI reactively as chunks complete
-  - Show loading indicator while worker is busy
-
-- [ ] **Worker Lifecycle Management**
-  - Initialize worker on app startup
-  - Keep worker alive for session (avoid reload overhead)
-  - Clean shutdown on app close
-  - Handle worker crashes gracefully
-
-- [ ] **Future: Add Rayon for Batch Parallelism**
-  - Use `wasm-bindgen-rayon` inside worker
-  - Parallel process multiple chunks with Rayon
-  - Requires nightly Rust (already acceptable)
-  - Leverages existing COEP/COIP setup
+- [ ] **2.2 Update main.rs to export initThreadPool**
   ```rust
-  // Inside worker, with rayon
-  let embeddings: Vec<Vec<f32>> = chunks
-      .par_iter()  // Rayon parallel iterator
-      .map(|chunk| model.embed_tokens(chunk))
-      .collect()?;
+  #[cfg(target_arch = "wasm32")]
+  pub use wasm_bindgen_rayon::init_thread_pool;
   ```
 
-**Platform Differences:**
-```rust
-#[cfg(target_arch = "wasm32")]
-{
-    // Web: Use Web Worker for task isolation
-    let worker = EmbeddingWorker::new().await?;
-    worker.embed_text(text).await?
-}
+- [ ] **2.3 Call init from main thread**
+  Update `main.rs` or components to call `initializeRayon()` on app startup
 
-#[cfg(not(target_arch = "wasm32"))]
-{
-    // Desktop: Use tokio::spawn or rayon directly (already non-blocking)
-    tokio::task::spawn_blocking(|| {
-        embed_text_chunks(text, chunk_tokens)
-    }).await?
-}
-```
+### Phase 3: Rust Code Changes 🦀
 
-**Architecture Diagram:**
+- [ ] **3.1 Update embedding.rs for parallel batch processing**
+  ```rust
+  use rayon::prelude::*;
+
+  pub async fn embed_text_chunks(
+      text: &str,
+      chunk_tokens: usize,
+  ) -> Result<Vec<ChunkEmbeddingResult>, String> {
+      let model = get_or_load_model().await?;
+      let max_positions = model.max_position_embeddings();
+      let tokenizer = ensure_tokenizer(max_positions).await?;
+
+      let effective_chunk = chunk_tokens.min(max_positions);
+      let token_chunks = tokenize_into_chunks(tokenizer, text, effective_chunk)?;
+
+      if token_chunks.is_empty() {
+          return Ok(vec![]);
+      }
+
+      info!(
+          "🧩 Embedding {} chunks in parallel with Rayon ({} tokens max per chunk)",
+          token_chunks.len(),
+          effective_chunk
+      );
+
+      // PARALLEL PROCESSING HERE
+      #[cfg(target_arch = "wasm32")]
+      let embeddings: Result<Vec<Vec<f32>>, String> = token_chunks
+          .par_iter()  // Rayon parallel iterator
+          .enumerate()
+          .map(|(index, ids)| {
+              info!("🚀 Processing chunk {} on thread", index);
+              model.embed_tokens(ids.clone())
+          })
+          .collect();
+
+      #[cfg(not(target_arch = "wasm32"))]
+      let embeddings: Result<Vec<Vec<f32>>, String> = token_chunks
+          .iter()
+          .enumerate()
+          .map(|(index, ids)| {
+              info!("🚀 Processing chunk {} (desktop - already async)", index);
+              model.embed_tokens(ids.clone())
+          })
+          .collect();
+
+      let embeddings = embeddings?;
+
+      let results = embeddings
+          .into_iter()
+          .enumerate()
+          .map(|(index, embedding)| ChunkEmbeddingResult {
+              chunk_index: index,
+              token_count: token_chunks[index].len(),
+              embedding,
+          })
+          .collect();
+
+      Ok(results)
+  }
+  ```
+
+- [ ] **3.2 Remove worker module** (no longer needed)
+  - Delete `src/worker/` directory
+  - Remove from `main.rs` module list
+  - Clean up components.rs to not reference worker types
+
+- [ ] **3.3 Update components.rs**
+  - Remove `embed_text_chunks_worker` function
+  - File processing can call `embed_text_chunks` directly
+  - Rayon handles parallelism automatically
+
+### Phase 4: Testing & Validation ✅
+
+- [ ] **4.1 Build verification**
+  ```bash
+  dx build --platform web
+  # Check for: No errors about atomics, SharedArrayBuffer
+  # Binary size may increase slightly due to threading support
+  ```
+
+- [ ] **4.2 Runtime testing**
+  ```bash
+  dx serve
+  # Open browser DevTools → Console
+  # Look for: "🧵 Initializing Rayon thread pool with N threads"
+  # Look for: "✓ Rayon thread pool ready"
+  ```
+
+- [ ] **4.3 Upload test file**
+  - Upload foo.txt (or similar)
+  - **Expected:** Console shows chunks being processed on different threads
+  - **Expected:** UI remains responsive (can scroll, click during processing)
+  - **Expected:** Processing time similar or faster than sequential
+
+- [ ] **4.4 Benchmark parallel vs sequential**
+  - Test with large file (many chunks)
+  - Compare processing time
+  - Expected: 2-4x speedup on quad-core CPU
+
+- [ ] **4.5 Cross-platform verification**
+  ```bash
+  dx serve --platform desktop
+  # Desktop should work unchanged (already uses tokio::spawn_blocking)
+  ```
+
+### Phase 5: Known Issues & Troubleshooting 🐛
+
+**Issue 1: Build fails with "feature `build-std` is unstable"**
+- **Cause:** Using stable Rust instead of nightly
+- **Fix:** Ensure `rust-toolchain.toml` exists and specifies nightly
+
+**Issue 2: WASM module fails to load with "SharedArrayBuffer not available"**
+- **Cause:** COOP/COEP headers not set properly
+- **Fix:** Verify COI service worker is loaded (check Network tab)
+- **Verify:** `crossOriginIsolated` should be `true` in browser console
+
+**Issue 3: "Cannot start thread pool twice" error**
+- **Cause:** `initThreadPool()` called multiple times
+- **Fix:** Call only once during app initialization
+- **Pattern:** Use `once_cell::sync::OnceCell` or static flag
+
+**Issue 4: Performance worse than sequential**
+- **Cause:** Too few chunks (overhead dominates)
+- **Fix:** Only use parallel for N > 4-8 chunks
+- **Pattern:** ```rust
+  if token_chunks.len() > 8 {
+      // Use parallel
+  } else {
+      // Use sequential
+  }
+  ```
+
+**Issue 5: Memory usage high**
+- **Cause:** Each thread needs stack space
+- **Expected:** +10-20MB per thread
+- **Monitor:** Browser Task Manager → Memory column
+
+### Phase 6: Cleanup & Documentation 📝
+
+- [ ] **6.1 Remove old worker code**
+  - Delete `public/jinabert-embedding-worker.js`
+  - Delete `src/worker/` directory
+  - Remove worker-related types from components.rs
+
+- [ ] **6.2 Update CLAUDE.md**
+  - Remove Web Worker architecture section
+  - Add wasm-bindgen-rayon section
+  - Document nightly Rust requirement
+  - Update module organization
+
+- [ ] **6.3 Update this roadmap**
+  - Mark Milestone 1.5 as complete
+  - Document final performance numbers
+  - Add lessons learned
+
+- [ ] **6.4 Add inline code comments**
+  ```rust
+  // Parallel processing with Rayon
+  // Each chunk is embedded concurrently on the thread pool
+  // Requires: wasm-bindgen-rayon, nightly Rust, COOP/COEP headers
+  ```
+
+**Architecture Diagram (After Implementation):**
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      Main Thread                        │
+│                    Main Thread (UI)                     │
 │  ┌──────────────┐        ┌──────────────┐              │
-│  │  UI (Dioxus) │◄──────►│ Worker Proxy │              │
+│  │  UI (Dioxus) │◄──────►│ embed_text() │              │
 │  └──────────────┘        └───────┬──────┘              │
 └───────────────────────────────────┼──────────────────────┘
-                                    │ postMessage
-                                    │
-┌───────────────────────────────────▼──────────────────────┐
-│                   Web Worker Thread                      │
-│  ┌────────────────────────────────────────────┐          │
-│  │ Embedding Worker                           │          │
-│  │  ├─ JinaBERT Model (262MB)                │          │
-│  │  ├─ Tokenizer                              │          │
-│  │  ├─ embed_text_chunks() logic             │          │
-│  │  └─ Optional: Rayon thread pool            │          │
-│  │     (for parallel batch processing)        │          │
-│  └────────────────────────────────────────────┘          │
+                                    │ .par_iter()
+                                    ▼
+┌─────────────────────────────────────────────────────────┐
+│              Rayon Thread Pool (WASM Workers)           │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │ Thread 1│  │ Thread 2│  │ Thread 3│  │ Thread 4│   │
+│  │ Chunk 1 │  │ Chunk 2 │  │ Chunk 3 │  │ Chunk 4 │   │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
+│                                                         │
+│  Shared Read-Only:                                      │
+│  ├─ JinaBERT Model (262MB)                             │
+│  └─ Tokenizer                                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
+**Key Differences from Web Worker Approach:**
+- ✅ No separate worker binary needed
+- ✅ No postMessage serialization overhead
+- ✅ Shared memory for model weights (via SharedArrayBuffer)
+- ✅ Automatic work distribution by Rayon
+- ✅ Simpler code: just `.par_iter()` instead of manual worker management
+
 **Performance Expectations:**
-- **UI Responsiveness:** Main thread stays responsive (<16ms frame time)
-- **Throughput:** Same or better (1 worker = baseline, worker + rayon = 2-4x speedup)
-- **Memory:** +~10MB overhead for worker (model shared or copied)
-- **Latency:** +5-10ms overhead for message passing (negligible vs 50-500ms inference)
+- **UI Responsiveness:** Main thread yields during computation
+- **Throughput:** 2-4x speedup on quad-core (linear scaling with cores)
+- **Memory:** +10-20MB per thread for stack space
+- **Latency:** No message passing overhead (shared memory)
+- **Baseline:** Sequential ~2s for 37 chunks → Parallel ~0.5-1s (4 cores)
 
 **Success Criteria:**
-- ✅ UI never freezes during ANY compute operation (embedding, GPU, future ML tasks)
-  - Can scroll, click, interact at all times
-  - Browser devtools Performance tab shows main thread <16ms per frame
-- ✅ Progress updates show in real-time during processing
-- ✅ Can cancel long-running operations mid-process
-- ✅ Workers survive errors and can process subsequent requests
-- ✅ Works on web platform (desktop already non-blocking via tokio::spawn_blocking)
-- ✅ Establish **pattern/guideline** for future compute operations:
-  - "If operation takes >50ms, move to Web Worker"
-  - Document worker creation template
-  - Add to CLAUDE.md or new doc
-- ✅ Passes all items in **Milestone Completion Checklist** (see above)
+- ✅ Build succeeds with nightly + atomics + build-std
+- ✅ Rayon thread pool initializes successfully in browser
+- ✅ UI remains responsive during embedding (can scroll, click)
+- ✅ Browser console shows parallel chunk processing
+- ✅ Performance improves 2-4x vs sequential (benchmark documented)
+- ✅ Works on web platform (desktop unchanged)
+- ✅ CLAUDE.md updated with architecture changes
+- ✅ Old worker code removed and cleaned up
+- ✅ Passes all items in **Milestone Completion Checklist** (see top of document)
 
 **References:**
-- [Web Workers API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API)
-- [wasm-bindgen Web Worker example](https://rustwasm.github.io/wasm-bindgen/examples/wasm-in-web-worker.html)
-- [Dioxus async patterns](https://dioxuslabs.com/learn/0.5/reference/async)
+- [wasm-bindgen-rayon](https://github.com/RReverser/wasm-bindgen-rayon) - Official repo
+- [Candle PR #3063](https://github.com/huggingface/candle/pull/3063) - 3x speedup example
+- [WASM Threads](https://web.dev/webassembly-threads/) - Technical overview
+- [SharedArrayBuffer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) - Browser API docs
+
+**Estimated Effort:** 4-8 hours
+- Setup & config: 1-2 hours
+- Code changes: 1-2 hours
+- Testing & debugging: 2-3 hours
+- Documentation: 1 hour
 
 ---
 

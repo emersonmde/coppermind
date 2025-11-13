@@ -1,11 +1,11 @@
-use crate::cpu::spawn_worker;
 use crate::embedding::{embed_text_chunks, run_embedding, ChunkEmbeddingResult};
 use crate::search::types::{Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageError;
-use crate::wgpu::test_webgpu;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
+use futures_channel::mpsc::UnboundedReceiver;
+use futures_util::StreamExt;
 
 // Mock storage for testing
 struct MockStorage;
@@ -32,120 +32,167 @@ impl crate::storage::StorageBackend for MockStorage {
     }
 }
 
+// Messages for the embedding coroutine
+enum EmbeddingMessage {
+    RunTest(String),
+}
+
+// Messages for the file processing coroutine
+enum FileMessage {
+    ProcessFile(String, String), // filename, contents
+}
+
 #[component]
 pub fn TestControls() -> Element {
-    let mut cpu_running = use_signal(|| false);
-    let mut cpu_results = use_signal(Vec::<String>::new);
-    let gpu_result = use_signal(String::new);
     let embedding_result = use_signal(String::new);
-    let file_processing = use_signal(|| false);
+    let mut file_processing = use_signal(|| false);
     let mut file_status = use_signal(String::new);
     let mut file_chunks = use_signal(Vec::<ChunkEmbeddingResult>::new);
     let mut file_name = use_signal(String::new);
 
-    rsx! {
-        div { class: "test-controls",
-            div { class: "test-section",
-                h2 { "CPU Workers Test foo" }
-                p { class: "description", "Spawns 16 Web Workers for parallel CPU computation" }
-
-                div { class: "button-group",
-                    button {
-                        class: "btn-primary",
-                        disabled: cpu_running(),
-                        onclick: move |_| {
-                            cpu_running.set(true);
-                            cpu_results.set(Vec::new());
-
-                            let num_workers = 16;
-                            for i in 0..num_workers {
-                                spawn({
-                                    let mut results = cpu_results;
-                                    let mut running = cpu_running;
-                                    async move {
-                                        match spawn_worker(i, "test", 10000).await {
-                                            Ok(result) => {
-                                                results.write().push(result);
-                                                if results.read().len() == num_workers {
-                                                    running.set(false);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                results.write().push(format!("Error: {}", e));
-                                            }
-                                        }
-                                    }
-                                });
+    // Embedding test coroutine - runs in background
+    let embedding_task = use_coroutine({
+        let mut result = embedding_result;
+        move |mut rx: UnboundedReceiver<EmbeddingMessage>| async move {
+            while let Some(msg) = rx.next().await {
+                match msg {
+                    EmbeddingMessage::RunTest(text) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            // Desktop: Run on Tokio's blocking thread pool for CPU-intensive work
+                            match tokio::task::spawn_blocking(move || {
+                                futures::executor::block_on(run_embedding(&text))
+                            })
+                            .await
+                            {
+                                Ok(Ok(res)) => result.set(res),
+                                Ok(Err(e)) => result.set(format!("Error: {}", e)),
+                                Err(e) => result.set(format!("Task error: {}", e)),
                             }
-                        },
-                        "Start CPU Test"
-                    }
+                        }
 
-                    if cpu_running() {
-                        button {
-                            class: "btn-secondary",
-                            onclick: move |_| {
-                                cpu_running.set(false);
-                                cpu_results.set(Vec::new());
-                            },
-                            "Stop"
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            // Web: Runs on main thread (blocks UI)
+                            // TODO: Implement Web Workers for true parallelism
+                            match run_embedding(&text).await {
+                                Ok(res) => result.set(res),
+                                Err(e) => result.set(format!("Error: {}", e)),
+                            }
                         }
                     }
                 }
-
-                if cpu_running() {
-                    div { class: "status",
-                        "Running... ({cpu_results.read().len()}/16 workers completed)"
-                    }
-                }
-
-                if !cpu_results.read().is_empty() && !cpu_running() {
-                    div { class: "results",
-                        "✓ All workers completed successfully"
-                    }
-                }
             }
+        }
+    });
 
-            div { class: "test-section",
-                p { class: "description", "WebGPU compute shader with 1M+ parallel operations" }
-                h2 { "GPU Compute Test" }
+    // File processing coroutine - runs in background
+    let file_task = use_coroutine({
+        let mut status = file_status;
+        let mut chunks = file_chunks;
+        let mut name = file_name;
+        let mut processing = file_processing;
 
-                button {
-                    class: "btn-primary",
-                    onclick: move |_| {
-                        let mut result = gpu_result;
-                        spawn(async move {
-                            match test_webgpu().await {
-                                Ok(msg) => result.set(msg),
-                                Err(e) => result.set(format!("Error: {}", e)),
+        move |mut rx: UnboundedReceiver<FileMessage>| async move {
+            while let Some(msg) = rx.next().await {
+                match msg {
+                    FileMessage::ProcessFile(file_label, contents) => {
+                        let byte_len = contents.len();
+                        info!(
+                            "🧮 File size: {} bytes (~{:.2} KB)",
+                            byte_len,
+                            byte_len as f64 / 1024.0
+                        );
+                        status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            // Desktop: Run on Tokio's blocking thread pool for CPU-intensive work
+                            match tokio::task::spawn_blocking(move || {
+                                futures::executor::block_on(embed_text_chunks(&contents, 512))
+                            })
+                            .await
+                            {
+                                Ok(Ok(results)) => {
+                                    let chunk_count = results.len();
+                                    if chunk_count == 0 {
+                                        status.set(format!(
+                                            "File {file_label} did not produce any tokens."
+                                        ));
+                                    } else {
+                                        for chunk in results.iter() {
+                                            info!(
+                                                "📦 Chunk {} embedded ({} tokens)",
+                                                chunk.chunk_index, chunk.token_count
+                                            );
+                                        }
+                                        status.set(format!(
+                                            "✓ Embedded {chunk_count} chunks from {file_label}"
+                                        ));
+                                    }
+                                    chunks.set(results);
+                                }
+                                Ok(Err(e)) => {
+                                    error!("❌ Embedding failed: {e}");
+                                    status.set(format!("Embedding failed: {e}"));
+                                    name.set(String::new());
+                                }
+                                Err(e) => {
+                                    error!("❌ Task error: {e}");
+                                    status.set(format!("Task error: {e}"));
+                                    name.set(String::new());
+                                }
                             }
-                        });
-                    },
-                    "Test GPU"
-                }
+                        }
 
-                if !gpu_result.read().is_empty() {
-                    div { class: "results",
-                        "{gpu_result.read()}"
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            // Web: Process with periodic yields to keep UI responsive
+                            match embed_text_chunks(&contents, 512).await {
+                                Ok(results) => {
+                                    let chunk_count = results.len();
+                                    if chunk_count == 0 {
+                                        status.set(format!(
+                                            "File {file_label} did not produce any tokens."
+                                        ));
+                                    } else {
+                                        for chunk in results.iter() {
+                                            info!(
+                                                "📦 Chunk {} embedded ({} tokens)",
+                                                chunk.chunk_index, chunk.token_count
+                                            );
+                                        }
+                                        status.set(format!(
+                                            "✓ Embedded {chunk_count} chunks from {file_label}"
+                                        ));
+                                    }
+                                    chunks.set(results);
+                                }
+                                Err(e) => {
+                                    error!("❌ Embedding failed: {e}");
+                                    status.set(format!("Embedding failed: {e}"));
+                                    name.set(String::new());
+                                }
+                            }
+                        }
+                        processing.set(false);
                     }
                 }
             }
+        }
+    });
 
+    rsx! {
+        div { class: "test-controls",
             div { class: "test-section",
                 h2 { "Text Embedding Test" }
-                p { class: "description", "JinaBERT text embeddings using Candle ML framework" }
+                p { class: "description", "JinaBERT text embeddings using Candle ML framework (background processing)" }
 
                 button {
                     class: "btn-primary",
                     onclick: move |_| {
-                        let mut result = embedding_result;
-                        spawn(async move {
-                            let test_text = "This is a test sentence for text embedding.";
-                            match run_embedding(test_text).await {
-                                Ok(msg) => result.set(msg),
-                                Err(e) => result.set(format!("Error: {}", e)),
-                            }
-                        });
+                        let test_text = "This is a test sentence for text embedding.";
+                        embedding_task.send(EmbeddingMessage::RunTest(test_text.to_string()));
                     },
                     "Test Embedding"
                 }
@@ -159,7 +206,7 @@ pub fn TestControls() -> Element {
 
             div { class: "test-section",
                 h2 { "File Embedding Demo" }
-                p { class: "description", "Upload a .txt file, chunk it in Rust, and embed each chunk entirely in WASM" }
+                p { class: "description", "Upload a .txt file, chunk it in Rust, and embed each chunk (background processing)" }
 
                 input {
                     r#type: "file",
@@ -171,69 +218,34 @@ pub fn TestControls() -> Element {
                             return;
                         }
 
-                        if let Some(engine) = evt.files() {
-                            let files = engine.files();
-                            if let Some(first_name) = files.first() {
-                                file_name.set(first_name.clone());
-                                let file_label = first_name.clone();
-                                let engine = engine.clone();
-                                let mut status = file_status;
-                                let mut chunks = file_chunks;
-                                let mut processing = file_processing;
-                                let mut selected_name = file_name;
-                                spawn(async move {
-                                    processing.set(true);
-                                    chunks.set(Vec::new());
-                                    info!("📂 Selected file: {file_label}");
-                                    status.set(format!("Reading {file_label}..."));
-                                    match engine.read_file_to_string(&file_label).await {
-                                        Some(contents) => {
-                                            let byte_len = contents.len();
-                                            info!(
-                                                "🧮 File size: {} bytes (~{:.2} KB)",
-                                                byte_len,
-                                                byte_len as f64 / 1024.0
-                                            );
-                                            status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
-                                            match embed_text_chunks(&contents, 512).await {
-                                                Ok(results) => {
-                                                    let chunk_count = results.len();
-                                                    if chunk_count == 0 {
-                                                        status.set(format!("File {file_label} did not produce any tokens."));
-                                                    } else {
-                                                        for chunk in results.iter() {
-                                                            info!(
-                                                                "📦 Chunk {} embedded ({} tokens)",
-                                                                chunk.chunk_index,
-                                                                chunk.token_count
-                                                            );
-                                                        }
-                                                        status.set(format!("✓ Embedded {chunk_count} chunks from {file_label}"));
-                                                    }
-                                                    chunks.set(results);
-                                                }
-                                                Err(e) => {
-                                                    error!("❌ Embedding failed: {e}");
-                                                    status.set(format!("Embedding failed: {e}"));
-                                                    selected_name.set(String::new());
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            error!("❌ Failed to read {file_label}");
-                                            status.set(format!("Failed to read {file_label}"));
-                                            selected_name.set(String::new());
-                                        }
-                                    }
-                                    processing.set(false);
-                                });
-                            } else {
-                                file_status.set("No file selected.".into());
+                        let files = evt.files();
+                        if let Some(file) = files.first() {
+                            file_name.set(file.name().clone());
+                            let file_label = file.name().clone();
+                            let file_data = file.clone();
+                            let task = file_task;
+
+                            spawn(async move {
+                                file_processing.set(true);
                                 file_chunks.set(Vec::new());
-                                file_name.set(String::new());
-                            }
+                                info!("📂 Selected file: {file_label}");
+                                file_status.set(format!("Reading {file_label}..."));
+
+                                match file_data.read_string().await {
+                                    Ok(contents) => {
+                                        // Send to background coroutine for processing
+                                        task.send(FileMessage::ProcessFile(file_label, contents));
+                                    }
+                                    Err(e) => {
+                                        error!("❌ Failed to read {file_label}: {e}");
+                                        file_status.set(format!("Failed to read {file_label}: {e}"));
+                                        file_name.set(String::new());
+                                        file_processing.set(false);
+                                    }
+                                }
+                            });
                         } else {
-                            file_status.set("Browser did not provide a file list.".into());
+                            file_status.set("No file selected.".into());
                             file_chunks.set(Vec::new());
                             file_name.set(String::new());
                         }

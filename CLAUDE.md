@@ -60,7 +60,10 @@ cargo install cargo-audit --locked
 - **main.rs**: Entry point, platform-specific logging and CSS loading, mounts root App component
 - **components.rs**: UI components (`TestControls` with file upload and test buttons)
 - **embedding.rs**: JinaBERT model loading, tokenization, inference using Candle
-- **cpu.rs**: Web Worker spawning for parallel CPU computation
+- **worker/**: Web Worker for offloading CPU-intensive embedding to separate thread (WASM only)
+  - **mod.rs**: Module exports, conditional compilation for WASM target
+  - **embedding_worker.rs**: `EmbeddingWorker` with wasm-bindgen bindings for JS interop
+- **cpu.rs**: Web Worker spawning for parallel CPU computation (legacy/experimental)
 - **wgpu.rs**: WebGPU compute shader setup and execution
 - **search/**: Hybrid search system (vector + keyword + RRF fusion)
   - **engine.rs**: `HybridSearchEngine` orchestrating vector and keyword search
@@ -82,9 +85,24 @@ cargo install cargo-audit --locked
 
 **Cross-Origin Isolation**:
 - Service Worker (`public/coi-serviceworker.min.js`) injects COOP/COEP headers
-- Required for SharedArrayBuffer support
+- Required for SharedArrayBuffer support (for future Rayon/parallel processing)
 - Conditionally loaded only on web: `if cfg!(target_arch = "wasm32")`
-- Must be unhashed and in `public/` (not bundled via `asset!()`)
+- **CRITICAL: Special Asset Handling Required**
+  - Must be in `public/` directory (NOT `assets/`)
+  - Must NOT have hash in filename (must remain `coi-serviceworker.min.js`)
+  - Must NOT be processed by Dioxus `asset!()` macro
+  - Referenced directly in `main.rs` via hardcoded path: `/coppermind/assets/coi-serviceworker.min.js`
+  - **DO NOT TOUCH** this file's location or loading mechanism - it's fragile but necessary
+  - Reason: Service worker must be at predictable path for browser registration
+
+**Web Worker Architecture**:
+- **JinaBERT Embedding Worker** (`public/jinabert-embedding-worker.js`)
+  - Runs embedding inference on separate thread to prevent UI freezing
+  - Module worker (uses ES6 imports) loads WASM at `/coppermind/wasm/coppermind.js`
+  - Downloads and initializes 65MB model in worker context (takes 30-60s)
+  - Communicates via postMessage with serialized Rust types (serde-wasm-bindgen)
+  - Also in `public/` for similar reasons (needs predictable path, unhashed filename)
+- Desktop uses `tokio::spawn_blocking` instead (no worker needed)
 
 **Hybrid Search Architecture**:
 - **Vector Search**: instant-distance HNSW for semantic similarity (cosine distance)

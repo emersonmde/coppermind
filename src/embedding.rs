@@ -3,10 +3,41 @@ use candle_nn::{Activation, VarBuilder};
 use candle_transformers::models::jina_bert::{BertModel, Config, PositionEmbeddingType};
 use dioxus::prelude::*;
 use once_cell::sync::OnceCell;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 use tokenizers::tokenizer::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
+
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
+// Logging macros that work in both main thread and Web Worker contexts
+// Use web_sys::console directly instead of Dioxus logger (which requires initialization)
+#[cfg(target_arch = "wasm32")]
+macro_rules! info {
+    ($($t:tt)*) => {
+        web_sys::console::log_1(&format!($($t)*).into())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+macro_rules! error {
+    ($($t:tt)*) => {
+        web_sys::console::error_1(&format!($($t)*).into())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! info {
+    ($($t:tt)*) => {
+        eprintln!("[INFO] {}", format!($($t)*))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! error {
+    ($($t:tt)*) => {
+        eprintln!("[ERROR] {}", format!($($t)*))
+    }
+}
 
 const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
 const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
@@ -61,33 +92,25 @@ impl EmbeddingModel {
         vocab_size: usize,
         config: JinaBertConfig,
     ) -> Result<Self, String> {
-        web_sys::console::log_1(
-            &format!("📦 Loading embedding model '{}'", config.model_id.as_str()).into(),
-        );
-        web_sys::console::log_1(
-            &format!(
-                "📊 Model bytes length: {} bytes ({:.2}MB)",
-                model_bytes.len(),
-                model_bytes.len() as f64 / 1_000_000.0
-            )
-            .into(),
+        info!("📦 Loading embedding model '{}'", config.model_id.as_str());
+        info!(
+            "📊 Model bytes length: {} bytes ({:.2}MB)",
+            model_bytes.len(),
+            model_bytes.len() as f64 / 1_000_000.0
         );
 
         // Use CPU device for WASM
         let device = Device::cuda_if_available(0).unwrap();
         if device.is_cpu() {
-            web_sys::console::log_1(&"✓ Initialized CPU device".into());
+            info!("✓ Initialized CPU device");
         } else {
-            web_sys::console::log_1(&"✓ Initialized GPU device".into());
+            info!("✓ Initialized GPU device");
         }
 
         // Create model config for JinaBert
-        web_sys::console::log_1(
-            &format!(
-                "⚙️  Config: {}d hidden, {} layers, {} heads",
-                config.hidden_size, config.num_hidden_layers, config.num_attention_heads
-            )
-            .into(),
+        info!(
+            "⚙️  Config: {}d hidden, {} layers, {} heads",
+            config.hidden_size, config.num_hidden_layers, config.num_attention_heads
         );
 
         let model_config = Config::new(
@@ -104,12 +127,9 @@ impl EmbeddingModel {
             0,     // pad_token_id
             PositionEmbeddingType::Alibi,
         );
-        web_sys::console::log_1(
-            &format!(
-                "✓ Created model config (max positions: {})",
-                config.max_position_embeddings
-            )
-            .into(),
+        info!(
+            "✓ Created model config (max positions: {})",
+            config.max_position_embeddings
         );
 
         // Check safetensors header
@@ -126,32 +146,28 @@ impl EmbeddingModel {
             model_bytes[6],
             model_bytes[7],
         ]);
-        web_sys::console::log_1(
-            &format!("📋 Safetensors header size: {} bytes", header_size).into(),
-        );
+        info!("📋 Safetensors header size: {} bytes", header_size);
 
         // Load model weights from bytes
         // Use F32 for WASM (converts F16 weights on load, following candle-wasm-examples pattern)
         // Pass ownership directly to avoid cloning 62MB in WASM
-        web_sys::console::log_1(
-            &"🔄 Loading VarBuilder from safetensors (converting to F32)...".into(),
-        );
+        info!("🔄 Loading VarBuilder from safetensors (converting to F32)...");
         let vb = VarBuilder::from_buffered_safetensors(model_bytes, DType::F32, &device).map_err(
             |e| {
                 let err_msg = format!("Failed to create VarBuilder: {}", e);
-                web_sys::console::error_1(&err_msg.clone().into());
+                error!("{}", err_msg);
                 err_msg
             },
         )?;
-        web_sys::console::log_1(&"✓ VarBuilder created successfully".into());
+        info!("✓ VarBuilder created successfully");
 
-        web_sys::console::log_1(&"🔄 Creating BertModel...".into());
+        info!("🔄 Creating BertModel...");
         let model = BertModel::new(vb, &model_config).map_err(|e| {
             let err_msg = format!("Failed to create BertModel: {}", e);
-            web_sys::console::error_1(&err_msg.clone().into());
+            error!("{}", err_msg);
             err_msg
         })?;
-        web_sys::console::log_1(&"✓ BertModel created successfully".into());
+        info!("✓ BertModel created successfully");
 
         Ok(Self {
             model,
@@ -282,6 +298,7 @@ impl EmbeddingModel {
 }
 
 /// Compute cosine similarity between two embedding vectors
+#[allow(dead_code)]
 pub fn cosine_similarity(e1: &[f32], e2: &[f32]) -> f32 {
     if e1.len() != e2.len() {
         return 0.0;
@@ -299,11 +316,13 @@ pub fn cosine_similarity(e1: &[f32], e2: &[f32]) -> f32 {
 }
 
 // WASM bindings for JavaScript
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct WasmEmbeddingModel {
     model: EmbeddingModel,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl WasmEmbeddingModel {
     /// Create a new model from model bytes
@@ -363,25 +382,25 @@ impl WasmEmbeddingModel {
     }
 }
 
-/// Fetch asset bytes from the server
-/// Used for both the model weights and tokenizer JSON
+/// Fetch asset bytes from the server (web version)
+#[cfg(target_arch = "wasm32")]
 async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     let window = web_sys::window().ok_or("No window object")?;
 
-    web_sys::console::log_1(&format!("📥 Fetching model from {}...", url).into());
+    info!("📥 Fetching model from {}...", url);
 
     let resp_value = JsFuture::from(window.fetch_with_str(url))
         .await
         .map_err(|e| {
             let err = format!("Fetch failed: {:?}", e);
-            web_sys::console::error_1(&err.clone().into());
+            error!("{}", err);
             err
         })?;
 
-    web_sys::console::log_1(&"✓ Fetch completed".into());
+    info!("✓ Fetch completed");
 
     let resp: web_sys::Response = resp_value
         .dyn_into()
@@ -389,11 +408,11 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
 
     if !resp.ok() {
         let err = format!("HTTP {} fetching model", resp.status());
-        web_sys::console::error_1(&err.clone().into());
+        error!("{}", err);
         return Err(err);
     }
 
-    web_sys::console::log_1(&"✓ Response OK, reading array buffer...".into());
+    info!("✓ Response OK, reading array buffer...");
 
     let array_buffer = JsFuture::from(
         resp.array_buffer()
@@ -402,40 +421,93 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
     .await
     .map_err(|e| {
         let err = format!("Failed to await array buffer: {:?}", e);
-        web_sys::console::error_1(&err.clone().into());
+        error!("{}", err);
         err
     })?;
 
-    web_sys::console::log_1(&"✓ Array buffer received, converting to bytes...".into());
+    info!("✓ Array buffer received, converting to bytes...");
 
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     let bytes = uint8_array.to_vec();
 
-    web_sys::console::log_1(
-        &format!(
-            "✓ Model downloaded: {:.2}MB ({} bytes)",
-            bytes.len() as f64 / 1_000_000.0,
-            bytes.len()
-        )
-        .into(),
+    info!(
+        "✓ Model downloaded: {:.2}MB ({} bytes)",
+        bytes.len() as f64 / 1_000_000.0,
+        bytes.len()
     );
 
     Ok(bytes)
 }
 
-static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
-thread_local! {
-    static MODEL_CACHE: RefCell<Option<Rc<EmbeddingModel>>> = const { RefCell::new(None) };
+/// Read asset bytes from filesystem (desktop version)
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_asset_bytes(asset_path: &str) -> Result<Vec<u8>, String> {
+    info!("📥 Reading asset from {}...", asset_path);
+
+    // On desktop, Dioxus bundles assets into the app
+    // The asset! macro returns a manganis URL, but we need the actual file path
+    // Let's just read from the source assets directory directly
+    use std::path::PathBuf;
+
+    // Get the current executable directory
+    let exe_path = std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or("Failed to get exe parent directory")?;
+
+    info!("📂 Executable directory: {:?}", exe_dir);
+    info!("📂 Current directory: {:?}", std::env::current_dir());
+
+    // The bundled assets are typically in the Resources folder on macOS
+    // Or in the same directory as the executable on other platforms
+    let asset_locations = vec![
+        // Try ../Resources/assets/ (macOS app bundle)
+        exe_dir.join("..").join("Resources").join("assets"),
+        // Try ./assets (same directory as exe)
+        exe_dir.join("assets"),
+        // Try current working directory
+        PathBuf::from("assets"),
+    ];
+
+    // Extract just the filename from the asset path (it has a hash like jina-bert-dxhXXX.safetensors)
+    let filename = asset_path
+        .trim_start_matches('/')
+        .trim_start_matches("assets/");
+
+    for base_dir in &asset_locations {
+        let full_path = base_dir.join(filename);
+        info!("  Trying: {:?}", full_path);
+
+        if let Ok(bytes) = tokio::fs::read(&full_path).await {
+            info!(
+                "✓ Asset loaded from {:?}: {:.2}MB ({} bytes)",
+                full_path,
+                bytes.len() as f64 / 1_000_000.0,
+                bytes.len()
+            );
+            return Ok(bytes);
+        }
+    }
+
+    let err = format!(
+        "Failed to find asset {} in any of the expected locations",
+        asset_path
+    );
+    error!("{}", err);
+    Err(err)
 }
 
+static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
+static MODEL_CACHE: OnceCell<Arc<EmbeddingModel>> = OnceCell::new();
+
 /// Download and initialize the tokenizer once per session
-async fn ensure_tokenizer(max_positions: usize) -> Result<&'static Tokenizer, String> {
+pub async fn ensure_tokenizer(max_positions: usize) -> Result<&'static Tokenizer, String> {
     if let Some(tokenizer) = TOKENIZER.get() {
         return Ok(tokenizer);
     }
 
     let tokenizer_url = TOKENIZER_FILE.to_string();
-    web_sys::console::log_1(&format!("📚 Tokenizer URL: {}", tokenizer_url).into());
+    info!("📚 Tokenizer URL: {}", tokenizer_url);
     let tokenizer_bytes = fetch_asset_bytes(&tokenizer_url).await?;
 
     let mut tokenizer = Tokenizer::from_bytes(tokenizer_bytes)
@@ -484,24 +556,26 @@ pub struct ChunkEmbeddingResult {
     pub embedding: Vec<f32>,
 }
 
-async fn get_or_load_model() -> Result<Rc<EmbeddingModel>, String> {
-    if let Some(existing) = MODEL_CACHE.with(|cell| cell.borrow().clone()) {
-        return Ok(existing);
+pub async fn get_or_load_model() -> Result<Arc<EmbeddingModel>, String> {
+    if let Some(existing) = MODEL_CACHE.get() {
+        return Ok(existing.clone());
     }
 
     let model_url = MODEL_FILE.to_string();
-    web_sys::console::log_1(&"📦 Loading embedding model (cold start)...".into());
+    info!("📦 Loading embedding model (cold start)...");
     let model_bytes = fetch_asset_bytes(&model_url).await?;
     let config = JinaBertConfig::default();
     let model = EmbeddingModel::from_bytes(model_bytes, 30528, config)?;
-    let model = Rc::new(model);
-    MODEL_CACHE.with(|cell| {
-        cell.borrow_mut().replace(model.clone());
-    });
-    Ok(model)
+    let model = Arc::new(model);
+
+    // Try to set the model in the cache (may fail if another thread beat us to it)
+    let _ = MODEL_CACHE.set(model.clone());
+
+    // Return the cached model (in case another thread set it first)
+    Ok(MODEL_CACHE.get().unwrap().clone())
 }
 
-fn tokenize_into_chunks(
+pub fn tokenize_into_chunks(
     tokenizer: &Tokenizer,
     text: &str,
     max_tokens: usize,
@@ -544,6 +618,17 @@ fn tokenize_into_chunks(
     Ok(chunks)
 }
 
+/// Embed text by chunking it into smaller pieces and processing in batches
+///
+/// On WASM targets, processes chunks in batches of 10 with periodic yields
+/// to keep the UI responsive during large embedding operations.
+///
+/// # Arguments
+/// * `text` - The text to embed
+/// * `chunk_tokens` - Maximum tokens per chunk (will be capped at model's max_position_embeddings)
+///
+/// # Returns
+/// Vector of chunk embedding results, each containing the chunk index, token count, and embedding
 pub async fn embed_text_chunks(
     text: &str,
     chunk_tokens: usize,
@@ -559,54 +644,84 @@ pub async fn embed_text_chunks(
         return Ok(vec![]);
     }
 
-    web_sys::console::log_1(
-        &format!(
-            "🧩 Embedding {} chunks ({} tokens max per chunk)",
-            token_chunks.len(),
-            effective_chunk
-        )
-        .into(),
+    // Store token counts before processing
+    let token_counts: Vec<usize> = token_chunks.iter().map(|ids| ids.len()).collect();
+
+    info!(
+        "🧩 Embedding {} chunks ({} tokens max per chunk)",
+        token_chunks.len(),
+        effective_chunk
     );
 
-    let mut results = Vec::with_capacity(token_chunks.len());
-    for (index, ids) in token_chunks.into_iter().enumerate() {
-        let tokens = ids.len();
-        web_sys::console::log_1(
-            &format!("🚀 Embedding chunk {} ({} tokens)", index, tokens).into(),
+    // Process one chunk at a time with yields to keep UI responsive
+    const BATCH_SIZE: usize = 1;
+    let mut all_embeddings = Vec::with_capacity(token_chunks.len());
+
+    for (batch_idx, chunk_batch) in token_chunks.chunks(BATCH_SIZE).enumerate() {
+        let batch_start = batch_idx * BATCH_SIZE;
+        let batch_end = batch_start + chunk_batch.len();
+
+        info!(
+            "🚀 Processing batch {}/{} (chunks {}-{})",
+            batch_idx + 1,
+            token_chunks.len().div_ceil(BATCH_SIZE),
+            batch_start,
+            batch_end - 1
         );
-        let embedding = model
-            .embed_tokens(ids)
-            .map_err(|e| format!("Embedding chunk {} failed: {}", index, e))?;
-        web_sys::console::log_1(&format!("✅ Chunk {} complete ({} tokens)", index, tokens).into());
-        results.push(ChunkEmbeddingResult {
-            chunk_index: index,
-            token_count: tokens,
-            embedding,
-        });
+
+        // Process this batch together for maximum performance
+        let batch_embeddings = model
+            .embed_batch_tokens(chunk_batch.to_vec())
+            .map_err(|e| format!("Batch embedding failed: {}", e))?;
+
+        all_embeddings.extend(batch_embeddings);
+
+        info!(
+            "✅ Batch {}/{} complete",
+            batch_idx + 1,
+            token_chunks.len().div_ceil(BATCH_SIZE)
+        );
+
+        // Yield to event loop between batches on WASM to keep UI responsive
+        #[cfg(target_arch = "wasm32")]
+        if batch_end < token_chunks.len() {
+            use gloo_timers::future::TimeoutFuture;
+            TimeoutFuture::new(0).await;
+        }
     }
+
+    // Build results with stored token counts
+    let results = all_embeddings
+        .into_iter()
+        .enumerate()
+        .map(|(index, embedding)| ChunkEmbeddingResult {
+            chunk_index: index,
+            token_count: token_counts[index],
+            embedding,
+        })
+        .collect();
 
     Ok(results)
 }
 
 /// Main embedding function - loads model and generates embeddings
 pub async fn run_embedding(text: &str) -> Result<String, String> {
-    web_sys::console::log_1(&format!("🔮 Generating embedding for: '{}'", text).into());
+    info!("🔮 Generating embedding for: '{}'", text);
 
     let model = get_or_load_model().await?;
-    let tokenizer = ensure_tokenizer(model.max_position_embeddings()).await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
     let token_ids = tokenize_text(tokenizer, text)?;
     let token_count = token_ids.len();
-    web_sys::console::log_1(&format!("🧾 Tokenized into {} tokens", token_count).into());
+    info!("🧾 Tokenized into {} tokens", token_count);
 
-    web_sys::console::log_1(&"Generating embedding vector...".into());
+    info!("Generating embedding vector...");
 
     let embedding = model
         .embed_tokens(token_ids)
         .map_err(|e| format!("Embedding failed: {}", e))?;
 
-    web_sys::console::log_1(
-        &format!("✓ Generated {}-dimensional embedding", embedding.len()).into(),
-    );
+    info!("✓ Generated {}-dimensional embedding", embedding.len());
 
     Ok(format!(
         "✓ Embedding Generated Successfully!\n\n\
@@ -640,15 +755,15 @@ pub async fn run_embedding_example(
     model_bytes: Vec<u8>,
     token_ids: Vec<u32>,
 ) -> Result<Vec<f32>, String> {
-    web_sys::console::log_1(&"Loading JinaBert model...".into());
+    info!("Loading JinaBert model...");
 
     let config = JinaBertConfig::default();
     let model = EmbeddingModel::from_bytes(model_bytes, 30522, config)?;
 
-    web_sys::console::log_1(&"Generating embedding...".into());
+    info!("Generating embedding...");
     let embedding = model.embed_tokens(token_ids)?;
 
-    web_sys::console::log_1(&format!("Embedding dimension: {}", embedding.len()).into());
+    info!("Embedding dimension: {}", embedding.len());
 
     Ok(embedding)
 }

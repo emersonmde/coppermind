@@ -8,8 +8,10 @@ edition = "2021"
 
 [dependencies]
 # Cross-platform dependencies
-dioxus = { version = "0.6.0", features = [] }
+dioxus = { version = "0.7.1", features = [] }
+futures = "0.3"
 futures-channel = "0.3"
+futures-util = "0.3"
 candle-core = "0.8.0"
 candle-nn = "0.8.0"
 candle-transformers = "0.8.0"
@@ -25,8 +27,9 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
 web-sys = { version = "0.3", features = [
-    "Worker", "MessageEvent", "console", "Blob", "Url", "Window", "Navigator",
+    "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "console", "Blob", "Url", "Window", "Navigator",
     "Request", "RequestInit", "RequestMode", "Response", "Headers"
 ] }
 
@@ -39,6 +42,7 @@ instant-distance = "0.6"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 # OPFS storage features (web-only)
 web-sys = { version = "0.3", features = [

@@ -3,6 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{Blob, MessageEvent, Url, Worker};
 
+#[allow(dead_code)]
 pub async fn spawn_worker(
     worker_id: usize,
     text: &str,
