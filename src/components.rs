@@ -59,15 +59,10 @@ pub fn TestControls() -> Element {
                     EmbeddingMessage::RunTest(text) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            // Desktop: Run on Tokio's blocking thread pool for CPU-intensive work
-                            match tokio::task::spawn_blocking(move || {
-                                futures::executor::block_on(run_embedding(&text))
-                            })
-                            .await
-                            {
-                                Ok(Ok(res)) => result.set(res),
-                                Ok(Err(e)) => result.set(format!("Error: {}", e)),
-                                Err(e) => result.set(format!("Task error: {}", e)),
+                            // Desktop: Direct async call (Dioxus already has async runtime)
+                            match run_embedding(&text).await {
+                                Ok(res) => result.set(res),
+                                Err(e) => result.set(format!("Error: {}", e)),
                             }
                         }
 
@@ -107,13 +102,9 @@ pub fn TestControls() -> Element {
 
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            // Desktop: Run on Tokio's blocking thread pool for CPU-intensive work
-                            match tokio::task::spawn_blocking(move || {
-                                futures::executor::block_on(embed_text_chunks(&contents, 512))
-                            })
-                            .await
-                            {
-                                Ok(Ok(results)) => {
+                            // Desktop: Direct async call (Dioxus already has async runtime)
+                            match embed_text_chunks(&contents, 512).await {
+                                Ok(results) => {
                                     let chunk_count = results.len();
                                     if chunk_count == 0 {
                                         status.set(format!(
@@ -132,14 +123,9 @@ pub fn TestControls() -> Element {
                                     }
                                     chunks.set(results);
                                 }
-                                Ok(Err(e)) => {
+                                Err(e) => {
                                     error!("❌ Embedding failed: {e}");
                                     status.set(format!("Embedding failed: {e}"));
-                                    name.set(String::new());
-                                }
-                                Err(e) => {
-                                    error!("❌ Task error: {e}");
-                                    status.set(format!("Task error: {e}"));
                                     name.set(String::new());
                                 }
                             }
