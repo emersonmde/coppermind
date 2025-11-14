@@ -89,13 +89,13 @@ jobs:
       - name: Download model assets
         run: ./download-models.sh
       - name: Build Dioxus web assets
-        run: dx bundle
+        run: dx bundle --release
       # Upload the built static site as a Pages artifact
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           # Dioxus web output location (0.7 default)
-          path: target/dx/coppermind/debug/web/public
+          path: target/dx/coppermind/release/web/public
 
   deploy:
     name: Deploy to GitHub Pages
