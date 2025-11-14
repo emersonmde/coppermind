@@ -95,7 +95,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # Dioxus web output location (0.7 default)
-          path: target/dx/coppermind/release/web/public
+          path: target/dx/coppermind/debug/web/public
 
   deploy:
     name: Deploy to GitHub Pages
