@@ -1,4 +1,10 @@
-use crate::embedding::{embed_text_chunks, run_embedding, ChunkEmbeddingResult};
+use crate::embedding::{embed_text_chunks, ChunkEmbeddingResult};
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::embedding::run_embedding;
+
+#[cfg(target_arch = "wasm32")]
+use crate::embedding::format_embedding_summary;
 use crate::search::types::{Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageError;
@@ -6,6 +12,17 @@ use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
+
+#[cfg(target_arch = "wasm32")]
+use crate::workers::EmbeddingWorkerClient;
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+enum WorkerStatus {
+    Pending,
+    Ready(EmbeddingWorkerClient),
+    Failed(String),
+}
 
 // Mock storage for testing
 struct MockStorage;
@@ -50,9 +67,48 @@ pub fn TestControls() -> Element {
     let mut file_chunks = use_signal(Vec::<ChunkEmbeddingResult>::new);
     let mut file_name = use_signal(String::new);
 
+    #[cfg(target_arch = "wasm32")]
+    let worker_state = use_signal(|| WorkerStatus::Pending);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let worker_signal = worker_state.clone();
+        use_effect(move || {
+            let mut worker_state = worker_signal.clone();
+            if matches!(*worker_state.read(), WorkerStatus::Pending) {
+                info!("🔧 Initializing embedding worker…");
+                match EmbeddingWorkerClient::new() {
+                    Ok(client) => worker_state.set(WorkerStatus::Ready(client)),
+                    Err(err) => {
+                        error!("❌ Embedding worker failed to start: {}", err);
+                        worker_state.set(WorkerStatus::Failed(err));
+                    }
+                }
+            };
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    let worker_status_view: Element = {
+        let status_label = match worker_state.read().clone() {
+            WorkerStatus::Pending => "Web Worker: starting…".to_string(),
+            WorkerStatus::Ready(_) => "Web Worker: ready ✅".to_string(),
+            WorkerStatus::Failed(err) => format!("Web Worker error: {}", err),
+        };
+
+        rsx! { p { class: "status", "{status_label}" } }
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let worker_status_view: Element = {
+        rsx! { Fragment {} }
+    };
+
     // Embedding test coroutine - runs in background
     let embedding_task = use_coroutine({
         let mut result = embedding_result;
+        #[cfg(target_arch = "wasm32")]
+        let worker_state = worker_state.clone();
         move |mut rx: UnboundedReceiver<EmbeddingMessage>| async move {
             while let Some(msg) = rx.next().await {
                 match msg {
@@ -68,11 +124,30 @@ pub fn TestControls() -> Element {
 
                         #[cfg(target_arch = "wasm32")]
                         {
-                            // Web: Runs on main thread (blocks UI)
-                            // TODO: Implement Web Workers for true parallelism
-                            match run_embedding(&text).await {
-                                Ok(res) => result.set(res),
-                                Err(e) => result.set(format!("Error: {}", e)),
+                            let worker_snapshot = worker_state.read().clone();
+                            match worker_snapshot {
+                                WorkerStatus::Pending => {
+                                    result
+                                        .set("Embedding worker is starting… please retry.".into());
+                                }
+                                WorkerStatus::Failed(err) => {
+                                    result.set(format!("Embedding worker unavailable: {}", err));
+                                }
+                                WorkerStatus::Ready(client) => {
+                                    match client.embed(text.clone()).await {
+                                        Ok(computation) => {
+                                            let formatted = format_embedding_summary(
+                                                &text,
+                                                computation.token_count,
+                                                &computation.embedding,
+                                            );
+                                            result.set(formatted);
+                                        }
+                                        Err(e) => {
+                                            result.set(format!("Worker embedding failed: {}", e));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -173,6 +248,8 @@ pub fn TestControls() -> Element {
             div { class: "test-section",
                 h2 { "Text Embedding Test" }
                 p { class: "description", "JinaBERT text embeddings using Candle ML framework (background processing)" }
+
+                {worker_status_view}
 
                 button {
                     class: "btn-primary",

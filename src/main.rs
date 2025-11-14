@@ -1,17 +1,21 @@
-mod components;
-mod cpu;
-mod embedding;
-mod search;
-mod storage;
-mod wgpu;
-
-use components::TestControls;
+use coppermind::components::TestControls;
 use dioxus::prelude::*;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window();
+        let has_document = window.as_ref().and_then(|w| w.document()).is_some();
+
+        if window.is_none() || !has_document {
+            // Running inside a Web Worker — skip mounting the UI.
+            return;
+        }
+    }
+
     // Initialize cross-platform logger (web console + desktop stdout)
     dioxus::logger::init(dioxus::logger::tracing::Level::INFO).expect("logger failed to init");
     dioxus::launch(App);

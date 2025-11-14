@@ -385,20 +385,31 @@ impl WasmEmbeddingModel {
 /// Fetch asset bytes from the server (web version)
 #[cfg(target_arch = "wasm32")]
 async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
+    use js_sys::{Function, Promise, Reflect};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
-    let window = web_sys::window().ok_or("No window object")?;
+    let global = js_sys::global();
+    let fetch_fn = Reflect::get(&global, &JsValue::from_str("fetch"))
+        .map_err(|_| "fetch API unavailable".to_string())?
+        .dyn_into::<Function>()
+        .map_err(|_| "fetch is not callable".to_string())?;
 
-    info!("📥 Fetching model from {}...", url);
+    let resolved_url = resolve_asset_url(url);
+    info!(
+        "📥 Fetching asset (raw: {}, resolved: {})...",
+        url, resolved_url
+    );
 
-    let resp_value = JsFuture::from(window.fetch_with_str(url))
-        .await
-        .map_err(|e| {
-            let err = format!("Fetch failed: {:?}", e);
-            error!("{}", err);
-            err
-        })?;
+    let promise = fetch_fn
+        .call1(&global, &JsValue::from_str(&resolved_url))
+        .map_err(|e| format!("Fetch call failed: {:?}", e))?;
+
+    let resp_value = JsFuture::from(Promise::from(promise)).await.map_err(|e| {
+        let err = format!("Fetch failed: {:?} (resolved: {})", e, resolved_url);
+        error!("{}", err);
+        err
+    })?;
 
     info!("✓ Fetch completed");
 
@@ -407,7 +418,12 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|_| "Failed to cast to Response")?;
 
     if !resp.ok() {
-        let err = format!("HTTP {} fetching model", resp.status());
+        let err = format!(
+            "HTTP {} fetching {} (raw path: {})",
+            resp.status(),
+            resolved_url,
+            url
+        );
         error!("{}", err);
         return Err(err);
     }
@@ -425,18 +441,84 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
         err
     })?;
 
-    info!("✓ Array buffer received, converting to bytes...");
-
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     let bytes = uint8_array.to_vec();
 
     info!(
-        "✓ Model downloaded: {:.2}MB ({} bytes)",
-        bytes.len() as f64 / 1_000_000.0,
-        bytes.len()
+        "✓ Asset fetched successfully ({} bytes, {:.2}MB)",
+        bytes.len(),
+        bytes.len() as f64 / 1_000_000.0
     );
 
     Ok(bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_asset_url(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("blob:")
+    {
+        return trimmed.to_string();
+    }
+
+    if let Some(resolved) = resolve_with_worker_base(trimmed) {
+        return resolved;
+    }
+
+    if let Some(window) = web_sys::window() {
+        if let Some(document) = window.document() {
+            match document.query_selector("meta[name=\"DIOXUS_ASSET_ROOT\"]") {
+                Ok(Some(meta)) => {
+                    if let Some(content) = meta.get_attribute("content") {
+                        if let Some(resolved) = join_base_path(&content, trimmed) {
+                            return resolved;
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    error!("Failed to read DIOXUS_ASSET_ROOT meta tag: {:?}", err);
+                }
+            }
+        }
+    }
+
+    trimmed.to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn join_base_path(base: &str, path: &str) -> Option<String> {
+    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("blob:") {
+        return None;
+    }
+
+    let normalized_base = if base == "/" {
+        String::new()
+    } else {
+        base.trim_end_matches('/').to_string()
+    };
+
+    if normalized_base.is_empty() {
+        return Some(format!("/{}", path.trim_start_matches('/')));
+    }
+
+    if path.starts_with('/') {
+        Some(format!("{}{}", normalized_base, path))
+    } else {
+        Some(format!("{}/{}", normalized_base, path))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_with_worker_base(path: &str) -> Option<String> {
+    use js_sys::Reflect;
+
+    let global = js_sys::global();
+    let base_value = Reflect::get(&global, &JsValue::from_str("__COPPERMIND_ASSET_BASE")).ok()?;
+    let base = base_value.as_string()?;
+    join_base_path(&base, path)
 }
 
 /// Read asset bytes from filesystem (desktop version)
@@ -552,6 +634,13 @@ fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, String> 
 #[derive(Clone)]
 pub struct ChunkEmbeddingResult {
     pub chunk_index: usize,
+    pub token_count: usize,
+    pub embedding: Vec<f32>,
+}
+
+/// Embedding payload returned from worker-friendly APIs
+#[derive(Clone)]
+pub struct EmbeddingComputation {
     pub token_count: usize,
     pub embedding: Vec<f32>,
 }
@@ -707,7 +796,16 @@ pub async fn embed_text_chunks(
 /// Main embedding function - loads model and generates embeddings
 pub async fn run_embedding(text: &str) -> Result<String, String> {
     info!("🔮 Generating embedding for: '{}'", text);
+    let computation = compute_embedding(text).await?;
+    Ok(format_embedding_summary(
+        text,
+        computation.token_count,
+        &computation.embedding,
+    ))
+}
 
+/// Produce the raw embedding vector (used by Web Worker and native flows)
+pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, String> {
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
     let tokenizer = ensure_tokenizer(max_positions).await?;
@@ -723,7 +821,20 @@ pub async fn run_embedding(text: &str) -> Result<String, String> {
 
     info!("✓ Generated {}-dimensional embedding", embedding.len());
 
-    Ok(format!(
+    Ok(EmbeddingComputation {
+        token_count,
+        embedding,
+    })
+}
+
+/// Format the embedding details for UI display
+pub fn format_embedding_summary(text: &str, token_count: usize, embedding: &[f32]) -> String {
+    let mut preview = [0.0f32; 10];
+    for (dest, src) in preview.iter_mut().zip(embedding.iter()) {
+        *dest = *src;
+    }
+
+    format!(
         "✓ Embedding Generated Successfully!\n\n\
         Input: '{}'\n\
         Tokens used: {}\n\
@@ -735,17 +846,17 @@ pub async fn run_embedding(text: &str) -> Result<String, String> {
         text,
         token_count,
         embedding.len(),
-        embedding[0],
-        embedding[1],
-        embedding[2],
-        embedding[3],
-        embedding[4],
-        embedding[5],
-        embedding[6],
-        embedding[7],
-        embedding[8],
-        embedding[9]
-    ))
+        preview[0],
+        preview[1],
+        preview[2],
+        preview[3],
+        preview[4],
+        preview[5],
+        preview[6],
+        preview[7],
+        preview[8],
+        preview[9]
+    )
 }
 
 /// Example function to demonstrate usage from Rust with actual model
