@@ -89,7 +89,7 @@ jobs:
       - name: Download model assets
         run: ./download-models.sh
       - name: Build Dioxus web assets
-        run: dx bundle --release
+        run: dx bundle
       # Upload the built static site as a Pages artifact
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
