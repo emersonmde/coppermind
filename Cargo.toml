@@ -35,7 +35,8 @@ js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 web-sys = { version = "0.3", features = [
     "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "console", "Blob", "Url", "Window", "Navigator",
-    "DedicatedWorkerGlobalScope", "Request", "RequestInit", "RequestMode", "Response", "Headers"
+    "DedicatedWorkerGlobalScope", "Request", "RequestInit", "RequestMode", "Response", "Headers",
+    "Document", "Element", "NodeList", "HtmlScriptElement"
 ] }
 
 # Hybrid Search dependencies

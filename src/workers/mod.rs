@@ -53,6 +53,21 @@ pub mod embedding_worker {
 
             worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
+            // Find the WASM JS path by querying the DOM for the main coppermind script
+            // Then send it to the worker so it knows which WASM module to load
+            let wasm_js_path = Self::find_wasm_js_path()?;
+            web_sys::console::log_1(&format!("Found WASM JS path: {}", wasm_js_path).into());
+
+            // Send init message to worker with the WASM JS path
+            let init_msg = js_sys::Object::new();
+            js_sys::Reflect::set(&init_msg, &"type".into(), &"init".into())
+                .map_err(|_| "Failed to set type")?;
+            js_sys::Reflect::set(&init_msg, &"wasmJsPath".into(), &wasm_js_path.into())
+                .map_err(|_| "Failed to set wasmJsPath")?;
+            worker
+                .post_message(&init_msg)
+                .map_err(|e| format!("Failed to post init message: {:?}", e))?;
+
             Ok(Self {
                 worker,
                 pending,
@@ -60,6 +75,39 @@ pub mod embedding_worker {
                 next_id,
                 _on_message: Rc::new(on_message),
             })
+        }
+
+        fn find_wasm_js_path() -> Result<String, String> {
+            let window = web_sys::window().ok_or("No window object")?;
+            let document = window.document().ok_or("No document")?;
+
+            // Find the script tag that loaded our main WASM module
+            // Look for scripts with "coppermind" but NOT service worker or embedding worker
+            let scripts = document
+                .query_selector_all("script[src]")
+                .map_err(|_| "Failed to query scripts")?;
+
+            for i in 0..scripts.length() {
+                if let Some(script) = scripts.item(i) {
+                    if let Some(script_el) = script.dyn_ref::<web_sys::HtmlScriptElement>() {
+                        let src = script_el.src();
+                        // Must contain "coppermind" and end with ".js"
+                        // But must NOT contain "coi-serviceworker" or "embedding-worker"
+                        if src.contains("coppermind")
+                            && src.ends_with(".js")
+                            && !src.contains("coi-serviceworker")
+                            && !src.contains("embedding-worker")
+                        {
+                            // Extract pathname from the full URL
+                            if let Ok(url) = web_sys::Url::new(&src) {
+                                return Ok(url.pathname());
+                            }
+                        }
+                    }
+                }
+            }
+
+            Err("Could not find coppermind script tag in document".to_string())
         }
 
         pub async fn embed(&self, text: String) -> Result<EmbeddingComputation, String> {
