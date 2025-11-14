@@ -91,7 +91,9 @@ cargo install cargo-audit --locked
   - Must be in `public/` directory (NOT `assets/`)
   - Must NOT have hash in filename (must remain `coi-serviceworker.min.js`)
   - Must NOT be processed by Dioxus `asset!()` macro
-  - Referenced directly in `main.rs` via hardcoded path: `/coppermind/assets/coi-serviceworker.min.js`
+  - Referenced directly in `main.rs` via conditional path:
+    - Dev mode: `/coppermind/assets/coi-serviceworker.min.js` (public/ → /assets/)
+    - Release mode: `/coppermind/coi-serviceworker.min.js` (public/ → root)
   - **DO NOT TOUCH** this file's location or loading mechanism - it's fragile but necessary
   - Reason: Service worker must be at predictable path for browser registration
 
