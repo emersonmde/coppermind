@@ -10,18 +10,8 @@
 dist/
 
 # Downloaded model files
-assets/models/*.safetensors
-assets/models/*.bin
-assets/models/*.onnx
-assets/models/*-tokenizer.json
+assets/models/*
 
-# Local storage and search indexes (native desktop)
-data/
-storage/
-indexes/
-.coppermind/
-*.index
-*.bincode
 
 # Temporary test files
 *.tmp
