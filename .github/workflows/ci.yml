@@ -3,7 +3,6 @@ name: Dioxus CI
 on:
   push:
     branches: [ main ]
-  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
@@ -86,7 +85,7 @@ jobs:
       - name: Install dioxus-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: dioxus-cli@0.6
+          tool: dioxus-cli@0.7
       - name: Download model assets
         run: ./download-models.sh
       - name: Build Dioxus web assets
@@ -95,7 +94,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Dioxus web output location (0.5/0.6 default)
+          # Dioxus web output location (0.7 default)
           path: target/dx/coppermind/release/web/public
 
   deploy:
