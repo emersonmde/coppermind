@@ -162,6 +162,8 @@ pub fn TestControls() -> Element {
         let mut chunks = file_chunks;
         let mut name = file_name;
         let mut processing = file_processing;
+        #[cfg(target_arch = "wasm32")]
+        let worker_state = worker_state.clone();
 
         move |mut rx: UnboundedReceiver<FileMessage>| async move {
             while let Some(msg) = rx.next().await {
@@ -208,31 +210,80 @@ pub fn TestControls() -> Element {
 
                         #[cfg(target_arch = "wasm32")]
                         {
-                            // Web: Process with periodic yields to keep UI responsive
-                            match embed_text_chunks(&contents, 512).await {
-                                Ok(results) => {
+                            // Web: Use embedding worker for non-blocking processing
+                            let worker_snapshot = worker_state.read().clone();
+                            match worker_snapshot {
+                                WorkerStatus::Pending => {
+                                    status.set("Embedding worker is starting… please retry.".into());
+                                    processing.set(false);
+                                }
+                                WorkerStatus::Failed(err) => {
+                                    status.set(format!("Embedding worker unavailable: {}", err));
+                                    name.set(String::new());
+                                    processing.set(false);
+                                }
+                                WorkerStatus::Ready(client) => {
+                                    // Split text into chunks (roughly 2000 chars each, will be re-chunked by worker)
+                                    let chunk_size = 2000;
+                                    let text_chunks: Vec<String> = contents
+                                        .chars()
+                                        .collect::<Vec<_>>()
+                                        .chunks(chunk_size)
+                                        .map(|chunk| chunk.iter().collect())
+                                        .collect();
+
+                                    let total_chunks = text_chunks.len();
+                                    info!("📄 Split file into {} text chunks", total_chunks);
+
+                                    let mut results = Vec::new();
+
+                                    for (idx, chunk_text) in text_chunks.into_iter().enumerate() {
+                                        status.set(format!(
+                                            "Embedding chunk {}/{} from {}...",
+                                            idx + 1,
+                                            total_chunks,
+                                            file_label
+                                        ));
+
+                                        match client.embed(chunk_text).await {
+                                            Ok(computation) => {
+                                                info!(
+                                                    "📦 Chunk {} embedded ({} tokens)",
+                                                    idx,
+                                                    computation.token_count
+                                                );
+                                                results.push(ChunkEmbeddingResult {
+                                                    chunk_index: idx,
+                                                    token_count: computation.token_count,
+                                                    embedding: computation.embedding,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                error!("❌ Failed to embed chunk {}: {}", idx, e);
+                                                status.set(format!(
+                                                    "Failed to embed chunk {}/{}: {}",
+                                                    idx + 1,
+                                                    total_chunks,
+                                                    e
+                                                ));
+                                                name.set(String::new());
+                                                processing.set(false);
+                                                return;
+                                            }
+                                        }
+                                    }
+
                                     let chunk_count = results.len();
                                     if chunk_count == 0 {
                                         status.set(format!(
                                             "File {file_label} did not produce any tokens."
                                         ));
                                     } else {
-                                        for chunk in results.iter() {
-                                            info!(
-                                                "📦 Chunk {} embedded ({} tokens)",
-                                                chunk.chunk_index, chunk.token_count
-                                            );
-                                        }
                                         status.set(format!(
                                             "✓ Embedded {chunk_count} chunks from {file_label}"
                                         ));
                                     }
                                     chunks.set(results);
-                                }
-                                Err(e) => {
-                                    error!("❌ Embedding failed: {e}");
-                                    status.set(format!("Embedding failed: {e}"));
-                                    name.set(String::new());
                                 }
                             }
                         }

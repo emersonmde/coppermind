@@ -93,7 +93,7 @@ dx serve --platform mobile
 - ✅ Single-text embedding generation
 - ✅ File upload and chunked embedding
 - ✅ Cross-Origin Isolation (COOP/COEP) via Service Worker
-- ✅ Web Workers for parallel CPU tasks (demo)
+- ✅ Web Workers for non-blocking ML inference (blob pattern)
 - ✅ WebGPU compute shader demo
 - ✅ Cosine similarity computation
 
@@ -191,29 +191,60 @@ Once storage and search are implemented, add a new view for actual semantic sear
 
 ---
 
+### Milestone 2.5: Web Worker for Non-Blocking ML Inference ✅
+**Status:** Complete for test button; file upload path needs debugging
+**Completed:** November 2025
+
+**Goal:** Prevent UI blocking during ML model loading and inference on web platform.
+
+**Implemented:**
+- Blob worker pattern for dynamic worker creation (avoids asset hashing issues)
+- WASM module loading in worker context
+- Model download and caching in worker thread (65MB, 30-60s first run)
+- Tokenization and embedding inference on worker thread
+- Message passing via js_sys::Object (direct object construction)
+- UI remains responsive during all ML operations
+
+**Tech Stack:**
+- web-sys Worker API for worker creation
+- Blob URLs for dynamic worker code generation
+- js_sys for JavaScript object construction
+- wasm-bindgen for WASM/JS interop
+
+**Test:** "Test Web Worker Embedding" button validates non-blocking inference.
+
+**Known Issue:** File upload path currently experiencing errors; test button works correctly.
+
+**Documentation:** See `docs/web-worker-implementation.md` for complete implementation details.
+
+---
+
 ## Next Milestones
 
 > **NOTE:** Milestones 2-3 below are superseded by **ADR-0001: Hybrid Search Architecture**
 > See `docs/adr-0001-hybrid-search-architecture.md` for the updated architecture using USearch + BM25.
 
-### Milestone 1.5: Parallel Embedding with wasm-bindgen-rayon (NEXT) 🎯
-**Goal:** Implement true parallel CPU-bound embedding using Rayon in WASM
+### Milestone 1.5: Parallel Embedding with wasm-bindgen-rayon (Future Optimization) 🎯
+**Goal:** Improve throughput for batch embedding using parallel processing across CPU cores
 
-**Current Problem:**
-- **Web Platform:** Embedding blocks main thread, UI freezes during inference
-- **Attempted Solutions:**
-  - ❌ Web Worker with separate WASM instance: Failed (full app module includes DOM APIs)
-  - ❌ Dioxus logger incompatibility in worker context
-- **Root Cause:** Need true multi-threading, not just async task isolation
-- **Best Solution:** wasm-bindgen-rayon for automatic parallelism
+**Current State:**
+- Web workers (Milestone 2.5) solve UI blocking for single-threaded inference
+- wasm-bindgen-rayon could enable parallel processing of multiple chunks simultaneously
+- Would provide throughput improvements for large document processing
 
-**Why wasm-bindgen-rayon:**
-- ✅ True multi-threading with SharedArrayBuffer (COOP/COEP already configured)
-- ✅ Automatic work distribution across CPU cores
-- ✅ Proven to work with Candle (3x speedup in Candle PR #3063)
-- ✅ Minimal code changes (`.par_iter()` instead of `.iter()`)
-- ✅ No separate worker binary needed
-- ✅ Scales with CPU core count
+**Potential Benefits:**
+- True multi-threading with SharedArrayBuffer (COOP/COEP already configured)
+- Automatic work distribution across CPU cores
+- Proven to work with Candle (3x speedup in Candle PR #3063)
+- Minimal code changes (`.par_iter()` instead of `.iter()`)
+- No separate worker binary needed
+- Scales with CPU core count
+
+**Tradeoff Analysis:**
+- Current web worker approach: UI responsive, single-threaded inference
+- wasm-bindgen-rayon approach: UI responsive, multi-core parallel inference
+- Added complexity: Nightly Rust, SharedArrayBuffer, more complex debugging
+- May not be necessary if single-threaded performance is acceptable
 
 **Implementation Plan:**
 

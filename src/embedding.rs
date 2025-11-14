@@ -504,6 +504,11 @@ fn join_base_path(base: &str, path: &str) -> Option<String> {
         return Some(format!("/{}", path.trim_start_matches('/')));
     }
 
+    // Check if path already starts with the base path
+    if path.starts_with(&normalized_base) {
+        return Some(path.to_string());
+    }
+
     if path.starts_with('/') {
         Some(format!("{}{}", normalized_base, path))
     } else {
