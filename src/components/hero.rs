@@ -6,6 +6,8 @@ use crate::workers::EmbeddingWorkerClient;
 #[cfg(target_arch = "wasm32")]
 use dioxus::logger::tracing::{error, info};
 
+use super::{use_search_engine_status, SearchEngineStatus};
+
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
 pub enum WorkerStatus {
@@ -46,6 +48,8 @@ pub fn provide_worker_state() -> Signal<WorkerStatus> {
 
 #[component]
 pub fn Hero() -> Element {
+    let search_engine_status = use_search_engine_status();
+
     #[cfg(target_arch = "wasm32")]
     let worker_status_view: Element = {
         let worker_state = use_worker_state();
@@ -61,6 +65,22 @@ pub fn Hero() -> Element {
     #[cfg(not(target_arch = "wasm32"))]
     let worker_status_view: Element = rsx! { Fragment {} };
 
+    let search_status_view: Element = {
+        let status_label = match search_engine_status.read().clone() {
+            SearchEngineStatus::Pending => "Search Index: initializing…".to_string(),
+            SearchEngineStatus::Ready { doc_count } => {
+                if doc_count == 0 {
+                    "Search Index: ready (empty) ✅".to_string()
+                } else {
+                    format!("Search Index: ready ({} documents) ✅", doc_count)
+                }
+            }
+            SearchEngineStatus::Failed(err) => format!("Search Index error: {}", err),
+        };
+
+        rsx! { p { class: "worker-status", "{status_label}" } }
+    };
+
     rsx! {
         div { class: "hero-section",
             h1 { class: "hero-title", "Coppermind" }
@@ -68,6 +88,7 @@ pub fn Hero() -> Element {
                 "Local-first semantic search engine powered by Rust + WASM"
             }
             {worker_status_view}
+            {search_status_view}
         }
     }
 }

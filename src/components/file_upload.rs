@@ -1,4 +1,5 @@
 use crate::embedding::ChunkEmbeddingResult;
+use crate::search::types::{Document, DocumentMetadata};
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
@@ -10,6 +11,8 @@ use crate::embedding::embed_text_chunks;
 
 #[cfg(target_arch = "wasm32")]
 use super::hero::{use_worker_state, WorkerStatus};
+
+use super::use_search_engine;
 
 // Messages for file processing coroutine
 enum FileMessage {
@@ -48,6 +51,8 @@ pub fn FileUpload() -> Element {
     #[cfg(target_arch = "wasm32")]
     let worker_state = use_worker_state();
 
+    let search_engine = use_search_engine();
+
     // File processing coroutine - runs in background
     let file_task = use_coroutine({
         let mut status = file_status;
@@ -56,8 +61,9 @@ pub fn FileUpload() -> Element {
         let mut processing = file_processing;
         let mut metrics_signal = metrics;
         let mut progress_signal = progress;
+        let engine = search_engine;
         #[cfg(target_arch = "wasm32")]
-        let worker_state = worker_state.clone();
+        let worker_state = worker_state;
 
         move |mut rx: UnboundedReceiver<FileMessage>| async move {
             while let Some(msg) = rx.next().await {
@@ -97,8 +103,66 @@ pub fn FileUpload() -> Element {
                                                 chunk.chunk_index, chunk.token_count
                                             );
                                         }
+
+                                        // Index chunks in search engine
+                                        status.set("Indexing chunks in search engine...".into());
+                                        let mut indexed_count = 0;
+                                        let engine_arc = engine.read().clone();
+                                        if let Some(engine_lock) = engine_arc {
+                                            let mut search_engine = engine_lock.lock().await;
+                                            for (idx, chunk_result) in results.iter().enumerate() {
+                                                // Split original text into chunks for indexing
+                                                let chunk_size = 2000;
+                                                let chunks_text: Vec<String> = contents
+                                                    .chars()
+                                                    .collect::<Vec<_>>()
+                                                    .chunks(chunk_size)
+                                                    .map(|chunk| chunk.iter().collect())
+                                                    .collect();
+
+                                                if let Some(chunk_text) = chunks_text.get(idx) {
+                                                    let doc = Document {
+                                                        text: chunk_text.clone(),
+                                                        metadata: DocumentMetadata {
+                                                            filename: Some(format!(
+                                                                "{} (chunk {})",
+                                                                file_label,
+                                                                idx + 1
+                                                            )),
+                                                            source: Some(file_label.clone()),
+                                                            created_at: std::time::SystemTime::now(
+                                                            )
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap()
+                                                            .as_secs(),
+                                                        },
+                                                    };
+
+                                                    match search_engine
+                                                        .add_document(
+                                                            doc,
+                                                            chunk_result.embedding.clone(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(_) => indexed_count += 1,
+                                                        Err(e) => {
+                                                            error!(
+                                                                "❌ Failed to index chunk {}: {:?}",
+                                                                idx, e
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            info!(
+                                                "✅ Indexed {} chunks in search engine",
+                                                indexed_count
+                                            );
+                                        }
+
                                         status.set(format!(
-                                            "✓ Embedded {chunk_count} chunks from {file_label}"
+                                            "✓ Indexed {chunk_count} chunks from {file_label}"
                                         ));
 
                                         // Calculate metrics
@@ -167,7 +231,7 @@ pub fn FileUpload() -> Element {
 
                                     let mut results = Vec::new();
 
-                                    for (idx, chunk_text) in text_chunks.into_iter().enumerate() {
+                                    for (idx, chunk_text) in text_chunks.iter().enumerate() {
                                         status.set(format!(
                                             "Embedding chunk {}/{} from {}...",
                                             idx + 1,
@@ -175,7 +239,7 @@ pub fn FileUpload() -> Element {
                                             file_label
                                         ));
 
-                                        match client.embed(chunk_text).await {
+                                        match client.embed(chunk_text.clone()).await {
                                             Ok(computation) => {
                                                 info!(
                                                     "📦 Chunk {} embedded ({} tokens)",
@@ -207,9 +271,9 @@ pub fn FileUpload() -> Element {
                                                 });
 
                                                 // Update progress
-                                                let percentage =
-                                                    (chunk_count as f64 / total_chunks as f64)
-                                                        * 100.0;
+                                                let percentage = (chunk_count as f64
+                                                    / total_chunks as f64)
+                                                    * 100.0;
                                                 progress_signal.set(ProcessingProgress {
                                                     current: chunk_count,
                                                     total: total_chunks,
@@ -237,8 +301,58 @@ pub fn FileUpload() -> Element {
                                             "File {file_label} did not produce any tokens."
                                         ));
                                     } else {
+                                        // Index chunks in search engine
+                                        status.set("Indexing chunks in search engine...".into());
+                                        let mut indexed_count = 0;
+                                        let engine_arc = engine.read().clone();
+                                        if let Some(engine_lock) = engine_arc {
+                                            let mut search_engine = engine_lock.lock().await;
+                                            for (idx, chunk_result) in results.iter().enumerate() {
+                                                // Get the corresponding text chunk
+                                                if let Some(chunk_text) = text_chunks.get(idx) {
+                                                    let doc = Document {
+                                                        text: chunk_text.clone(),
+                                                        metadata: DocumentMetadata {
+                                                            filename: Some(format!(
+                                                                "{} (chunk {})",
+                                                                file_label,
+                                                                idx + 1
+                                                            )),
+                                                            source: Some(file_label.clone()),
+                                                            created_at: instant::SystemTime::now()
+                                                                .duration_since(
+                                                                    instant::SystemTime::UNIX_EPOCH,
+                                                                )
+                                                                .unwrap()
+                                                                .as_secs(),
+                                                        },
+                                                    };
+
+                                                    match search_engine
+                                                        .add_document(
+                                                            doc,
+                                                            chunk_result.embedding.clone(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(_) => indexed_count += 1,
+                                                        Err(e) => {
+                                                            error!(
+                                                                "❌ Failed to index chunk {}: {:?}",
+                                                                idx, e
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            info!(
+                                                "✅ Indexed {} chunks in search engine",
+                                                indexed_count
+                                            );
+                                        }
+
                                         status.set(format!(
-                                            "✓ Embedded {chunk_count} chunks from {file_label}"
+                                            "✓ Indexed {chunk_count} chunks from {file_label}"
                                         ));
                                     }
                                     chunks.set(results);

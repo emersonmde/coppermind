@@ -15,6 +15,8 @@ use crate::embedding::format_embedding_summary;
 #[cfg(target_arch = "wasm32")]
 use super::hero::{use_worker_state, WorkerStatus};
 
+use super::use_search_engine;
+
 // Mock storage for testing
 struct MockStorage;
 
@@ -50,9 +52,12 @@ pub fn DeveloperTesting() -> Element {
     let embedding_result = use_signal(String::new);
     let search_results = use_signal(Vec::<crate::search::types::SearchResult>::new);
     let search_query = use_signal(String::new);
+    let clear_status = use_signal(String::new);
 
     #[cfg(target_arch = "wasm32")]
     let worker_state = use_worker_state();
+
+    let search_engine = use_search_engine();
 
     // Embedding test coroutine
     let embedding_task = use_coroutine({
@@ -255,7 +260,19 @@ pub fn DeveloperTesting() -> Element {
                                         div { class: "search-result-header",
                                             span { class: "search-result-rank", "#{idx + 1}" }
                                             span { class: "search-result-score",
-                                                "RRF Score: {result.score:.4}"
+                                                "RRF: {result.score:.4}"
+                                            }
+                                        }
+                                        div { class: "search-result-scores",
+                                            if let Some(vector_score) = result.vector_score {
+                                                span { class: "score-badge vector-score",
+                                                    "Vector: {vector_score:.4}"
+                                                }
+                                            }
+                                            if let Some(keyword_score) = result.keyword_score {
+                                                span { class: "score-badge keyword-score",
+                                                    "Keyword: {keyword_score:.4}"
+                                                }
                                             }
                                         }
                                         div { class: "search-result-text", "{result.text}" }
@@ -266,6 +283,40 @@ pub fn DeveloperTesting() -> Element {
                                 }
                             }
                         }
+                    }
+                }
+
+                // Clear Index Test
+                div { class: "test-card",
+                    h3 { class: "test-card-title", "Clear Search Index" }
+                    p { class: "test-card-description",
+                        "Clear all indexed documents from the search engine (useful for testing)"
+                    }
+
+                    button {
+                        class: "btn-primary",
+                        onclick: move |_| {
+                            let mut status = clear_status;
+                            let engine = search_engine;
+                            spawn(async move {
+                                info!("🗑️ Clearing search index...");
+                                let engine_arc = engine.read().clone();
+                                if let Some(engine_lock) = engine_arc {
+                                    let mut search_engine = engine_lock.lock().await;
+                                    search_engine.clear();
+                                    info!("✅ Search index cleared");
+                                    status.set("✓ Search index cleared successfully".into());
+                                } else {
+                                    error!("❌ Search engine not initialized");
+                                    status.set("Search engine not initialized".into());
+                                }
+                            });
+                        },
+                        "Clear Search Index"
+                    }
+
+                    if !clear_status.read().is_empty() {
+                        div { class: "test-results", "{clear_status.read()}" }
                     }
                 }
             }

@@ -67,7 +67,9 @@ pub struct DocumentRecord {
 #[allow(dead_code)] // Public API fields
 pub struct SearchResult {
     pub doc_id: DocId,
-    pub score: f32,
+    pub score: f32,                 // RRF fused score
+    pub vector_score: Option<f32>,  // Semantic similarity score
+    pub keyword_score: Option<f32>, // BM25 score
     pub text: String,
     pub metadata: DocumentMetadata,
 }

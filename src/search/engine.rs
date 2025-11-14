@@ -163,7 +163,11 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
         let fused_results = reciprocal_rank_fusion(&vector_results, &keyword_results, 60);
 
-        // Convert to SearchResult with document details
+        // Build maps of individual scores for lookup
+        let vector_scores: HashMap<DocId, f32> = vector_results.into_iter().collect();
+        let keyword_scores: HashMap<DocId, f32> = keyword_results.into_iter().collect();
+
+        // Convert to SearchResult with document details and individual scores
         let search_results: Vec<SearchResult> = fused_results
             .into_iter()
             .take(k)
@@ -171,6 +175,8 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
                 self.documents.get(&doc_id).map(|record| SearchResult {
                     doc_id,
                     score,
+                    vector_score: vector_scores.get(&doc_id).copied(),
+                    keyword_score: keyword_scores.get(&doc_id).copied(),
                     text: record.text.clone(),
                     metadata: record.metadata.clone(),
                 })
@@ -196,6 +202,14 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     #[allow(dead_code)] // Public API
     pub fn get_document(&self, doc_id: &DocId) -> Option<&DocumentRecord> {
         self.documents.get(doc_id)
+    }
+
+    /// Clear all documents from the index
+    #[allow(dead_code)] // Public API
+    pub fn clear(&mut self) {
+        self.documents.clear();
+        self.vector_engine = VectorSearchEngine::new(self.embedding_dim);
+        self.keyword_engine = KeywordSearchEngine::new();
     }
 }
 
