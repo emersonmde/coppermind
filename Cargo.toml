@@ -44,6 +44,9 @@ bincode = "1.3"
 bm25 = "2.3"
 instant-distance = "0.6"
 
+# Cross-platform timing (works on WASM and native)
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }

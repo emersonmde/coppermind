@@ -1,4 +1,4 @@
-use coppermind::components::TestControls;
+use coppermind::components::App as CoppermindApp;
 use dioxus::prelude::*;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -42,8 +42,7 @@ fn App() -> Element {
         }
 
         div { class: "container",
-            h1 { "Coppermind" }
-            TestControls {}
+            CoppermindApp {}
         }
     }
 }
