@@ -292,3 +292,114 @@ Community resources, known limitations, and ecosystem integration details.
 - Future directions (WebGPU backend, WASM threads, quantization)
 
 **When to Read:** When evaluating alternatives, troubleshooting limitations, or learning from community patterns.
+
+---
+
+## Documentation Writing Guidelines
+
+When writing documentation (README, docs/, etc.), follow these principles:
+
+### Tone & Style
+
+**Professional, Not Marketing:**
+- Write like a senior engineer presenting technical work to peers
+- Be humble—no bragging or self-promotion
+- Avoid buzzwords and marketing language
+- Be fact-based: make claims you can verify from the codebase
+- Position work as "showing off something cool I built" not as a product pitch
+
+**Technical Depth:**
+- Assume the reader has general engineering knowledge
+- Explain newer/niche concepts that even experienced engineers may not know:
+  - Cross-Origin Isolation (COI), COEP/COIP headers
+  - Web Workers, Service Workers
+  - WASM threading, SharedArrayBuffer
+  - OPFS (Origin Private File System)
+  - Specific algorithms (HNSW, RRF, ALiBi)
+- Don't explain basic concepts like "embeddings" or "BM25" unless necessary
+- Technical details are the coolest part—be detailed but concise
+
+**Structure:**
+- Use headers to organize content logically
+- Link to external resources (algorithms, papers, official docs)
+- **DO NOT link to internal docs** when writing top-level documentation
+
+### Accuracy & Verification
+
+**Critical: Verify All Claims**
+- Check the actual code before making technical claims
+- Don't guess at implementation details
+- Avoid including performance numbers/timings unless actually tested
+- Don't include file sizes unless necessary (let readers look them up)
+- Example corrections from README exercise:
+  - ❌ "Candle is for embedded and WASM environments"
+  - ✅ "Candle, a minimalist Rust ML framework from Hugging Face"
+  - ❌ "100% Rust"
+  - ✅ "Rust-First" (acknowledge necessary JavaScript: COI service worker, web worker bootstrap)
+
+**RRF Example:**
+- Claim: "without requiring score normalization"
+- Verification: Check `src/search/fusion.rs` line 27-28—it uses `(rank, (item, _score))`, ignoring scores
+- Conclusion: ✅ Technically correct—RRF is purely rank-based
+
+### What to Include / Exclude
+
+**Include:**
+- How the technology works (architecture, algorithms, design decisions)
+- Why certain choices were made over alternatives
+- Links to external resources (academic papers, library docs, specifications)
+- Building/setup instructions for developers
+- Current functionality as implemented in code
+
+**Exclude:**
+- Future plans, roadmap, or vision (keep in separate roadmap docs)
+- "Demo" language—just provide links to live deployments
+- Timing/performance data unless rigorously tested
+- Installation instructions for end-users (this is a developer project)
+- Empty promises or aspirational features
+
+### Formatting Preferences
+
+Based on user edits to README:
+- Use simple dashes `-` not em-dashes `—` in prose
+- Tech stack: Use dash separator ` - ` not ` — `
+- Links: "Try it here:" not "Try it:" or "Demo:"
+- Descriptions: Concise and direct
+  - ✅ "A local-first cross-platform hybrid search engine"
+  - ❌ "A local-first hybrid search engine running ML inference directly in your browser via WebAssembly, built with as much Rust as possible"
+- Bullet points: "Fully Local" not "Local-Only"
+
+### Technical Stack Presentation
+
+Present like a senior engineer (from README exercise):
+- Organize by logical categories
+- Include version numbers
+- Add brief descriptions in parentheses (NOT marketing copy)
+- Link to project pages
+- Example format:
+  ```markdown
+  ### Core Framework
+  - **[Dioxus 0.7](https://dioxuslabs.com/)** - Reactive UI framework (React-like component model, cross-platform rendering)
+  - **[Candle 0.8](https://github.com/huggingface/candle)** - ML inference framework (Hugging Face Rust ML library)
+  ```
+
+### Common Pitfalls to Avoid
+
+1. **Overclaiming**: Don't say "entirely in Rust" when JavaScript is required
+2. **Vague performance**: No "~100-500ms" unless tested on representative hardware
+3. **Misleading descriptions**:
+   - ❌ Candle is "designed for embedded" (it's a general ML framework)
+   - ❌ instant-distance "doesn't use rayon" (it does—check cargo tree)
+4. **Normalization confusion**: Verify technical claims about algorithms
+5. **Size inflation**: Don't quote file sizes in multiple places inconsistently
+
+### Verification Checklist
+
+Before publishing documentation:
+- [ ] All technical claims verified against actual code
+- [ ] No performance numbers unless tested
+- [ ] No file sizes quoted (or consistent if needed)
+- [ ] External links point to authoritative sources
+- [ ] Tone is professional and humble
+- [ ] Newer concepts (COI, OPFS, etc.) are explained
+- [ ] Tech stack formatted like senior engineer presentation

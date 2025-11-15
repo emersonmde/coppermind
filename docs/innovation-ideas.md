@@ -22,13 +22,28 @@ This document captures experimental directions for Rust + WASM + ML in browsers.
 
 **Cross-Platform:**
 - Platform-specific optimizations via `cfg` attributes
-- Web uses IndexedDB, desktop uses SQLite
+- Web uses OPFS, desktop uses native filesystem
 - Both platforms share core logic
 
 **Privacy:**
 - Pure local inference
 - No cloud API calls
 - Works offline
+
+---
+
+## Implemented Features
+
+### ✅ Hybrid Search: Semantic + BM25 Full-Text
+**Status:** Implemented
+
+**Description:**
+Successfully implemented hybrid search combining vector similarity (instant-distance HNSW) with keyword matching (BM25), merged using Reciprocal Rank Fusion (RRF). See [Design Document](DESIGN.md) for full implementation details.
+
+**Results:**
+- Catches both semantic matches (paraphrases, synonyms) and exact keyword matches
+- All-in-Rust implementation using instant-distance and bm25 crates
+- RRF fusion operates purely on rank positions, no score normalization needed
 
 ---
 
@@ -58,39 +73,15 @@ This document captures experimental directions for Rust + WASM + ML in browsers.
 
 ---
 
-#### 2. Hybrid Search: Semantic + BM25 Full-Text
-**Status:** Common in enterprise, rare in pure browser implementations
-
-**Description:**
-- Semantic search: Great for meaning, poor for exact keywords
-- BM25: Great for keywords, poor for meaning
-- Combine both for better results
-- This is exactly what we're after for this project
-
-**Implementation:**
-- Store chunk text in IndexedDB/SQLite
-- Build BM25 index (term frequency, inverse document frequency)
-- For each query:
-  1. Run semantic search (top 100 results)
-  2. Run BM25 search (top 100 results)
-  3. Combine with weighted score (e.g., 0.7 semantic + 0.3 BM25)
-  4. Re-rank and return top 10
-
-**Benefits:**
-- Better coverage than either approach alone
-- All-in-Rust implementation (no JavaScript search libs)
-
----
-
 ### 🧪 Medium Priority: Experimental & High Impact
 
-#### 3. Quantized Models (F16/INT8) for WASM
+#### 2. Quantized Models (F16/INT8) for WASM
 **Status:** Candle has quantization, but not well-tested for WASM
 
 **Description:**
-- Current: F32 weights (262MB)
-- F16: 131MB (2x smaller, minimal quality loss)
-- INT8: 65MB (4x smaller, some quality loss)
+- Current: F32 weights
+- F16: 2x smaller, minimal quality loss
+- INT8: 4x smaller, some quality loss
 
 **Challenges:**
 - INT8 operations slow on CPU (no SIMD in WASM yet)
@@ -105,7 +96,7 @@ This document captures experimental directions for Rust + WASM + ML in browsers.
 
 ---
 
-#### 4. Turso/libSQL for Native Vector Search in Browser
+#### 3. Turso/libSQL for Native Vector Search in Browser
 **Status:** Needs investigation
 
 **Description:**
@@ -159,7 +150,7 @@ LIMIT 10;
 
 ### 💡 Speculative: Far Future
 
-#### 5. Federated Learning in Browser (Multi-User)
+#### 4. Federated Learning in Browser (Multi-User)
 **Status:** Very experimental, privacy-tech research area
 
 **Description:**
@@ -186,7 +177,7 @@ LIMIT 10;
 
 ### 🎯 Infrastructure
 
-#### 6. Candle WASM Benchmarking Suite
+#### 5. Candle WASM Benchmarking Suite
 **Description:**
 - Comprehensive benchmarks for ML ops in WASM
 - Compare CPU vs WebGPU vs SIMD
@@ -199,7 +190,7 @@ LIMIT 10;
 
 ---
 
-#### 7. Dioxus + Candle Example Library
+#### 6. Dioxus + Candle Example Library
 **Description:**
 - Coppermind as reference implementation
 - Additional examples:
@@ -214,57 +205,27 @@ LIMIT 10;
 
 ---
 
-## Ideas Specifically for This Project
+## Possible Future Directions
 
-### Near-Term (Next 3-6 Months)
+### Performance & Optimization
 
-**1. Increase to 4GB WASM Memory + 4096 Token Sequences**
-- Unlocks processing longer documents
-- Simple config change, high impact
-- See: `docs/model-optimization.md`
-
-**2. Implement HNSW Vector Index (Pure Rust)**
-- Current: Brute-force cosine similarity
-- HNSW: Approximate nearest neighbor search
-- Enables >10K document search in <50ms
-- Pure Rust implementation (no JavaScript libs)
-
-**3. Desktop App with Native GPU**
-- Test Candle with CUDA/Metal on desktop
-- Benchmark vs browser WASM
+**1. Desktop GPU Acceleration**
+- Leverage Candle's CUDA/Metal backends for desktop builds
+- Benchmark vs browser WASM performance
 - Demonstrate cross-platform power
 
-### Medium-Term (6-12 Months)
-
-**4. Candle WebGPU Backend**
-- Implement WebGPU backend for Candle
-- Potential contribution to upstream Candle repo
-
-**5. Multi-Model Support**
+**2. Multi-Model Support**
 - Load different embedding models for different use cases
 - Example: code embeddings, multilingual, domain-specific
 - Model switching in browser
 
-**6. Export to Standard Formats**
+**3. Export to Standard Formats**
 - Export embeddings to Parquet
 - Compatible with Python ecosystem (FAISS, Pinecone, Weaviate)
 - Enables hybrid workflows (browser → cloud)
 
 ---
 
-## Metrics for Success
-
-### Technical Metrics
-
-**Performance:**
-- Cold start: <2s
-- Embedding (2048 tokens): <50ms (WebGPU) or <200ms (CPU)
-- Search (10K docs): <100ms
-
-**Scale:**
-- Process 1000 documents in <5 minutes
-- Store 10K+ documents in browser
-- Support files up to 100MB
 
 ---
 
@@ -278,6 +239,4 @@ LIMIT 10;
 
 ---
 
-**Last Updated:** 2025-01-11
-
-**Note:** This is a living document. Ideas will be added, marked completed, and updated based on learnings.
+**Note:** This is a living document for future explorations. Implemented features are moved to the "Implemented Features" section.
