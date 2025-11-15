@@ -73,7 +73,8 @@ async function boot() {
         const jsText = await jsResponse.text();
 
         // Extract WASM path from the JS code
-        const wasmPathMatch = jsText.match(/module_or_path:"([^"]+\.wasm)"/);
+        // Handle optional whitespace: module_or_path:"..." or module_or_path: "..."
+        const wasmPathMatch = jsText.match(/module_or_path\s*:\s*"([^"]+\.wasm)"/);
         if (!wasmPathMatch) {
             throw new Error("Could not find WASM path in generated JS");
         }

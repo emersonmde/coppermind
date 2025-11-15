@@ -15,7 +15,7 @@ use crate::embedding::format_embedding_summary;
 #[cfg(target_arch = "wasm32")]
 use super::hero::{use_worker_state, WorkerStatus};
 
-use super::use_search_engine;
+use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
 
 // Mock storage for testing
 struct MockStorage;
@@ -53,11 +53,13 @@ pub fn DeveloperTesting() -> Element {
     let search_results = use_signal(Vec::<crate::search::types::SearchResult>::new);
     let search_query = use_signal(String::new);
     let clear_status = use_signal(String::new);
+    let debug_dump = use_signal(String::new);
 
     #[cfg(target_arch = "wasm32")]
     let worker_state = use_worker_state();
 
     let search_engine = use_search_engine();
+    let mut search_engine_status = use_search_engine_status();
 
     // Embedding test coroutine
     let embedding_task = use_coroutine({
@@ -298,6 +300,7 @@ pub fn DeveloperTesting() -> Element {
                         onclick: move |_| {
                             let mut status = clear_status;
                             let engine = search_engine;
+                            let mut engine_status = search_engine_status;
                             spawn(async move {
                                 info!("🗑️ Clearing search index...");
                                 let engine_arc = engine.read().clone();
@@ -306,6 +309,7 @@ pub fn DeveloperTesting() -> Element {
                                     search_engine.clear();
                                     info!("✅ Search index cleared");
                                     status.set("✓ Search index cleared successfully".into());
+                                    engine_status.set(SearchEngineStatus::Ready { doc_count: 0 });
                                 } else {
                                     error!("❌ Search engine not initialized");
                                     status.set("Search engine not initialized".into());
@@ -317,6 +321,43 @@ pub fn DeveloperTesting() -> Element {
 
                     if !clear_status.read().is_empty() {
                         div { class: "test-results", "{clear_status.read()}" }
+                    }
+                }
+
+                // Debug Dump Test
+                div { class: "test-card",
+                    h3 { class: "test-card-title", "Debug Index Dump" }
+                    p { class: "test-card-description",
+                        "Dump the current search index state for debugging (shows all indexed documents)"
+                    }
+
+                    button {
+                        class: "btn-primary",
+                        onclick: move |_| {
+                            let mut dump = debug_dump;
+                            let engine = search_engine;
+                            spawn(async move {
+                                info!("🔍 Dumping search index...");
+                                let engine_arc = engine.read().clone();
+                                if let Some(engine_lock) = engine_arc {
+                                    let search_engine = engine_lock.lock().await;
+                                    let dump_text = search_engine.debug_dump();
+                                    info!("{}", dump_text);
+                                    dump.set(dump_text);
+                                } else {
+                                    error!("❌ Search engine not initialized");
+                                    dump.set("Search engine not initialized".into());
+                                }
+                            });
+                        },
+                        "Dump Index State"
+                    }
+
+                    if !debug_dump.read().is_empty() {
+                        div { class: "test-results",
+                            style: "white-space: pre-wrap; font-family: monospace; font-size: 0.9em;",
+                            "{debug_dump.read()}"
+                        }
                     }
                 }
             }

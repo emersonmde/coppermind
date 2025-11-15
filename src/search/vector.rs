@@ -57,8 +57,20 @@ impl VectorSearchEngine {
         self.rebuild_index();
     }
 
+    /// Add a document embedding without rebuilding the index
+    /// Use this for batch inserts, then call rebuild_index() once at the end
+    pub fn add_document_deferred(&mut self, doc_id: DocId, embedding: Vec<f32>) {
+        assert_eq!(
+            embedding.len(),
+            self.dimension,
+            "Embedding dimension mismatch"
+        );
+
+        self.embeddings.insert(doc_id, embedding);
+    }
+
     /// Rebuild the HNSW index from all stored embeddings
-    fn rebuild_index(&mut self) {
+    pub fn rebuild_index(&mut self) {
         if self.embeddings.is_empty() {
             self.index = None;
             return;

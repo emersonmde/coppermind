@@ -18,7 +18,31 @@ fn main() {
 
     // Initialize cross-platform logger (web console + desktop stdout)
     dioxus::logger::init(dioxus::logger::tracing::Level::INFO).expect("logger failed to init");
-    dioxus::launch(App);
+
+    // Platform-specific launch configuration
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use dioxus::desktop::{Config, WindowBuilder, LogicalSize};
+
+        let config = Config::default().with_window(
+            WindowBuilder::new()
+                .with_title("Coppermind")
+                .with_resizable(true)
+                .with_inner_size(LogicalSize::new(1200.0, 900.0))
+                .with_min_inner_size(LogicalSize::new(800.0, 600.0))
+                // Set dark background to prevent white flash on overscroll
+                .with_transparent(false),
+        );
+
+        dioxus::LaunchBuilder::desktop()
+            .with_cfg(config)
+            .launch(App);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        dioxus::launch(App);
+    }
 }
 
 #[component]

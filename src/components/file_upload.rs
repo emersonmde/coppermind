@@ -6,17 +6,31 @@ use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
 use instant::Instant;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
+
+#[cfg(target_arch = "wasm32")]
+use web_sys;
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::embedding::embed_text_chunks;
 
 #[cfg(target_arch = "wasm32")]
 use super::hero::{use_worker_state, WorkerStatus};
 
-use super::use_search_engine;
+use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
 
 // Messages for file processing coroutine
 enum FileMessage {
-    ProcessFile(String, String), // filename, contents
+    ProcessFiles(Vec<(String, String)>), // Vec of (filename, contents)
+}
+
+// Helper function to detect if content is binary (not text)
+// Standard approach: check for null bytes which appear in binary but never in text
+fn is_likely_binary(content: &str) -> bool {
+    // Since we successfully read as String, it's valid UTF-8
+    // Binary files contain null bytes which don't appear in text files
+    content.contains('\0')
 }
 
 // Processing metrics for display
@@ -47,11 +61,29 @@ pub fn FileUpload() -> Element {
     let mut file_name = use_signal(String::new);
     let metrics = use_signal(ProcessingMetrics::default);
     let progress = use_signal(ProcessingProgress::default);
+    let mut warnings = use_signal(Vec::<String>::new);
 
     #[cfg(target_arch = "wasm32")]
     let worker_state = use_worker_state();
 
     let search_engine = use_search_engine();
+    let mut search_engine_status = use_search_engine_status();
+
+    // Set webkitdirectory attribute on the directory input (web only)
+    #[cfg(target_arch = "wasm32")]
+    use_effect(move || {
+        use wasm_bindgen::JsCast;
+        if let Some(window) = web_sys::window() {
+            if let Some(document) = window.document() {
+                if let Some(input) = document.get_element_by_id("file-input-directory") {
+                    if let Some(input_element) = input.dyn_ref::<web_sys::HtmlInputElement>() {
+                        let _ = input_element.set_attribute("webkitdirectory", "");
+                        let _ = input_element.set_attribute("directory", "");
+                    }
+                }
+            }
+        }
+    });
 
     // File processing coroutine - runs in background
     let file_task = use_coroutine({
@@ -61,14 +93,31 @@ pub fn FileUpload() -> Element {
         let mut processing = file_processing;
         let mut metrics_signal = metrics;
         let mut progress_signal = progress;
+        let mut warnings_signal = warnings;
         let engine = search_engine;
+        let mut engine_status = search_engine_status;
         #[cfg(target_arch = "wasm32")]
         let worker_state = worker_state;
 
         move |mut rx: UnboundedReceiver<FileMessage>| async move {
             while let Some(msg) = rx.next().await {
                 match msg {
-                    FileMessage::ProcessFile(file_label, contents) => {
+                    FileMessage::ProcessFiles(files) => {
+                        warnings_signal.set(Vec::new()); // Clear previous warnings
+                        let mut processed_files = 0;
+                        let total_files = files.len();
+
+                        for (file_label, contents) in files {
+                            // Check if file is binary
+                            if is_likely_binary(&contents) {
+                                let warning = format!("⚠️ Skipped '{}': appears to be a binary file", file_label);
+                                info!("{}", warning);
+                                warnings_signal.write().push(warning);
+                                continue;
+                            }
+
+                            processed_files += 1;
+                            name.set(format!("{} ({}/{})", file_label, processed_files, total_files));
                         let start_time = Instant::now();
                         let byte_len = contents.len();
                         info!(
@@ -109,56 +158,74 @@ pub fn FileUpload() -> Element {
                                         let mut indexed_count = 0;
                                         let engine_arc = engine.read().clone();
                                         if let Some(engine_lock) = engine_arc {
-                                            let mut search_engine = engine_lock.lock().await;
-                                            for (idx, chunk_result) in results.iter().enumerate() {
-                                                // Split original text into chunks for indexing
-                                                let chunk_size = 2000;
-                                                let chunks_text: Vec<String> = contents
-                                                    .chars()
-                                                    .collect::<Vec<_>>()
-                                                    .chunks(chunk_size)
-                                                    .map(|chunk| chunk.iter().collect())
-                                                    .collect();
+                                            // Split original text into chunks for indexing
+                                            let chunk_size = 2000;
+                                            let chunks_text: Vec<String> = contents
+                                                .chars()
+                                                .collect::<Vec<_>>()
+                                                .chunks(chunk_size)
+                                                .map(|chunk| chunk.iter().collect())
+                                                .collect();
 
-                                                if let Some(chunk_text) = chunks_text.get(idx) {
-                                                    let doc = Document {
-                                                        text: chunk_text.clone(),
-                                                        metadata: DocumentMetadata {
-                                                            filename: Some(format!(
-                                                                "{} (chunk {})",
-                                                                file_label,
-                                                                idx + 1
-                                                            )),
-                                                            source: Some(file_label.clone()),
-                                                            created_at: std::time::SystemTime::now(
+                                            // Add all documents in batch (deferred index rebuild)
+                                            {
+                                                let mut search_engine = engine_lock.lock().await;
+                                                for (idx, chunk_result) in results.iter().enumerate() {
+                                                    if let Some(chunk_text) = chunks_text.get(idx) {
+                                                        let doc = Document {
+                                                            text: chunk_text.clone(),
+                                                            metadata: DocumentMetadata {
+                                                                filename: Some(format!(
+                                                                    "{} (chunk {})",
+                                                                    file_label,
+                                                                    idx + 1
+                                                                )),
+                                                                source: Some(file_label.clone()),
+                                                                created_at: std::time::SystemTime::now(
+                                                                )
+                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                .unwrap()
+                                                                .as_secs(),
+                                                            },
+                                                        };
+
+                                                        match search_engine
+                                                            .add_document_deferred(
+                                                                doc,
+                                                                chunk_result.embedding.clone(),
                                                             )
-                                                            .duration_since(std::time::UNIX_EPOCH)
-                                                            .unwrap()
-                                                            .as_secs(),
-                                                        },
-                                                    };
-
-                                                    match search_engine
-                                                        .add_document(
-                                                            doc,
-                                                            chunk_result.embedding.clone(),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => indexed_count += 1,
-                                                        Err(e) => {
-                                                            error!(
-                                                                "❌ Failed to index chunk {}: {:?}",
-                                                                idx, e
-                                                            );
+                                                            .await
+                                                        {
+                                                            Ok(_) => indexed_count += 1,
+                                                            Err(e) => {
+                                                                error!(
+                                                                    "❌ Failed to index chunk {}: {:?}",
+                                                                    idx, e
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
+                                            } // Release lock before rebuilding index
+
+                                            // Rebuild vector index (CPU-intensive, runs in thread pool on desktop)
+                                            status.set("Building search index...".into());
+                                            {
+                                                let mut search_engine = engine_lock.lock().await;
+                                                search_engine.rebuild_vector_index().await;
                                             }
+
                                             info!(
                                                 "✅ Indexed {} chunks in search engine",
                                                 indexed_count
                                             );
+
+                                            // Update search engine status with new document count
+                                            let doc_count = {
+                                                let search_engine = engine_lock.lock().await;
+                                                search_engine.len()
+                                            };
+                                            engine_status.set(SearchEngineStatus::Ready { doc_count });
                                         }
 
                                         status.set(format!(
@@ -306,49 +373,67 @@ pub fn FileUpload() -> Element {
                                         let mut indexed_count = 0;
                                         let engine_arc = engine.read().clone();
                                         if let Some(engine_lock) = engine_arc {
-                                            let mut search_engine = engine_lock.lock().await;
-                                            for (idx, chunk_result) in results.iter().enumerate() {
-                                                // Get the corresponding text chunk
-                                                if let Some(chunk_text) = text_chunks.get(idx) {
-                                                    let doc = Document {
-                                                        text: chunk_text.clone(),
-                                                        metadata: DocumentMetadata {
-                                                            filename: Some(format!(
-                                                                "{} (chunk {})",
-                                                                file_label,
-                                                                idx + 1
-                                                            )),
-                                                            source: Some(file_label.clone()),
-                                                            created_at: instant::SystemTime::now()
-                                                                .duration_since(
-                                                                    instant::SystemTime::UNIX_EPOCH,
-                                                                )
-                                                                .unwrap()
-                                                                .as_secs(),
-                                                        },
-                                                    };
+                                            // Add all documents in batch (deferred index rebuild)
+                                            {
+                                                let mut search_engine = engine_lock.lock().await;
+                                                for (idx, chunk_result) in results.iter().enumerate() {
+                                                    // Get the corresponding text chunk
+                                                    if let Some(chunk_text) = text_chunks.get(idx) {
+                                                        let doc = Document {
+                                                            text: chunk_text.clone(),
+                                                            metadata: DocumentMetadata {
+                                                                filename: Some(format!(
+                                                                    "{} (chunk {})",
+                                                                    file_label,
+                                                                    idx + 1
+                                                                )),
+                                                                source: Some(file_label.clone()),
+                                                                created_at: instant::SystemTime::now()
+                                                                    .duration_since(
+                                                                        instant::SystemTime::UNIX_EPOCH,
+                                                                    )
+                                                                    .unwrap()
+                                                                    .as_secs(),
+                                                            },
+                                                        };
 
-                                                    match search_engine
-                                                        .add_document(
-                                                            doc,
-                                                            chunk_result.embedding.clone(),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => indexed_count += 1,
-                                                        Err(e) => {
-                                                            error!(
-                                                                "❌ Failed to index chunk {}: {:?}",
-                                                                idx, e
-                                                            );
+                                                        match search_engine
+                                                            .add_document_deferred(
+                                                                doc,
+                                                                chunk_result.embedding.clone(),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(_) => indexed_count += 1,
+                                                            Err(e) => {
+                                                                error!(
+                                                                    "❌ Failed to index chunk {}: {:?}",
+                                                                    idx, e
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
+                                            } // Release lock before rebuilding index
+
+                                            // Rebuild vector index
+                                            status.set("Building search index...".into());
+                                            {
+                                                let mut search_engine = engine_lock.lock().await;
+                                                search_engine.rebuild_vector_index().await;
                                             }
+
                                             info!(
                                                 "✅ Indexed {} chunks in search engine",
                                                 indexed_count
                                             );
+
+                                            // Update search engine status with new document count
+                                            let doc_count = {
+                                                let search_engine = engine_lock.lock().await;
+                                                search_engine.len()
+                                            };
+                                            engine_status.set(SearchEngineStatus::Ready { doc_count });
                                         }
 
                                         status.set(format!(
@@ -359,6 +444,8 @@ pub fn FileUpload() -> Element {
                                 }
                             }
                         }
+                        } // End for loop over files
+
                         processing.set(false);
                     }
                 }
@@ -417,58 +504,149 @@ pub fn FileUpload() -> Element {
                             }
                         }
                     } else {
-                        p { class: "upload-text-primary", "Drop files here or click to browse" }
+                        p { class: "upload-text-primary", "Drop files or folder here" }
                         p { class: "upload-text-secondary",
-                            "Supports .txt files • Processed locally in your browser"
+                            "Supports multiple files • Any text format • Processed locally"
+                        }
+                        div { class: "upload-buttons",
+                            label {
+                                class: "upload-mode-button",
+                                r#for: "file-input-files",
+                                "📄 Select Files"
+                            }
+                            label {
+                                class: "upload-mode-button",
+                                r#for: "file-input-directory",
+                                "📁 Select Folder"
+                            }
                         }
                     }
 
+                    // Hidden file input for selecting multiple files
                     input {
-                        class: "file-input",
+                        id: "file-input-files",
+                        class: "file-input-hidden",
                         r#type: "file",
-                        accept: ".txt",
-                        multiple: false,
+                        accept: "*/*",
+                        multiple: true,
                         disabled: file_processing(),
                         onchange: move |evt: dioxus::events::FormEvent| {
                             if file_processing() {
                                 file_status
                                     .set(
-                                        "Already processing a file. Please wait for it to finish.".into(),
+                                        "Already processing files. Please wait for it to finish.".into(),
                                     );
                                 return;
                             }
 
                             let files = evt.files();
-                            if let Some(file) = files.first() {
-                                file_name.set(file.name().clone());
-                                let file_label = file.name().clone();
-                                let file_data = file.clone();
-                                let task = file_task;
-
-                                spawn(async move {
-                                    file_processing.set(true);
-                                    file_chunks.set(Vec::new());
-                                    info!("📂 Selected file: {file_label}");
-                                    file_status.set(format!("Reading {file_label}..."));
-
-                                    match file_data.read_string().await {
-                                        Ok(contents) => {
-                                            // Send to background coroutine for processing
-                                            task.send(FileMessage::ProcessFile(file_label, contents));
-                                        }
-                                        Err(e) => {
-                                            error!("❌ Failed to read {file_label}: {e}");
-                                            file_status.set(format!("Failed to read {file_label}: {e}"));
-                                            file_name.set(String::new());
-                                            file_processing.set(false);
-                                        }
-                                    }
-                                });
-                            } else {
-                                file_status.set("No file selected.".into());
+                            if files.is_empty() {
+                                file_status.set("No files selected.".into());
                                 file_chunks.set(Vec::new());
                                 file_name.set(String::new());
+                                warnings.set(Vec::new());
+                                return;
                             }
+
+                            let file_count = files.len();
+                            let task = file_task;
+
+                            spawn(async move {
+                                file_processing.set(true);
+                                file_chunks.set(Vec::new());
+                                warnings.set(Vec::new());
+                                info!("📂 Selected {} file(s)", file_count);
+                                file_status.set(format!("Reading {} file(s)...", file_count));
+
+                                let mut file_contents = Vec::new();
+
+                                // Read all files
+                                for file in files.into_iter() {
+                                    let file_label = file.name().clone();
+                                    match file.read_string().await {
+                                        Ok(contents) => {
+                                            file_contents.push((file_label, contents));
+                                        }
+                                        Err(e) => {
+                                            error!("❌ Failed to read {}: {}", file_label, e);
+                                            let warning = format!("⚠️ Failed to read '{}': {}", file_label, e);
+                                            warnings.write().push(warning);
+                                        }
+                                    }
+                                }
+
+                                if file_contents.is_empty() {
+                                    file_status.set("All files failed to read.".into());
+                                    file_processing.set(false);
+                                } else {
+                                    // Send to background coroutine for processing
+                                    task.send(FileMessage::ProcessFiles(file_contents));
+                                }
+                            });
+                        }
+                    }
+
+                    // Hidden directory input for selecting folders (recursive)
+                    // Note: We set webkitdirectory via script since Dioxus doesn't support it directly
+                    input {
+                        id: "file-input-directory",
+                        class: "file-input-hidden",
+                        r#type: "file",
+                        multiple: true,
+                        disabled: file_processing(),
+                        onchange: move |evt: dioxus::events::FormEvent| {
+                            if file_processing() {
+                                file_status
+                                    .set(
+                                        "Already processing files. Please wait for it to finish.".into(),
+                                    );
+                                return;
+                            }
+
+                            let files = evt.files();
+                            if files.is_empty() {
+                                file_status.set("No files selected.".into());
+                                file_chunks.set(Vec::new());
+                                file_name.set(String::new());
+                                warnings.set(Vec::new());
+                                return;
+                            }
+
+                            let file_count = files.len();
+                            let task = file_task;
+
+                            spawn(async move {
+                                file_processing.set(true);
+                                file_chunks.set(Vec::new());
+                                warnings.set(Vec::new());
+                                info!("📂 Selected folder with {} file(s)", file_count);
+                                file_status.set(format!("Reading {} file(s) from folder...", file_count));
+
+                                let mut file_contents = Vec::new();
+
+                                // Read all files from directory
+                                for file in files.into_iter() {
+                                    let file_label = file.name().clone();
+                                    match file.read_string().await {
+                                        Ok(contents) => {
+                                            file_contents.push((file_label, contents));
+                                        }
+                                        Err(e) => {
+                                            error!("❌ Failed to read {}: {}", file_label, e);
+                                            let warning = format!("⚠️ Failed to read '{}': {}", file_label, e);
+                                            warnings.write().push(warning);
+                                        }
+                                    }
+                                }
+
+                                if file_contents.is_empty() {
+                                    file_status.set("All files failed to read.".into());
+                                    file_processing.set(false);
+                                } else {
+                                    // Send to background coroutine for processing
+                                    task.send(FileMessage::ProcessFiles(file_contents));
+                                }
+                            });
                         }
                     }
                 }
@@ -559,6 +737,31 @@ pub fn FileUpload() -> Element {
                             span { class: "stat-value",
                                 "{file_chunks.read().iter().map(|c| c.token_count).sum::<usize>()}"
                             }
+                        }
+                    }
+                }
+            }
+
+            // Warnings display (binary files skipped, read errors, etc.)
+            if !warnings.read().is_empty() {
+                div { class: "warning-card",
+                    div { class: "warning-header",
+                        svg {
+                            class: "warning-icon",
+                            xmlns: "http://www.w3.org/2000/svg",
+                            width: "24",
+                            height: "24",
+                            view_box: "0 0 24 24",
+                            fill: "none",
+                            stroke: "currentColor",
+                            stroke_width: "2",
+                            path { d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" }
+                        }
+                        h3 { class: "warning-title", "Warnings" }
+                    }
+                    div { class: "warning-list",
+                        for warning in warnings.read().iter() {
+                            div { class: "warning-item", "{warning}" }
                         }
                     }
                 }

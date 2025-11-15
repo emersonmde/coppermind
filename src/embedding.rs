@@ -99,13 +99,30 @@ impl EmbeddingModel {
             model_bytes.len() as f64 / 1_000_000.0
         );
 
-        // Use CPU device for WASM
-        let device = Device::cuda_if_available(0).unwrap();
-        if device.is_cpu() {
-            info!("✓ Initialized CPU device");
-        } else {
-            info!("✓ Initialized GPU device");
-        }
+        // Device selection: Try GPU backends, fall back to CPU
+        let device = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // Desktop: Try CUDA → Metal → CPU
+                if let Ok(cuda_device) = Device::new_cuda(0) {
+                    info!("✓ Initialized CUDA GPU device");
+                    cuda_device
+                } else if let Ok(metal_device) = Device::new_metal(0) {
+                    info!("✓ Initialized Metal GPU device");
+                    metal_device
+                } else {
+                    info!("✓ Initialized CPU device (no GPU available)");
+                    Device::Cpu
+                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                // WASM: CPU only (WebGPU not yet supported in Candle)
+                info!("✓ Initialized CPU device (WASM)");
+                Device::Cpu
+            }
+        };
 
         // Create model config for JinaBert
         info!(
@@ -395,7 +412,12 @@ async fn fetch_asset_bytes(url: &str) -> Result<Vec<u8>, String> {
         .dyn_into::<Function>()
         .map_err(|_| "fetch is not callable".to_string())?;
 
-    let resolved_url = resolve_asset_url(url);
+    // In dev mode, prepend /coppermind base path
+    let resolved_url = if cfg!(debug_assertions) {
+        format!("/coppermind{}", url)
+    } else {
+        resolve_asset_url(url)
+    };
     info!(
         "📥 Fetching asset (raw: {}, resolved: {})...",
         url, resolved_url
@@ -565,7 +587,13 @@ async fn fetch_asset_bytes(asset_path: &str) -> Result<Vec<u8>, String> {
         let full_path = base_dir.join(filename);
         info!("  Trying: {:?}", full_path);
 
-        if let Ok(bytes) = tokio::fs::read(&full_path).await {
+        // Use spawn_blocking for file I/O to prevent UI freezing with large files (62MB model)
+        let path_clone = full_path.clone();
+        let read_result = tokio::task::spawn_blocking(move || std::fs::read(&path_clone))
+            .await
+            .map_err(|e| format!("Task join failed: {}", e))?;
+
+        if let Ok(bytes) = read_result {
             info!(
                 "✓ Asset loaded from {:?}: {:.2}MB ({} bytes)",
                 full_path,
@@ -636,6 +664,23 @@ fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, String> 
     Ok(ids.to_vec())
 }
 
+// Async wrapper for tokenization that uses spawn_blocking on desktop
+async fn tokenize_text_async(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tokenizer_clone = tokenizer.clone();
+        let text_owned = text.to_string();
+        tokio::task::spawn_blocking(move || tokenize_text(&tokenizer_clone, &text_owned))
+            .await
+            .map_err(|e| format!("Task join failed: {}", e))?
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokenize_text(tokenizer, text)
+    }
+}
+
 #[derive(Clone)]
 pub struct ChunkEmbeddingResult {
     pub chunk_index: usize,
@@ -659,7 +704,24 @@ pub async fn get_or_load_model() -> Result<Arc<EmbeddingModel>, String> {
     info!("📦 Loading embedding model (cold start)...");
     let model_bytes = fetch_asset_bytes(&model_url).await?;
     let config = JinaBertConfig::default();
-    let model = EmbeddingModel::from_bytes(model_bytes, 30528, config)?;
+
+    // Model creation is CPU-intensive - run in blocking thread pool on desktop
+    let model = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tokio::task::spawn_blocking(move || {
+                EmbeddingModel::from_bytes(model_bytes, 30528, config)
+            })
+            .await
+            .map_err(|e| format!("Task join failed: {}", e))??
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            EmbeddingModel::from_bytes(model_bytes, 30528, config)?
+        }
+    };
+
     let model = Arc::new(model);
 
     // Try to set the model in the cache (may fail if another thread beat us to it)
@@ -712,6 +774,29 @@ pub fn tokenize_into_chunks(
     Ok(chunks)
 }
 
+// Async wrapper for chunk tokenization that uses spawn_blocking on desktop
+async fn tokenize_into_chunks_async(
+    tokenizer: &Tokenizer,
+    text: &str,
+    max_tokens: usize,
+) -> Result<Vec<Vec<u32>>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tokenizer_clone = tokenizer.clone();
+        let text_owned = text.to_string();
+        tokio::task::spawn_blocking(move || {
+            tokenize_into_chunks(&tokenizer_clone, &text_owned, max_tokens)
+        })
+        .await
+        .map_err(|e| format!("Task join failed: {}", e))?
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokenize_into_chunks(tokenizer, text, max_tokens)
+    }
+}
+
 /// Embed text by chunking it into smaller pieces and processing in batches
 ///
 /// On WASM targets, processes chunks in batches of 10 with periodic yields
@@ -732,7 +817,7 @@ pub async fn embed_text_chunks(
     let tokenizer = ensure_tokenizer(max_positions).await?;
 
     let effective_chunk = chunk_tokens.min(max_positions);
-    let token_chunks = tokenize_into_chunks(tokenizer, text, effective_chunk)?;
+    let token_chunks = tokenize_into_chunks_async(tokenizer, text, effective_chunk).await?;
 
     if token_chunks.is_empty() {
         return Ok(vec![]);
@@ -764,9 +849,26 @@ pub async fn embed_text_chunks(
         );
 
         // Process this batch together for maximum performance
-        let batch_embeddings = model
-            .embed_batch_tokens(chunk_batch.to_vec())
-            .map_err(|e| format!("Batch embedding failed: {}", e))?;
+        // On desktop: Use spawn_blocking to prevent UI freezing
+        // On WASM: Run directly (web worker handles parallelism)
+        let batch_embeddings = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let model_clone = model.clone();
+                let chunk_batch_vec = chunk_batch.to_vec();
+                tokio::task::spawn_blocking(move || model_clone.embed_batch_tokens(chunk_batch_vec))
+                    .await
+                    .map_err(|e| format!("Task join failed: {}", e))?
+                    .map_err(|e| format!("Batch embedding failed: {}", e))?
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                model
+                    .embed_batch_tokens(chunk_batch.to_vec())
+                    .map_err(|e| format!("Batch embedding failed: {}", e))?
+            }
+        };
 
         all_embeddings.extend(batch_embeddings);
 
@@ -776,11 +878,19 @@ pub async fn embed_text_chunks(
             token_chunks.len().div_ceil(BATCH_SIZE)
         );
 
-        // Yield to event loop between batches on WASM to keep UI responsive
+        // Yield to event loop between batches
+        // On desktop: spawn_blocking already yields between batches
+        // On WASM: Use timeout to explicitly yield
         #[cfg(target_arch = "wasm32")]
         if batch_end < token_chunks.len() {
             use gloo_timers::future::TimeoutFuture;
             TimeoutFuture::new(0).await;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if batch_end < token_chunks.len() {
+            // Yield to the async runtime between batches
+            tokio::task::yield_now().await;
         }
     }
 
@@ -814,15 +924,31 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Strin
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
     let tokenizer = ensure_tokenizer(max_positions).await?;
-    let token_ids = tokenize_text(tokenizer, text)?;
+    let token_ids = tokenize_text_async(tokenizer, text).await?;
     let token_count = token_ids.len();
     info!("🧾 Tokenized into {} tokens", token_count);
 
     info!("Generating embedding vector...");
 
-    let embedding = model
-        .embed_tokens(token_ids)
-        .map_err(|e| format!("Embedding failed: {}", e))?;
+    // On desktop: Use spawn_blocking to prevent UI freezing
+    // On WASM: Run directly (web worker handles parallelism)
+    let embedding = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let model_clone = model.clone();
+            tokio::task::spawn_blocking(move || model_clone.embed_tokens(token_ids))
+                .await
+                .map_err(|e| format!("Task join failed: {}", e))?
+                .map_err(|e| format!("Embedding failed: {}", e))?
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            model
+                .embed_tokens(token_ids)
+                .map_err(|e| format!("Embedding failed: {}", e))?
+        }
+    };
 
     info!("✓ Generated {}-dimensional embedding", embedding.len());
 

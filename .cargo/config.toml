@@ -1,6 +1,6 @@
 [target.wasm32-unknown-unknown]
 rustflags = [
   "--cfg", "getrandom_backend=\"wasm_js\"",
-  "-C", "link-arg=--initial-memory=268435456",  # 256MB initial
+  "-C", "link-arg=--initial-memory=536870912",  # 512MB
   "-C", "link-arg=--max-memory=4294967296",     # 4GB max (full wasm32 support)
 ]

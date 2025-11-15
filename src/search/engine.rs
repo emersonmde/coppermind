@@ -80,6 +80,71 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         Ok(doc_id)
     }
 
+    /// Add a document without rebuilding vector index (for batch operations)
+    /// Call rebuild_vector_index() once after all documents are added
+    pub async fn add_document_deferred(
+        &mut self,
+        doc: Document,
+        embedding: Vec<f32>,
+    ) -> Result<DocId, SearchError> {
+        // Validate embedding dimension
+        if embedding.len() != self.embedding_dim {
+            return Err(SearchError::EmbeddingError(format!(
+                "Embedding dimension mismatch: expected {}, got {}",
+                self.embedding_dim,
+                embedding.len()
+            )));
+        }
+
+        // Generate unique ID
+        let doc_id = DocId::new();
+
+        // Add to vector index (deferred rebuild)
+        self.vector_engine
+            .add_document_deferred(doc_id, embedding);
+
+        // Add to keyword index
+        self.keyword_engine.add_document(doc_id, doc.text.clone());
+
+        // Store document record
+        let record = DocumentRecord {
+            id: doc_id,
+            text: doc.text,
+            metadata: doc.metadata,
+        };
+        self.documents.insert(doc_id, record);
+
+        Ok(doc_id)
+    }
+
+    /// Rebuild the vector search index after batch operations
+    /// This is CPU-intensive and should be called after all documents are added
+    pub async fn rebuild_vector_index(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Desktop: Run in thread pool to avoid blocking UI
+            // We need to extract the vector engine, rebuild it, then put it back
+            let mut vector_engine = std::mem::replace(
+                &mut self.vector_engine,
+                VectorSearchEngine::new(self.embedding_dim),
+            );
+
+            let rebuilt = tokio::task::spawn_blocking(move || {
+                vector_engine.rebuild_index();
+                vector_engine
+            })
+            .await
+            .expect("Failed to join rebuild task");
+
+            self.vector_engine = rebuilt;
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.vector_engine.rebuild_index();
+        }
+    }
+
     /// Perform hybrid search combining vector and keyword search
     ///
     /// # Arguments
@@ -210,6 +275,38 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         self.documents.clear();
         self.vector_engine = VectorSearchEngine::new(self.embedding_dim);
         self.keyword_engine = KeywordSearchEngine::new();
+    }
+
+    /// Debug dump of the index state
+    pub fn debug_dump(&self) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("=== Search Index Debug Dump ===\n"));
+        output.push_str(&format!("Total documents: {}\n", self.documents.len()));
+        output.push_str(&format!("Embedding dimension: {}\n", self.embedding_dim));
+        output.push_str(&format!("\n"));
+
+        if self.documents.is_empty() {
+            output.push_str("(empty index)\n");
+        } else {
+            output.push_str("Documents:\n");
+            for (idx, (doc_id, doc)) in self.documents.iter().enumerate() {
+                output.push_str(&format!(
+                    "\n[{}] DocId: {}\n",
+                    idx + 1,
+                    doc_id.as_u64()
+                ));
+                output.push_str(&format!("  Filename: {:?}\n", doc.metadata.filename));
+                output.push_str(&format!("  Source: {:?}\n", doc.metadata.source));
+                if doc.text.len() > 100 {
+                    output.push_str(&format!("  Text: {}...\n", &doc.text[..100]));
+                } else {
+                    output.push_str(&format!("  Text: {}\n", &doc.text));
+                }
+            }
+        }
+
+        output.push_str(&format!("\n=== End Debug Dump ===\n"));
+        output
     }
 }
 

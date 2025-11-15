@@ -41,7 +41,6 @@ web-sys = { version = "0.3", features = [
 
 # Hybrid Search dependencies
 async-trait = "0.1"
-bincode = "1.3"
 bm25 = "2.3"
 instant-distance = "0.6"
 
@@ -69,11 +68,19 @@ web-sys = { version = "0.3", features = [
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
+# GPU acceleration features for desktop (Metal + Accelerate enabled by default)
+# Optional CUDA support available via --features cuda (requires CUDA toolkit)
+candle-core = { version = "0.8.0", features = ["metal", "accelerate"] }
+candle-nn = { version = "0.8.0", features = ["metal", "accelerate"] }
+candle-transformers = { version = "0.8.0", features = ["metal", "accelerate"] }
+
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+# Optional CUDA support for NVIDIA GPUs (requires CUDA toolkit installed)
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 
 [profile]
 
