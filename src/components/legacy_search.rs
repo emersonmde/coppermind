@@ -11,7 +11,8 @@ use super::hero::{use_worker_state, WorkerStatus};
 use super::SearchEngineStatus;
 use super::{use_search_engine, use_search_engine_status};
 
-// Messages for search coroutine
+// Messages for search coroutine (legacy code, will be removed in Phase 6)
+#[allow(dead_code)]
 enum SearchMessage {
     RunSearch(String), // query text
 }

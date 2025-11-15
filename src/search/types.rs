@@ -95,7 +95,7 @@ pub struct Document {
 /// Document metadata.
 ///
 /// Contains optional filename, source information, and creation timestamp.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DocumentMetadata {
     /// Original filename if available
     pub filename: Option<String>,
@@ -133,7 +133,7 @@ pub struct DocumentRecord {
 ///
 /// Returned by the hybrid search engine, containing both the document
 /// and relevance scores from different ranking algorithms.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     /// Document identifier
     pub doc_id: DocId,

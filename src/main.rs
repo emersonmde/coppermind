@@ -2,7 +2,7 @@ use coppermind::components::App as CoppermindApp;
 use dioxus::prelude::*;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
-const MAIN_CSS: Asset = asset!("/assets/main.css");
+const MAIN_CSS: Asset = asset!("/assets/coppermind.css");
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -54,7 +54,7 @@ fn App() -> Element {
         if cfg!(target_arch = "wasm32") {
             document::Stylesheet { href: MAIN_CSS }
         } else {
-            style { {include_str!("../assets/main.css")} }
+            style { {include_str!("../assets/coppermind.css")} }
         }
 
         // COEP Service Worker only needed for web (SharedArrayBuffer support)
@@ -70,7 +70,7 @@ fn App() -> Element {
             }
         }
 
-        div { class: "container",
+        body { class: "cm-body",
             CoppermindApp {}
         }
     }
