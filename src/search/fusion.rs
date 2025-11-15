@@ -3,6 +3,18 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+/// Standard RRF k parameter value from academic literature.
+///
+/// This constant (60) is the recommended value from the original RRF paper:
+/// "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods"
+/// by Cormack, Clarke, and Buettcher (SIGIR 2009).
+///
+/// The k parameter controls how much weight is given to top-ranked items:
+/// - Smaller k → more emphasis on top results
+/// - Larger k → more uniform weighting across ranks
+/// - k=60 provides a good balance in most IR scenarios
+pub const RRF_K: usize = 60;
+
 /// Combine ranked results from multiple sources using RRF
 ///
 /// RRF Formula: RRF_score(d) = sum_{r} 1 / (k + rank_r(d))
@@ -54,7 +66,7 @@ mod tests {
         let vector_results = vec![(1, 0.9), (2, 0.8), (3, 0.7)];
         let keyword_results = vec![(3, 10.0), (1, 8.0), (4, 5.0)];
 
-        let fused = reciprocal_rank_fusion(&vector_results, &keyword_results, 60);
+        let fused = reciprocal_rank_fusion(&vector_results, &keyword_results, RRF_K);
 
         // Doc 1 appears in both (rank 1 in vector, rank 2 in keyword)
         // Doc 3 appears in both (rank 3 in vector, rank 1 in keyword)
@@ -74,7 +86,7 @@ mod tests {
         let results_a: Vec<(i32, f32)> = vec![];
         let results_b = vec![(1, 1.0), (2, 0.9)];
 
-        let fused = reciprocal_rank_fusion(&results_a, &results_b, 60);
+        let fused = reciprocal_rank_fusion(&results_a, &results_b, RRF_K);
 
         assert_eq!(fused.len(), 2);
         assert_eq!(fused[0].0, 1); // Highest ranked from results_b

@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Returns the current Unix timestamp (seconds since UNIX_EPOCH).
 ///
@@ -26,8 +30,8 @@ pub fn get_current_timestamp() -> u64 {
 /// returns 0 instead of panicking.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn get_current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
@@ -146,30 +150,21 @@ pub struct SearchResult {
 }
 
 /// Error types for search operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum SearchError {
     /// Storage backend error
+    #[error("Storage error: {0}")]
     StorageError(String),
     /// Embedding generation error
+    #[error("Embedding error: {0}")]
     EmbeddingError(String),
     /// Index construction or query error
+    #[error("Index error: {0}")]
     IndexError(String),
     /// Document not found in index
+    #[error("Not found")]
     NotFound,
 }
-
-impl std::fmt::Display for SearchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SearchError::StorageError(e) => write!(f, "Storage error: {}", e),
-            SearchError::EmbeddingError(e) => write!(f, "Embedding error: {}", e),
-            SearchError::IndexError(e) => write!(f, "Index error: {}", e),
-            SearchError::NotFound => write!(f, "Not found"),
-        }
-    }
-}
-
-impl std::error::Error for SearchError {}
 
 /// Convert EmbeddingError to SearchError
 impl From<crate::error::EmbeddingError> for SearchError {

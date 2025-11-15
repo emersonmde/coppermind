@@ -4,6 +4,10 @@
 //! the network (web platform) or filesystem (desktop platform).
 
 use crate::error::EmbeddingError;
+use dioxus::logger::tracing::info;
+
+#[cfg(target_arch = "wasm32")]
+use dioxus::logger::tracing::error;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
@@ -64,12 +68,9 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         resolve_asset_url(url)
     };
 
-    web_sys::console::log_1(
-        &format!(
-            "📥 Fetching asset (raw: {}, resolved: {})...",
-            url, resolved_url
-        )
-        .into(),
+    info!(
+        "📥 Fetching asset (raw: {}, resolved: {})...",
+        url, resolved_url
     );
 
     let promise = fetch_fn
@@ -83,7 +84,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         ))
     })?;
 
-    web_sys::console::log_1(&"✓ Fetch completed".into());
+    info!("✓ Fetch completed");
 
     let resp: web_sys::Response = resp_value
         .dyn_into()
@@ -98,7 +99,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         )));
     }
 
-    web_sys::console::log_1(&"✓ Response OK, reading array buffer...".into());
+    info!("✓ Response OK, reading array buffer...");
 
     let array_buffer =
         JsFuture::from(resp.array_buffer().map_err(|e| {
@@ -112,13 +113,10 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     let bytes = uint8_array.to_vec();
 
-    web_sys::console::log_1(
-        &format!(
-            "✓ Asset fetched successfully ({} bytes, {:.2}MB)",
-            bytes.len(),
-            bytes.len() as f64 / 1_000_000.0
-        )
-        .into(),
+    info!(
+        "✓ Asset fetched successfully ({} bytes, {:.2}MB)",
+        bytes.len(),
+        bytes.len() as f64 / 1_000_000.0
     );
 
     Ok(bytes)
@@ -155,9 +153,7 @@ fn resolve_asset_url(input: &str) -> String {
                 }
                 Ok(None) => {}
                 Err(err) => {
-                    web_sys::console::error_1(
-                        &format!("Failed to read DIOXUS_ASSET_ROOT meta tag: {:?}", err).into(),
-                    );
+                    error!("Failed to read DIOXUS_ASSET_ROOT meta tag: {:?}", err);
                 }
             }
         }
@@ -213,7 +209,7 @@ fn resolve_with_worker_base(path: &str) -> Option<String> {
 async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, EmbeddingError> {
     use std::path::PathBuf;
 
-    eprintln!("[INFO] 📥 Reading asset from {}...", asset_path);
+    info!("📥 Reading asset from {}...", asset_path);
 
     // Get the current executable directory
     let exe_path = std::env::current_exe()
@@ -222,8 +218,8 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
         EmbeddingError::AssetFetch("Failed to get exe parent directory".to_string())
     })?;
 
-    eprintln!("[INFO] 📂 Executable directory: {:?}", exe_dir);
-    eprintln!("[INFO] 📂 Current directory: {:?}", std::env::current_dir());
+    info!("📂 Executable directory: {:?}", exe_dir);
+    info!("📂 Current directory: {:?}", std::env::current_dir());
 
     // Search locations for bundled assets
     let asset_locations = vec![
@@ -242,7 +238,7 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
 
     for base_dir in &asset_locations {
         let full_path = base_dir.join(filename);
-        eprintln!("[INFO]   Trying: {:?}", full_path);
+        info!("  Trying: {:?}", full_path);
 
         // Use spawn_blocking for file I/O to prevent UI freezing with large files (62MB model)
         let path_clone = full_path.clone();
@@ -251,8 +247,8 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
             .map_err(|e| EmbeddingError::AssetFetch(format!("Task join failed: {}", e)))?;
 
         if let Ok(bytes) = read_result {
-            eprintln!(
-                "[INFO] ✓ Asset loaded from {:?}: {:.2}MB ({} bytes)",
+            info!(
+                "✓ Asset loaded from {:?}: {:.2}MB ({} bytes)",
                 full_path,
                 bytes.len() as f64 / 1_000_000.0,
                 bytes.len()

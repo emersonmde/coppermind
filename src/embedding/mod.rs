@@ -62,6 +62,7 @@ pub use config::{JinaBertConfig, ModelConfig};
 pub use model::{Embedder, JinaBertEmbedder};
 
 use crate::error::EmbeddingError;
+use dioxus::logger::tracing::{info, warn};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
 use std::sync::Arc;
 
@@ -120,7 +121,7 @@ pub async fn get_or_load_model() -> Result<Arc<dyn Embedder>, EmbeddingError> {
     }
 
     let model_url = MODEL_FILE.to_string();
-    eprintln!("[INFO] 📦 Loading embedding model...");
+    info!("📦 Loading embedding model...");
 
     let model_bytes = assets::fetch_asset_bytes(&model_url).await?;
     let config = JinaBertConfig::default();
@@ -165,7 +166,7 @@ async fn ensure_tokenizer(
     max_positions: usize,
 ) -> Result<&'static tokenizers::Tokenizer, EmbeddingError> {
     let tokenizer_url = TOKENIZER_FILE.to_string();
-    eprintln!("[INFO] 📚 Tokenizer URL: {}", tokenizer_url);
+    info!("📚 Loading tokenizer from {}", tokenizer_url);
 
     let tokenizer_bytes = assets::fetch_asset_bytes(&tokenizer_url).await?;
     tokenizer::ensure_tokenizer(tokenizer_bytes, max_positions)
@@ -197,6 +198,7 @@ async fn ensure_tokenizer(
 ///          computation.embedding.len(),
 ///          computation.token_count);
 /// ```
+#[must_use = "Embedding computation results should be used or errors handled"]
 pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
@@ -205,8 +207,8 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
     let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
     let token_count = token_ids.len();
 
-    eprintln!("[INFO] 🧾 Tokenized into {} tokens", token_count);
-    eprintln!("[INFO] Generating embedding vector...");
+    info!("🧾 Tokenized into {} tokens", token_count);
+    info!("Generating embedding vector...");
 
     // On desktop: Use spawn_blocking to prevent UI freezing
     // On WASM: Run directly (web worker handles parallelism)
@@ -227,10 +229,7 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
         }
     };
 
-    eprintln!(
-        "[INFO] ✓ Generated {}-dimensional embedding",
-        embedding.len()
-    );
+    info!("✓ Generated {}-dimensional embedding", embedding.len());
 
     Ok(EmbeddingComputation {
         token_count,
@@ -293,8 +292,8 @@ pub async fn embed_text_chunks(
         return Ok(vec![]);
     }
 
-    eprintln!(
-        "[INFO] 🧩 Embedding {} chunks ({} tokens max per chunk, sentence-based)",
+    info!(
+        "🧩 Embedding {} chunks ({} tokens max per chunk, sentence-based)",
         text_chunks.len(),
         effective_chunk
     );
@@ -310,15 +309,15 @@ pub async fn embed_text_chunks(
 
         // Check if chunk exceeds model limits (shouldn't happen but handle edge case)
         if token_count > max_positions {
-            eprintln!(
-                "[WARN] ⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
+            warn!(
+                "⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
                 chunk.index, max_positions, token_count
             );
             continue;
         }
 
-        eprintln!(
-            "[INFO] 🚀 Embedding chunk {} ({} tokens)",
+        info!(
+            "🚀 Embedding chunk {} ({} tokens)",
             chunk.index, token_count
         );
 
@@ -360,10 +359,7 @@ pub async fn embed_text_chunks(
         }
     }
 
-    eprintln!(
-        "[INFO] ✅ All {} chunks embedded successfully",
-        results.len()
-    );
+    info!("✅ All {} chunks embedded successfully", results.len());
 
     Ok(results)
 }
@@ -381,7 +377,7 @@ pub async fn embed_text_chunks(
 ///
 /// Formatted string containing token count, dimension, and first 10 values.
 pub async fn run_embedding(text: &str) -> Result<String, EmbeddingError> {
-    eprintln!("[INFO] 🔮 Generating embedding for: '{}'", text);
+    info!("🔮 Generating embedding for: '{}'", text);
     let computation = compute_embedding(text).await?;
     Ok(format_embedding_summary(
         text,

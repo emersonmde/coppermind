@@ -9,6 +9,7 @@ use crate::error::EmbeddingError;
 use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::{Activation, VarBuilder};
 use candle_transformers::models::jina_bert::{BertModel, Config, PositionEmbeddingType};
+use dioxus::logger::tracing::info;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
@@ -106,9 +107,9 @@ impl JinaBertEmbedder {
         vocab_size: usize,
         config: JinaBertConfig,
     ) -> Result<Self, EmbeddingError> {
-        eprintln!("[INFO] 📦 Loading embedding model '{}'", config.model_id());
-        eprintln!(
-            "[INFO] 📊 Model bytes length: {} bytes ({:.2}MB)",
+        info!("📦 Loading embedding model '{}'", config.model_id());
+        info!(
+            "📊 Model bytes length: {} bytes ({:.2}MB)",
             model_bytes.len(),
             model_bytes.len() as f64 / 1_000_000.0
         );
@@ -130,14 +131,14 @@ impl JinaBertEmbedder {
             // Desktop: Try CUDA → Metal → CPU (with MKL/Accelerate)
             if let Ok(cuda_device) = Device::new_cuda(0) {
                 #[cfg(feature = "cudnn")]
-                eprintln!("[INFO] ✓ Initialized CUDA GPU device (with cuDNN)");
+                info!("✓ Initialized CUDA GPU device (with cuDNN)");
                 #[cfg(not(feature = "cudnn"))]
-                eprintln!("[INFO] ✓ Initialized CUDA GPU device");
+                info!("✓ Initialized CUDA GPU device");
                 return cuda_device;
             }
 
             if let Ok(metal_device) = Device::new_metal(0) {
-                eprintln!("[INFO] ✓ Initialized Metal GPU device (with Accelerate)");
+                info!("✓ Initialized Metal GPU device (with Accelerate)");
                 return metal_device;
             }
 
@@ -146,16 +147,16 @@ impl JinaBertEmbedder {
                 not(any(target_os = "macos", target_os = "ios")),
                 any(target_arch = "x86_64", target_arch = "x86")
             ))]
-            eprintln!("[INFO] ✓ Initialized CPU device (with Intel MKL)");
+            info!("✓ Initialized CPU device (with Intel MKL)");
 
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            eprintln!("[INFO] ✓ Initialized CPU device (with Accelerate)");
+            info!("✓ Initialized CPU device (with Accelerate)");
 
             #[cfg(all(
                 not(any(target_os = "macos", target_os = "ios")),
                 not(any(target_arch = "x86_64", target_arch = "x86"))
             ))]
-            eprintln!("[INFO] ✓ Initialized CPU device");
+            info!("✓ Initialized CPU device");
 
             Device::Cpu
         }
@@ -163,7 +164,7 @@ impl JinaBertEmbedder {
         #[cfg(target_arch = "wasm32")]
         {
             // WASM: CPU only (WebGPU not yet supported in Candle)
-            web_sys::console::log_1(&"✓ Initialized CPU device (WASM)".into());
+            info!("✓ Initialized CPU device (WASM)");
             Device::Cpu
         }
     }
@@ -175,8 +176,8 @@ impl JinaBertEmbedder {
         config: &JinaBertConfig,
         device: &Device,
     ) -> Result<BertModel, EmbeddingError> {
-        eprintln!(
-            "[INFO] ⚙️  Config: {}d hidden, {} layers, {} heads",
+        info!(
+            "⚙️  Config: {}d hidden, {} layers, {} heads",
             config.hidden_size, config.num_hidden_layers, config.num_attention_heads
         );
 
@@ -196,8 +197,8 @@ impl JinaBertEmbedder {
             PositionEmbeddingType::Alibi,
         );
 
-        eprintln!(
-            "[INFO] ✓ Created model config (max positions: {})",
+        info!(
+            "✓ Created model config (max positions: {})",
             config.max_position_embeddings
         );
 
@@ -218,19 +219,19 @@ impl JinaBertEmbedder {
             model_bytes[6],
             model_bytes[7],
         ]);
-        eprintln!("[INFO] 📋 Safetensors header size: {} bytes", header_size);
+        info!("📋 Safetensors header size: {} bytes", header_size);
 
         // Load model weights (F16 → F32 conversion for WASM compatibility)
-        eprintln!("[INFO] 🔄 Loading VarBuilder from safetensors (converting to F32)...");
+        info!("🔄 Loading VarBuilder from safetensors (converting to F32)...");
         let vb = VarBuilder::from_buffered_safetensors(model_bytes, DType::F32, device).map_err(
             |e| EmbeddingError::ModelLoad(format!("Failed to create VarBuilder: {}", e)),
         )?;
-        eprintln!("[INFO] ✓ VarBuilder created successfully");
+        info!("✓ VarBuilder created successfully");
 
-        eprintln!("[INFO] 🔄 Creating BertModel...");
+        info!("🔄 Creating BertModel...");
         let model = BertModel::new(vb, &model_config)
             .map_err(|e| EmbeddingError::ModelLoad(format!("Failed to create BertModel: {}", e)))?;
-        eprintln!("[INFO] ✓ BertModel created successfully");
+        info!("✓ BertModel created successfully");
 
         Ok(model)
     }

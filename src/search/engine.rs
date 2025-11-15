@@ -1,12 +1,13 @@
 // HybridSearchEngine - combines vector and keyword search
 
-use super::fusion::reciprocal_rank_fusion;
+use super::fusion::{reciprocal_rank_fusion, RRF_K};
 use super::keyword::KeywordSearchEngine;
 #[cfg(test)]
 use super::types::DocumentMetadata;
 use super::types::{DocId, Document, DocumentRecord, SearchError, SearchResult};
 use super::vector::VectorSearchEngine;
 use crate::storage::StorageBackend;
+use dioxus::logger::tracing::info;
 use std::collections::HashMap;
 
 /// Hybrid search engine combining vector (semantic) and keyword (BM25) search
@@ -45,7 +46,8 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// * `doc` - Document containing text and metadata
     /// * `embedding` - Pre-computed embedding vector for the document
     ///
-    /// Returns the assigned DocId
+    /// Returns the assigned DocId that should be stored or errors handled
+    #[must_use = "Document ID should be stored or errors handled"]
     pub async fn add_document(
         &mut self,
         doc: Document,
@@ -82,6 +84,7 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
     /// Add a document without rebuilding vector index (for batch operations)
     /// Call rebuild_vector_index() once after all documents are added
+    #[must_use = "Document ID should be stored or errors handled"]
     pub async fn add_document_deferred(
         &mut self,
         doc: Document,
@@ -151,7 +154,8 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// * `query_text` - The query text for keyword matching
     /// * `k` - Number of results to return
     ///
-    /// Returns ranked search results
+    /// Returns ranked search results that should be used or errors handled
+    #[must_use = "Search results should be used or errors handled"]
     pub async fn search(
         &self,
         query_embedding: &[f32],
@@ -169,63 +173,26 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
         // Get vector search results (semantic similarity)
         let vector_results = self.vector_engine.search(query_embedding, k * 2);
-        #[cfg(target_arch = "wasm32")]
-        {
-            dioxus::logger::tracing::info!("📊 Vector search (semantic) results:");
-            for (i, (doc_id, score)) in vector_results.iter().take(k).enumerate() {
-                if let Some(doc) = self.documents.get(doc_id) {
-                    dioxus::logger::tracing::info!(
-                        "  {}. [Vector: {:.4}] {}",
-                        i + 1,
-                        score,
-                        doc.text
-                    );
-                }
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            println!("📊 Vector search (semantic) results:");
-            for (i, (doc_id, score)) in vector_results.iter().take(k).enumerate() {
-                if let Some(doc) = self.documents.get(doc_id) {
-                    println!("  {}. [Vector: {:.4}] {}", i + 1, score, doc.text);
-                }
+        info!("📊 Vector search (semantic) results:");
+        for (i, (doc_id, score)) in vector_results.iter().take(k).enumerate() {
+            if let Some(doc) = self.documents.get(doc_id) {
+                info!("  {}. [Vector: {:.4}] {}", i + 1, score, doc.text);
             }
         }
 
         // Get keyword search results (BM25)
         let keyword_results = self.keyword_engine.search(query_text, k * 2);
-        #[cfg(target_arch = "wasm32")]
-        {
-            dioxus::logger::tracing::info!("📊 Keyword search (BM25) results:");
-            for (i, (doc_id, score)) in keyword_results.iter().take(k).enumerate() {
-                if let Some(doc) = self.documents.get(doc_id) {
-                    dioxus::logger::tracing::info!(
-                        "  {}. [BM25: {:.4}] {}",
-                        i + 1,
-                        score,
-                        doc.text
-                    );
-                }
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            println!("📊 Keyword search (BM25) results:");
-            for (i, (doc_id, score)) in keyword_results.iter().take(k).enumerate() {
-                if let Some(doc) = self.documents.get(doc_id) {
-                    println!("  {}. [BM25: {:.4}] {}", i + 1, score, doc.text);
-                }
+        info!("📊 Keyword search (BM25) results:");
+        for (i, (doc_id, score)) in keyword_results.iter().take(k).enumerate() {
+            if let Some(doc) = self.documents.get(doc_id) {
+                info!("  {}. [BM25: {:.4}] {}", i + 1, score, doc.text);
             }
         }
 
         // Fuse results using Reciprocal Rank Fusion (RRF)
-        #[cfg(target_arch = "wasm32")]
-        dioxus::logger::tracing::info!("🔀 Applying Reciprocal Rank Fusion (RRF)...");
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("🔀 Applying Reciprocal Rank Fusion (RRF)...");
+        info!("🔀 Applying Reciprocal Rank Fusion (RRF)...");
 
-        let fused_results = reciprocal_rank_fusion(&vector_results, &keyword_results, 60);
+        let fused_results = reciprocal_rank_fusion(&vector_results, &keyword_results, RRF_K);
 
         // Build maps of individual scores for lookup
         let vector_scores: HashMap<DocId, f32> = vector_results.into_iter().collect();

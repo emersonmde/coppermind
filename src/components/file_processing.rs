@@ -15,6 +15,9 @@ use dioxus::logger::tracing::{error, info};
 use futures::lock::Mutex;
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::{future::Future, path::PathBuf, pin::Pin};
+
 /// Detects if file contents appear to be binary (not text).
 ///
 /// Uses a simple heuristic: binary files contain null bytes (`\0`),
@@ -143,11 +146,10 @@ pub async fn index_chunks<S: StorageBackend>(
 ///
 /// This function is recursive and must be boxed to work with async recursion.
 #[cfg(not(target_arch = "wasm32"))]
-pub type BoxedFileCollector =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Vec<(String, std::path::PathBuf)>> + Send>>;
+pub type BoxedFileCollector = Pin<Box<dyn Future<Output = Vec<(String, PathBuf)>> + Send>>;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn collect_files_from_dir(path: std::path::PathBuf, base_name: String) -> BoxedFileCollector {
+pub fn collect_files_from_dir(path: PathBuf, base_name: String) -> BoxedFileCollector {
     Box::pin(async move {
         use tokio::fs;
 

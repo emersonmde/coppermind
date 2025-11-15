@@ -44,6 +44,9 @@ async-trait = "0.1"
 bm25 = "2.3"
 instant-distance = "0.6"
 
+# Error handling with derive macros
+thiserror = "2.0"
+
 # Text processing
 regex = "1.11"
 

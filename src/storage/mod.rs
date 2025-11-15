@@ -1,3 +1,79 @@
+//! Cross-platform storage backend for persisting search indexes.
+//!
+//! This module provides a platform-agnostic storage abstraction that allows
+//! the search engine to persist and load data across different platforms:
+//!
+//! - **Web (WASM)**: Uses OPFS (Origin Private File System) for large binary data
+//! - **Desktop**: Uses native filesystem (`tokio::fs`)
+//!
+//! # Storage Backend Trait
+//!
+//! The [`StorageBackend`] trait provides a simple key-value interface:
+//! - `save(key, data)` - Store binary data
+//! - `load(key)` - Retrieve binary data
+//! - `exists(key)` - Check if key exists
+//! - `delete(key)` - Remove data
+//! - `list_keys()` - List all stored keys
+//! - `clear()` - Delete all data
+//!
+//! # Platform-Specific Implementations
+//!
+//! ## OPFS (Web)
+//!
+//! Origin Private File System provides:
+//! - **Large storage quota**: Gigabytes of storage for embeddings
+//! - **Persistent**: Data survives page refreshes
+//! - **Private**: Not accessible to other origins
+//! - **Fast**: Direct filesystem access (not IndexedDB)
+//!
+//! ```ignore
+//! #[cfg(target_arch = "wasm32")]
+//! use coppermind::storage::OpfsStorage;
+//!
+//! let storage = OpfsStorage::new().await?;
+//! storage.save("embeddings", &embedding_bytes).await?;
+//! ```
+//!
+//! ## Native Filesystem (Desktop)
+//!
+//! Uses `tokio::fs` for async file I/O:
+//! - **Path**: Configurable data directory
+//! - **Atomic writes**: Temp file + rename for safety
+//! - **Async**: Non-blocking I/O via tokio
+//!
+//! ```ignore
+//! #[cfg(not(target_arch = "wasm32"))]
+//! use coppermind::storage::NativeStorage;
+//!
+//! let storage = NativeStorage::new("./data").await?;
+//! storage.save("embeddings", &embedding_bytes).await?;
+//! ```
+//!
+//! # Usage Example
+//!
+//! ```ignore
+//! use coppermind::storage::{StorageBackend, StorageError};
+//!
+//! async fn persist_index<S: StorageBackend>(
+//!     storage: &S,
+//!     index_data: Vec<u8>
+//! ) -> Result<(), StorageError> {
+//!     storage.save("search_index", &index_data).await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Error Handling
+//!
+//! All storage operations return `Result<T, StorageError>` with variants:
+//! - `NotFound` - Key doesn't exist
+//! - `IoError` - Filesystem/network error
+//! - `SerializationError` - Data encoding/decoding failed
+//! - `BrowserApiUnavailable` - Web API not supported
+//! - `OpfsUnavailable` - OPFS not available in this browser
+
+use thiserror::Error;
+
 /// Storage backend abstraction for cross-platform persistence
 ///
 /// This trait provides a generic key-value storage interface that can be
@@ -6,53 +82,45 @@
 #[allow(dead_code)] // Public API trait
 pub trait StorageBackend {
     /// Save binary data to storage with a key
+    #[must_use = "Storage save failures should be handled"]
     async fn save(&self, key: &str, data: &[u8]) -> Result<(), StorageError>;
 
     /// Load binary data from storage by key
+    #[must_use = "Storage load failures should be handled"]
     async fn load(&self, key: &str) -> Result<Vec<u8>, StorageError>;
 
     /// Check if a key exists in storage
+    #[must_use = "Storage check failures should be handled"]
     async fn exists(&self, key: &str) -> Result<bool, StorageError>;
 
     /// Delete data by key
+    #[must_use = "Storage delete failures should be handled"]
     async fn delete(&self, key: &str) -> Result<(), StorageError>;
 
     /// List all keys in storage (useful for debugging/management)
+    #[must_use = "Storage listing failures should be handled"]
     async fn list_keys(&self) -> Result<Vec<String>, StorageError>;
 
     /// Clear all stored data
+    #[must_use = "Storage clear failures should be handled"]
     async fn clear(&self) -> Result<(), StorageError>;
 }
 
 /// Storage error types
-#[derive(Debug)]
+#[derive(Debug, Error)]
 #[allow(dead_code)] // Public API enum
 pub enum StorageError {
+    #[error("Key not found: {0}")]
     NotFound(String),
+    #[error("IO error: {0}")]
     IoError(String),
+    #[error("Serialization error: {0}")]
     SerializationError(String),
+    #[error("Browser API unavailable")]
     BrowserApiUnavailable,
+    #[error("OPFS unavailable - please use a modern browser in standard mode")]
     OpfsUnavailable,
 }
-
-impl std::fmt::Display for StorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StorageError::NotFound(key) => write!(f, "Key not found: {}", key),
-            StorageError::IoError(e) => write!(f, "IO error: {}", e),
-            StorageError::SerializationError(e) => write!(f, "Serialization error: {}", e),
-            StorageError::BrowserApiUnavailable => write!(f, "Browser API unavailable"),
-            StorageError::OpfsUnavailable => {
-                write!(
-                    f,
-                    "OPFS unavailable - please use a modern browser in standard mode"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for StorageError {}
 
 // Platform-specific implementations
 #[cfg(target_arch = "wasm32")]

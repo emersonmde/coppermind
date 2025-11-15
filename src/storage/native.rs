@@ -1,7 +1,7 @@
 // Native filesystem storage implementation for desktop
 
 use super::{StorageBackend, StorageError};
-use std::path::PathBuf;
+use std::{io::ErrorKind, path::PathBuf};
 
 #[allow(dead_code)] // Public API for future use
 pub struct NativeStorage {
@@ -37,7 +37,7 @@ impl StorageBackend for NativeStorage {
     async fn load(&self, key: &str) -> Result<Vec<u8>, StorageError> {
         let path = self.get_path(key);
         tokio::fs::read(&path).await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
+            if e.kind() == ErrorKind::NotFound {
                 StorageError::NotFound(key.to_string())
             } else {
                 StorageError::IoError(format!("Failed to read file: {}", e))
