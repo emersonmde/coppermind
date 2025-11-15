@@ -8,7 +8,7 @@
 
 use crate::embedding::ChunkEmbeddingResult;
 use crate::error::FileProcessingError;
-use crate::search::types::{Document, DocumentMetadata};
+use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageBackend;
 use dioxus::logger::tracing::{error, info};
@@ -123,27 +123,6 @@ pub async fn index_chunks<S: StorageBackend>(
     );
 
     Ok(indexed_count)
-}
-
-/// Gets the current Unix timestamp in seconds.
-///
-/// Uses platform-specific time APIs:
-/// - **Web**: `instant::SystemTime` (WASM-compatible)
-/// - **Desktop**: `std::time::SystemTime`
-#[cfg(target_arch = "wasm32")]
-fn get_current_timestamp() -> u64 {
-    instant::SystemTime::now()
-        .duration_since(instant::SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn get_current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
 }
 
 /// Recursively collects all files from a directory (desktop only).
