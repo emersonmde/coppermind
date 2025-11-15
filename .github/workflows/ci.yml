@@ -29,7 +29,7 @@ jobs:
       - name: Download model assets
         run: ./download-models.sh
       - name: Run tests (library only, no platform-specific deps needed)
-        run: cargo test --lib --verbose --features desktop
+        run: cargo test --lib --verbose
 
   fmt:
     name: Rustfmt
