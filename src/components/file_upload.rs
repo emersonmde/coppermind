@@ -66,13 +66,13 @@ pub fn FileUpload() -> Element {
     let search_engine = use_search_engine();
     let search_engine_status = use_search_engine_status();
 
-    // Set webkitdirectory attribute on the directory input (web only)
+    // Set webkitdirectory and directory attributes on the file input (web only)
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
         use wasm_bindgen::JsCast;
         if let Some(window) = web_sys::window() {
             if let Some(document) = window.document() {
-                if let Some(input) = document.get_element_by_id("file-input-directory") {
+                if let Some(input) = document.get_element_by_id("file-input") {
                     if let Some(input_element) = input.dyn_ref::<web_sys::HtmlInputElement>() {
                         let _ = input_element.set_attribute("webkitdirectory", "");
                         let _ = input_element.set_attribute("directory", "");
@@ -485,9 +485,15 @@ pub fn FileUpload() -> Element {
                 }
             }
 
-            // File upload area
-            div { class: "upload-zone",
-                div { class: "upload-content",
+            // File upload area - single clickable input
+            div {
+                class: "upload-zone",
+
+                label {
+                    r#for: "file-input",
+                    class: "upload-content",
+                    style: "cursor: pointer;",
+
                     svg {
                         class: "upload-icon",
                         xmlns: "http://www.w3.org/2000/svg",
@@ -527,150 +533,80 @@ pub fn FileUpload() -> Element {
                             }
                         }
                     } else {
-                        p { class: "upload-text-primary", "Drop files or folder here" }
+                        p { class: "upload-text-primary", "Click to select folder" }
                         p { class: "upload-text-secondary",
                             "Supports multiple files • Any text format • Processed locally"
                         }
-                        div { class: "upload-buttons",
-                            label {
-                                class: "upload-mode-button",
-                                r#for: "file-input-files",
-                                "📄 Select Files"
-                            }
-                            label {
-                                class: "upload-mode-button",
-                                r#for: "file-input-directory",
-                                "📁 Select Folder"
-                            }
-                        }
                     }
+                }
 
-                    // Hidden file input for selecting multiple files
-                    input {
-                        id: "file-input-files",
-                        class: "file-input-hidden",
-                        r#type: "file",
-                        accept: "*/*",
-                        multiple: true,
-                        disabled: file_processing(),
-                        onchange: move |evt: dioxus::events::FormEvent| {
-                            if file_processing() {
-                                file_status
-                                    .set(
-                                        "Already processing files. Please wait for it to finish.".into(),
-                                    );
-                                return;
-                            }
+                // Hidden file input with webkitdirectory for folder selection
+                input {
+                    id: "file-input",
+                    class: "file-input-hidden",
+                    r#type: "file",
+                    multiple: true,
+                    directory: true,
+                    disabled: file_processing(),
+                    onchange: move |evt: dioxus::events::FormEvent| {
+                        if file_processing() {
+                            file_status
+                                .set(
+                                    "Already processing files. Please wait for it to finish.".into(),
+                                );
+                            return;
+                        }
 
-                            let files = evt.files();
-                            if files.is_empty() {
-                                file_status.set("No files selected.".into());
-                                file_chunks.set(Vec::new());
-                                file_name.set(String::new());
-                                warnings.set(Vec::new());
-                                return;
-                            }
+                        let files = evt.files();
+                        if files.is_empty() {
+                            file_status.set("No files selected.".into());
+                            file_chunks.set(Vec::new());
+                            file_name.set(String::new());
+                            warnings.set(Vec::new());
+                            return;
+                        }
 
-                            let file_count = files.len();
-                            let task = file_task;
+                        let file_count = files.len();
+                        let task = file_task;
 
-                            spawn(async move {
-                                file_processing.set(true);
-                                file_chunks.set(Vec::new());
-                                warnings.set(Vec::new());
-                                info!("📂 Selected {} file(s)", file_count);
-                                file_status.set(format!("Reading {} file(s)...", file_count));
+                        spawn(async move {
+                            file_processing.set(true);
+                            file_chunks.set(Vec::new());
+                            warnings.set(Vec::new());
+                            info!("📂 Selected {} file(s)", file_count);
+                            file_status.set(format!("Reading {} file(s)...", file_count));
 
-                                let mut file_contents = Vec::new();
+                            let mut file_contents = Vec::new();
 
-                                // Read all files
-                                for file in files.into_iter() {
-                                    let file_label = file.name().clone();
-                                    match file.read_string().await {
-                                        Ok(contents) => {
-                                            file_contents.push((file_label, contents));
+                            // Read all files
+                            for file in files.into_iter() {
+                                let file_label = file.name().clone();
+                                match file.read_string().await {
+                                    Ok(contents) => {
+                                        file_contents.push((file_label, contents));
+                                    }
+                                    Err(e) => {
+                                        let error_msg = e.to_string();
+                                        // Skip directory entries silently (browser may include parent dir)
+                                        if error_msg.contains("Is a directory") || error_msg.contains("os error 21") {
+                                            info!("Skipping directory entry: {}", file_label);
+                                            continue;
                                         }
-                                        Err(e) => {
-                                            error!("❌ Failed to read {}: {}", file_label, e);
-                                            let warning = format!("⚠️ Failed to read '{}': {}", file_label, e);
-                                            warnings.write().push(warning);
-                                        }
+                                        error!("❌ Failed to read {}: {}", file_label, e);
+                                        let warning = format!("⚠️ Failed to read '{}': {}", file_label, e);
+                                        warnings.write().push(warning);
                                     }
                                 }
-
-                                if file_contents.is_empty() {
-                                    file_status.set("All files failed to read.".into());
-                                    file_processing.set(false);
-                                } else {
-                                    // Send to background coroutine for processing
-                                    task.send(FileMessage::ProcessFiles(file_contents));
-                                }
-                            });
-                        }
-                    }
-
-                    // Hidden directory input for selecting folders (recursive)
-                    // Note: We set webkitdirectory via script since Dioxus doesn't support it directly
-                    input {
-                        id: "file-input-directory",
-                        class: "file-input-hidden",
-                        r#type: "file",
-                        multiple: true,
-                        disabled: file_processing(),
-                        onchange: move |evt: dioxus::events::FormEvent| {
-                            if file_processing() {
-                                file_status
-                                    .set(
-                                        "Already processing files. Please wait for it to finish.".into(),
-                                    );
-                                return;
                             }
 
-                            let files = evt.files();
-                            if files.is_empty() {
-                                file_status.set("No files selected.".into());
-                                file_chunks.set(Vec::new());
-                                file_name.set(String::new());
-                                warnings.set(Vec::new());
-                                return;
+                            if file_contents.is_empty() {
+                                file_status.set("All files failed to read.".into());
+                                file_processing.set(false);
+                            } else {
+                                // Send to background coroutine for processing
+                                task.send(FileMessage::ProcessFiles(file_contents));
                             }
-
-                            let file_count = files.len();
-                            let task = file_task;
-
-                            spawn(async move {
-                                file_processing.set(true);
-                                file_chunks.set(Vec::new());
-                                warnings.set(Vec::new());
-                                info!("📂 Selected folder with {} file(s)", file_count);
-                                file_status.set(format!("Reading {} file(s) from folder...", file_count));
-
-                                let mut file_contents = Vec::new();
-
-                                // Read all files from directory
-                                for file in files.into_iter() {
-                                    let file_label = file.name().clone();
-                                    match file.read_string().await {
-                                        Ok(contents) => {
-                                            file_contents.push((file_label, contents));
-                                        }
-                                        Err(e) => {
-                                            error!("❌ Failed to read {}: {}", file_label, e);
-                                            let warning = format!("⚠️ Failed to read '{}': {}", file_label, e);
-                                            warnings.write().push(warning);
-                                        }
-                                    }
-                                }
-
-                                if file_contents.is_empty() {
-                                    file_status.set("All files failed to read.".into());
-                                    file_processing.set(false);
-                                } else {
-                                    // Send to background coroutine for processing
-                                    task.send(FileMessage::ProcessFiles(file_contents));
-                                }
-                            });
-                        }
+                        });
                     }
                 }
             }

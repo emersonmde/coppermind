@@ -103,15 +103,30 @@ impl EmbeddingModel {
         let device = {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                // Desktop: Try CUDA → Metal → CPU
+                // Desktop: Try CUDA → Metal → CPU (with MKL/Accelerate)
                 if let Ok(cuda_device) = Device::new_cuda(0) {
+                    #[cfg(feature = "cudnn")]
+                    info!("✓ Initialized CUDA GPU device (with cuDNN)");
+                    #[cfg(not(feature = "cudnn"))]
                     info!("✓ Initialized CUDA GPU device");
                     cuda_device
                 } else if let Ok(metal_device) = Device::new_metal(0) {
-                    info!("✓ Initialized Metal GPU device");
+                    info!("✓ Initialized Metal GPU device (with Accelerate)");
                     metal_device
                 } else {
-                    info!("✓ Initialized CPU device (no GPU available)");
+                    // CPU fallback with platform-specific optimizations
+                    #[cfg(all(
+                        not(any(target_os = "macos", target_os = "ios")),
+                        any(target_arch = "x86_64", target_arch = "x86")
+                    ))]
+                    info!("✓ Initialized CPU device (with Intel MKL)");
+                    #[cfg(any(target_os = "macos", target_os = "ios"))]
+                    info!("✓ Initialized CPU device (with Accelerate)");
+                    #[cfg(all(
+                        not(any(target_os = "macos", target_os = "ios")),
+                        not(any(target_arch = "x86_64", target_arch = "x86"))
+                    ))]
+                    info!("✓ Initialized CPU device");
                     Device::Cpu
                 }
             }

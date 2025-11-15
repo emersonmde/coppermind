@@ -68,11 +68,19 @@ web-sys = { version = "0.3", features = [
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
-# GPU acceleration features for desktop (Metal + Accelerate enabled by default)
-# Optional CUDA support available via --features cuda (requires CUDA toolkit)
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+# GPU acceleration features for Apple platforms (Metal + Accelerate)
+# Supports macOS desktop and iOS/iPadOS mobile
 candle-core = { version = "0.8.0", features = ["metal", "accelerate"] }
 candle-nn = { version = "0.8.0", features = ["metal", "accelerate"] }
 candle-transformers = { version = "0.8.0", features = ["metal", "accelerate"] }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "macos", target_os = "ios")), any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
+# Intel MKL CPU optimization for x86/x86_64 platforms (Windows, Linux)
+# Excluded from Apple platforms which use Accelerate instead
+candle-core = { version = "0.8.0", features = ["mkl"] }
+candle-nn = { version = "0.8.0", features = ["mkl"] }
+candle-transformers = { version = "0.8.0", features = ["mkl"] }
 
 [features]
 default = ["web"]
@@ -81,6 +89,9 @@ desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
 # Optional CUDA support for NVIDIA GPUs (requires CUDA toolkit installed)
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# Enhanced CUDA with cuDNN for deep learning (requires CUDA + cuDNN installed)
+# Note: cudnn feature only available in candle-core
+cudnn = ["cuda", "candle-core/cudnn"]
 
 [profile]
 
