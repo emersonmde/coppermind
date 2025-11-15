@@ -39,8 +39,20 @@ Coppermind is structured around three core subsystems that work together to prov
 ### Module Structure
 
 - **src/main.rs** - Entry point with platform-specific initialization
-- **src/components/** - Dioxus UI components (Hero, FileUpload, Search, Testing)
-- **src/embedding.rs** - JinaBERT model loading and inference via Candle
+- **src/error.rs** - Error types (EmbeddingError, FileProcessingError)
+- **src/components/** - Dioxus UI components and file processing
+  - `mod.rs` - App component, context providers
+  - `file_upload.rs` - File upload UI with progress tracking
+  - `file_processing.rs` - File utilities (binary detection, chunk indexing, directory traversal)
+  - `hero.rs` - Hero section, worker state management
+  - `search.rs` - Search UI component
+  - `testing.rs` - Developer testing utilities
+- **src/embedding/** - ML model inference and text processing
+  - `mod.rs` - Public API, high-level embedding functions
+  - `config.rs` - Model configuration (JinaBertConfig, ModelConfig trait)
+  - `model.rs` - Embedder trait, JinaBertEmbedder implementation
+  - `tokenizer.rs` - Tokenization and chunking
+  - `assets.rs` - Platform-agnostic asset loading
 - **src/workers/** - Web Worker client for background embedding (web only)
 - **src/search/** - Hybrid search implementation
   - `engine.rs` - HybridSearchEngine orchestrator
@@ -178,11 +190,11 @@ Coppermind runs JinaBERT embedding inference directly in the browser using [Cand
 
 **ALiBi Positional Embeddings:**
 ALiBi (Attention with Linear Biases) enables length extrapolation - the model can handle sequences longer than it was trained on. Memory usage scales as `heads × seq_len² × 4 bytes`:
-- 2048 tokens: 8 heads × 2048² × 4 = ~128MB
-- 4096 tokens: 8 heads × 4096² × 4 = ~512MB
+- 2048 tokens: 8 heads × 2048² × 4 = ~134MB
+- 4096 tokens: 8 heads × 4096² × 4 = ~537MB
 - 8192 tokens: 8 heads × 8192² × 4 = ~2GB
 
-Current 2048 token limit balances context window with memory constraints.
+Current 2048 token limit balances context window with memory constraints in WASM's 512MB heap.
 
 ### Candle vs JavaScript ML Frameworks
 
@@ -201,19 +213,22 @@ Current 2048 token limit balances context window with memory constraints.
 ### Model Loading Strategy
 
 **Lazy Loading with Caching:**
-```rust
-static MODEL_CACHE: OnceCell<Arc<EmbeddingModel>> = OnceCell::new();
+The embedding module (`src/embedding/`) uses a singleton pattern for efficient model reuse:
 
-pub async fn get_or_load_model() -> Result<Arc<EmbeddingModel>, String> {
+```rust
+// src/embedding/model.rs
+static MODEL_CACHE: OnceCell<Arc<dyn Embedder>> = OnceCell::new();
+
+pub fn get_or_load_model(
+    model_bytes: Vec<u8>,
+    vocab_size: usize,
+    config: JinaBertConfig,
+) -> Result<Arc<dyn Embedder>, EmbeddingError> {
     if let Some(existing) = MODEL_CACHE.get() {
         return Ok(existing.clone());
     }
 
-    // First access: load model from assets
-    let model_bytes = fetch_asset_bytes(&MODEL_FILE).await?;
-    let tokenizer_bytes = fetch_asset_bytes(&TOKENIZER_FILE).await?;
-
-    let model = EmbeddingModel::from_bytes(model_bytes, vocab_size, config)?;
+    let model = JinaBertEmbedder::from_bytes(model_bytes, vocab_size, config)?;
     MODEL_CACHE.set(Arc::new(model)).ok();
 
     Ok(MODEL_CACHE.get().unwrap().clone())
@@ -221,46 +236,113 @@ pub async fn get_or_load_model() -> Result<Arc<EmbeddingModel>, String> {
 ```
 
 **Platform-Specific Asset Loading:**
-- **Web:** Assets fetched via HTTP from deployment server
-- **Desktop:** Assets bundled in executable, read from filesystem
+The `src/embedding/assets.rs` module handles cross-platform asset fetching:
+- **Web:** HTTP fetch with base path resolution (from `DIOXUS_ASSET_ROOT` meta tag or worker global)
+- **Desktop:** Filesystem read from multiple search locations (app bundle resources, exe directory, working directory)
+
+Both paths use `spawn_blocking` on desktop to prevent UI freezing when loading the 262MB model file.
 
 ### Tokenization
 
-Uses [tokenizers-rs](https://github.com/huggingface/tokenizers) - the same Rust library that powers Hugging Face Transformers.
+The `src/embedding/tokenizer.rs` module wraps [tokenizers-rs](https://github.com/huggingface/tokenizers):
 
 ```rust
-let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes)?;
-tokenizer.with_truncation(Some(TruncationParams {
-    max_length: max_position_embeddings,
-    strategy: TruncationStrategy::LongestFirst,
-    direction: TruncationDirection::Right,
-    ..Default::default()
-}))?;
+// src/embedding/tokenizer.rs
+pub fn tokenize_text(tokenizer: &Tokenizer, text: &str)
+    -> Result<Vec<u32>, EmbeddingError>
+{
+    let encoding = tokenizer.encode(text, true)?;
+    let ids = encoding.get_ids();
+    Ok(ids.to_vec())
+}
 
-let encoding = tokenizer.encode(text, false)?;
-let token_ids = encoding.get_ids();
+// Async wrapper that uses spawn_blocking on desktop
+pub async fn tokenize_text_async(tokenizer: &Tokenizer, text: &str)
+    -> Result<Vec<u32>, EmbeddingError>
+{
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::task::spawn_blocking(/* ... */).await?
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        tokenize_text(tokenizer, text)
+    }
+}
 ```
 
 ### Inference Pipeline
 
+The public API in `src/embedding/mod.rs` provides high-level functions:
+
 ```rust
-pub async fn compute_embedding(text: &str) -> Result<Vec<f32>, String> {
+// src/embedding/mod.rs
+pub async fn compute_embedding(text: &str)
+    -> Result<EmbeddingComputation, EmbeddingError>
+{
     let model = get_or_load_model().await?;
-    let tokenizer = ensure_tokenizer(model.max_position_embeddings()).await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
 
-    let encoding = tokenizer.encode(text, false)?;
-    let token_ids = encoding.get_ids();
+    let token_ids = tokenize_text_async(tokenizer, text).await?;
+    let token_count = token_ids.len();
 
-    let embedding = model.embed_tokens(token_ids.to_vec())?;
+    // Platform-specific: spawn_blocking on desktop, direct on web
+    let embedding = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let model_clone = model.clone();
+            tokio::task::spawn_blocking(move ||
+                model_clone.embed_tokens(token_ids)
+            ).await??
+        }
 
-    // Normalize to unit length (cosine similarity)
-    let normalized = normalize_l2(&embedding)?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            model.embed_tokens(token_ids)?
+        }
+    };
 
-    Ok(normalized)
+    Ok(EmbeddingComputation { token_count, embedding })
 }
 ```
 
-Normalization ensures embeddings have unit length, making cosine similarity equivalent to dot product (more efficient computation).
+Normalization (L2) happens inside the model's `embed_tokens()` method, ensuring embeddings are unit vectors for efficient cosine similarity via dot product.
+
+### Modular Architecture for Multi-Model Support
+
+The embedding module was refactored with extensibility in mind, anticipating support for multiple models with different architectures and parameters:
+
+**Trait-Based Design:**
+```rust
+// src/embedding/config.rs
+pub trait ModelConfig {
+    fn model_id(&self) -> &str;
+    fn embedding_dim(&self) -> usize;
+    fn max_sequence_length(&self) -> usize;
+    fn normalize_embeddings(&self) -> bool;
+}
+
+// src/embedding/model.rs
+pub trait Embedder: Send + Sync {
+    fn max_position_embeddings(&self) -> usize;
+    fn embedding_dim(&self) -> usize;
+    fn embed_tokens(&self, token_ids: Vec<u32>) -> Result<Vec<f32>, EmbeddingError>;
+    fn embed_batch_tokens(&self, batch: Vec<Vec<u32>>) -> Result<Vec<Vec<f32>>, EmbeddingError>;
+}
+```
+
+This design allows adding new models (e.g., sentence-transformers, OpenAI-style models, domain-specific encoders) by:
+1. Implementing `ModelConfig` for model-specific configuration
+2. Implementing `Embedder` for inference logic
+3. Updating `get_or_load_model()` to support model selection
+
+**Benefits:**
+- Different embedding dimensions (256D, 512D, 768D, 1024D)
+- Different sequence lengths (512, 1024, 2048, 8192 tokens)
+- Different architectures (BERT, RoBERTa, T5, custom models)
+- Specialized models (code embeddings, multilingual, domain-specific)
 
 ---
 

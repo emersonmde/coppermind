@@ -806,6 +806,7 @@ dependencies = [
  "instant-distance",
  "js-sys",
  "once_cell",
+ "regex",
  "safetensors",
  "serde",
  "serde-wasm-bindgen",

@@ -44,6 +44,9 @@ async-trait = "0.1"
 bm25 = "2.3"
 instant-distance = "0.6"
 
+# Text processing
+regex = "1.11"
+
 # Cross-platform timing (works on WASM and native)
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 

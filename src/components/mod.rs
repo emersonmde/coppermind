@@ -1,4 +1,5 @@
 // Component module organization
+mod file_processing;
 mod file_upload;
 mod hero;
 mod search;

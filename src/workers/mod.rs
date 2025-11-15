@@ -305,7 +305,7 @@ pub mod embedding_worker {
             spawn_local(async move {
                 let response = match compute_embedding(&request.text).await {
                     Ok(result) => build_success_payload(request.request_id, result),
-                    Err(err) => build_error_payload(Some(request.request_id), &err),
+                    Err(err) => build_error_payload(Some(request.request_id), &err.to_string()),
                 };
 
                 if let Err(e) = post_message_to_main(&response) {

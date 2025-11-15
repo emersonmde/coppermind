@@ -1,0 +1,577 @@
+//! Embedding model inference and text processing.
+//!
+//! This module provides embedding generation for semantic search. It supports
+//! multiple platforms (web via WASM and desktop) with appropriate optimizations
+//! for each environment.
+//!
+//! # Architecture
+//!
+//! The module is organized into sub-modules for maintainability and testability:
+//!
+//! - [`config`]: Model configuration (JinaBertConfig, etc.)
+//! - [`model`]: Model implementations and inference (JinaBertEmbedder, Embedder trait)
+//! - [`tokenizer`]: Tokenization and chunking utilities
+//! - [`assets`]: Asset loading (network/filesystem)
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use coppermind::embedding::{compute_embedding, embed_text_chunks};
+//!
+//! // Generate embedding for a single text
+//! let result = compute_embedding("hello world").await?;
+//! println!("Embedding: {:?}", result.embedding);
+//!
+//! // Process long document in chunks
+//! let chunks = embed_text_chunks("long document...", 512).await?;
+//! for chunk in chunks {
+//!     println!("Chunk {}: {} tokens", chunk.chunk_index, chunk.token_count);
+//! }
+//! ```
+//!
+//! # Platform-Specific Behavior
+//!
+//! ## Web (WASM)
+//! - CPU-only inference (WebGPU not yet supported in Candle)
+//! - Memory-constrained (512MB WASM limit)
+//! - Direct async/await (no spawn_blocking needed)
+//!
+//! ## Desktop
+//! - GPU acceleration via CUDA or Metal (falls back to CPU with MKL/Accelerate)
+//! - CPU-intensive operations use `tokio::spawn_blocking` to prevent UI freezing
+//! - Higher memory limits allow longer sequences
+//!
+//! # Future Extensions
+//!
+//! When adding support for additional models:
+//!
+//! 1. Create a new config type implementing `ModelConfig` trait
+//! 2. Create a new model type implementing `Embedder` trait
+//! 3. Update `get_or_load_model()` to support model selection
+//! 4. Consider replacing singleton with model registry pattern
+
+pub mod assets;
+pub mod chunking;
+pub mod config;
+pub mod model;
+pub mod tokenizer;
+
+// Re-export key types for convenience
+pub use chunking::ChunkingStrategy;
+pub use config::{JinaBertConfig, ModelConfig};
+pub use model::{Embedder, JinaBertEmbedder};
+
+use crate::error::EmbeddingError;
+use dioxus::prelude::*; // Includes asset! macro and Asset type
+use std::sync::Arc;
+
+// Asset declarations - loaded via Dioxus asset system
+const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
+const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
+
+/// Result of embedding a single text chunk.
+///
+/// Contains the chunk index, token count, text content, and embedding vector.
+#[derive(Clone)]
+pub struct ChunkEmbeddingResult {
+    /// Index of this chunk in the original document (0-based)
+    pub chunk_index: usize,
+    /// Number of tokens in this chunk (including special tokens)
+    pub token_count: usize,
+    /// Text content of this chunk (decoded from tokens)
+    pub text: String,
+    /// Embedding vector (dimension matches model config)
+    pub embedding: Vec<f32>,
+}
+
+/// Result of computing an embedding.
+///
+/// Contains the token count and embedding vector, used by both
+/// single-text and chunked embedding workflows.
+#[derive(Clone)]
+pub struct EmbeddingComputation {
+    /// Number of tokens processed
+    pub token_count: usize,
+    /// Embedding vector (dimension matches model config)
+    pub embedding: Vec<f32>,
+}
+
+/// Gets or loads the embedding model (singleton pattern).
+///
+/// On first call, downloads model and tokenizer assets and initializes
+/// the model. Subsequent calls return the cached instance.
+///
+/// Uses spawn_blocking on desktop to prevent UI freezing during model load.
+///
+/// # Returns
+///
+/// Arc-wrapped model for thread-safe sharing.
+///
+/// # Errors
+///
+/// Returns `EmbeddingError` if asset fetching or model initialization fails.
+pub async fn get_or_load_model() -> Result<Arc<dyn Embedder>, EmbeddingError> {
+    // NOTE: This singleton will be replaced with model registry when
+    // supporting multiple models. For now, hard-coded to JinaBERT.
+
+    // Check if model is already cached (avoid fetching 65MB asset unnecessarily)
+    if let Some(cached) = model::get_cached_model() {
+        return Ok(cached);
+    }
+
+    let model_url = MODEL_FILE.to_string();
+    eprintln!("[INFO] 📦 Loading embedding model...");
+
+    let model_bytes = assets::fetch_asset_bytes(&model_url).await?;
+    let config = JinaBertConfig::default();
+
+    // Model creation is CPU-intensive - run in blocking thread pool on desktop
+    let model = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tokio::task::spawn_blocking(move || {
+                model::get_or_load_model(model_bytes, 30528, config)
+            })
+            .await
+            .map_err(|e| EmbeddingError::ModelUnavailable(format!("Task join failed: {}", e)))??
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            model::get_or_load_model(model_bytes, 30528, config)?
+        }
+    };
+
+    Ok(model)
+}
+
+/// Ensures the tokenizer is initialized and configured.
+///
+/// Downloads tokenizer on first call and caches it. Configures for
+/// the specified max sequence length.
+///
+/// # Arguments
+///
+/// * `max_positions` - Maximum sequence length for truncation
+///
+/// # Returns
+///
+/// Static reference to the tokenizer (valid for program lifetime).
+///
+/// # Errors
+///
+/// Returns `EmbeddingError` if download or initialization fails.
+async fn ensure_tokenizer(
+    max_positions: usize,
+) -> Result<&'static tokenizers::Tokenizer, EmbeddingError> {
+    let tokenizer_url = TOKENIZER_FILE.to_string();
+    eprintln!("[INFO] 📚 Tokenizer URL: {}", tokenizer_url);
+
+    let tokenizer_bytes = assets::fetch_asset_bytes(&tokenizer_url).await?;
+    tokenizer::ensure_tokenizer(tokenizer_bytes, max_positions)
+}
+
+/// Generates an embedding for a single text.
+///
+/// This is the high-level API for embedding generation. It handles model
+/// loading, tokenization, and inference.
+///
+/// # Arguments
+///
+/// * `text` - Input text to embed
+///
+/// # Returns
+///
+/// `EmbeddingComputation` containing token count and embedding vector.
+///
+/// # Platform-Specific Behavior
+///
+/// - **Desktop**: Uses `spawn_blocking` for CPU-intensive tokenization and inference
+/// - **Web**: Runs directly (should be called from a worker to avoid blocking UI)
+///
+/// # Examples
+///
+/// ```ignore
+/// let computation = compute_embedding("semantic search query").await?;
+/// println!("Generated {}-dim embedding from {} tokens",
+///          computation.embedding.len(),
+///          computation.token_count);
+/// ```
+pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    let model = get_or_load_model().await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
+
+    let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
+    let token_count = token_ids.len();
+
+    eprintln!("[INFO] 🧾 Tokenized into {} tokens", token_count);
+    eprintln!("[INFO] Generating embedding vector...");
+
+    // On desktop: Use spawn_blocking to prevent UI freezing
+    // On WASM: Run directly (web worker handles parallelism)
+    let embedding = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let model_clone = model.clone();
+            tokio::task::spawn_blocking(move || model_clone.embed_tokens(token_ids))
+                .await
+                .map_err(|e| {
+                    EmbeddingError::InferenceFailed(format!("Task join failed: {}", e))
+                })??
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            model.embed_tokens(token_ids)?
+        }
+    };
+
+    eprintln!(
+        "[INFO] ✓ Generated {}-dimensional embedding",
+        embedding.len()
+    );
+
+    Ok(EmbeddingComputation {
+        token_count,
+        embedding,
+    })
+}
+
+/// Embeds long text by splitting into chunks and processing each.
+///
+/// Uses sentence-based chunking to preserve semantic coherence. Splits text at
+/// sentence boundaries, then groups sentences into chunks that respect token limits.
+///
+/// # Chunking Strategy
+///
+/// - **Semantic boundaries**: Chunks split at sentence boundaries, not mid-thought
+/// - **Overlap**: 2 sentences overlap between chunks to preserve context
+/// - **Coherence**: Produces readable search results, better embedding quality
+///
+/// # Arguments
+///
+/// * `text` - Input text to chunk and embed
+/// * `chunk_tokens` - Target tokens per chunk (capped at model's max_position_embeddings)
+///
+/// # Returns
+///
+/// Vector of `ChunkEmbeddingResult`, one per chunk, in order. Each result includes
+/// the original text, enabling direct indexing without re-splitting.
+///
+/// # Platform-Specific Behavior
+///
+/// - **Desktop**: Processes batches with `spawn_blocking`, yields between batches
+/// - **Web**: Processes sequentially with explicit yields to keep UI responsive
+///
+/// # Examples
+///
+/// ```ignore
+/// let results = embed_text_chunks("Long document with many paragraphs...", 512).await?;
+/// for chunk in &results {
+///     println!("Chunk {}: {} tokens, text: {:.50}...",
+///              chunk.chunk_index,
+///              chunk.token_count,
+///              chunk.text);
+/// }
+/// ```
+pub async fn embed_text_chunks(
+    text: &str,
+    chunk_tokens: usize,
+) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError> {
+    let model = get_or_load_model().await?;
+    let max_positions = model.max_position_embeddings();
+    let tokenizer = ensure_tokenizer(max_positions).await?;
+
+    let effective_chunk = chunk_tokens.min(max_positions);
+
+    // Use sentence-based chunking with 2-sentence overlap for context preservation
+    let chunker = chunking::sentence::SentenceChunker::new(effective_chunk, 2);
+    let text_chunks = chunker.chunk(text)?;
+
+    if text_chunks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    eprintln!(
+        "[INFO] 🧩 Embedding {} chunks ({} tokens max per chunk, sentence-based)",
+        text_chunks.len(),
+        effective_chunk
+    );
+
+    // Tokenize and embed each chunk
+    let total_chunks = text_chunks.len();
+    let mut results = Vec::with_capacity(total_chunks);
+
+    for chunk in text_chunks {
+        // Tokenize this chunk
+        let token_ids = tokenizer::tokenize_text_async(tokenizer, &chunk.text).await?;
+        let token_count = token_ids.len();
+
+        // Check if chunk exceeds model limits (shouldn't happen but handle edge case)
+        if token_count > max_positions {
+            eprintln!(
+                "[WARN] ⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
+                chunk.index, max_positions, token_count
+            );
+            continue;
+        }
+
+        eprintln!(
+            "[INFO] 🚀 Embedding chunk {} ({} tokens)",
+            chunk.index, token_count
+        );
+
+        // Embed this chunk with platform-specific threading
+        let embedding = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let model_clone = model.clone();
+                tokio::task::spawn_blocking(move || model_clone.embed_tokens(token_ids))
+                    .await
+                    .map_err(|e| {
+                        EmbeddingError::InferenceFailed(format!("Task join failed: {}", e))
+                    })??
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                model.embed_tokens(token_ids)?
+            }
+        };
+
+        results.push(ChunkEmbeddingResult {
+            chunk_index: chunk.index,
+            token_count,
+            text: chunk.text,
+            embedding,
+        });
+
+        // Yield to event loop between chunks
+        #[cfg(target_arch = "wasm32")]
+        if chunk.index < total_chunks - 1 {
+            use gloo_timers::future::TimeoutFuture;
+            TimeoutFuture::new(0).await;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if chunk.index < total_chunks - 1 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    eprintln!(
+        "[INFO] ✅ All {} chunks embedded successfully",
+        results.len()
+    );
+
+    Ok(results)
+}
+
+/// Generates an embedding and formats it for display.
+///
+/// Convenience function for testing and debugging. Embeds text and
+/// returns a formatted string with embedding details.
+///
+/// # Arguments
+///
+/// * `text` - Text to embed
+///
+/// # Returns
+///
+/// Formatted string containing token count, dimension, and first 10 values.
+pub async fn run_embedding(text: &str) -> Result<String, EmbeddingError> {
+    eprintln!("[INFO] 🔮 Generating embedding for: '{}'", text);
+    let computation = compute_embedding(text).await?;
+    Ok(format_embedding_summary(
+        text,
+        computation.token_count,
+        &computation.embedding,
+    ))
+}
+
+/// Formats embedding details as a human-readable string.
+///
+/// # Arguments
+///
+/// * `text` - Original input text
+/// * `token_count` - Number of tokens processed
+/// * `embedding` - Embedding vector
+///
+/// # Returns
+///
+/// Multi-line formatted string with embedding statistics.
+pub fn format_embedding_summary(text: &str, token_count: usize, embedding: &[f32]) -> String {
+    let mut preview = [0.0f32; 10];
+    for (dest, src) in preview.iter_mut().zip(embedding.iter()) {
+        *dest = *src;
+    }
+
+    format!(
+        "✓ Embedding Generated Successfully!\n\n\
+        Input: '{}'\n\
+        Tokens used: {}\n\
+        Dimension: {} (normalized)\n\
+        First 10 values: [{:.4}, {:.4}, {:.4}, {:.4}, {:.4}, {:.4}, {:.4}, {:.4}, {:.4}, {:.4}]\n\n\
+        Model: jinaai/jina-embeddings-v2-small-en\n\
+        Config: 512-dim, 4 layers, 8 heads\n\
+        Normalization: L2 (unit vector)",
+        text,
+        token_count,
+        embedding.len(),
+        preview[0],
+        preview[1],
+        preview[2],
+        preview[3],
+        preview[4],
+        preview[5],
+        preview[6],
+        preview[7],
+        preview[8],
+        preview[9]
+    )
+}
+
+/// Computes cosine similarity between two embedding vectors.
+///
+/// Returns a value in [-1, 1] where:
+/// - 1.0 = identical vectors
+/// - 0.0 = orthogonal vectors
+/// - -1.0 = opposite vectors
+///
+/// For L2-normalized embeddings, this is equivalent to dot product.
+///
+/// # Arguments
+///
+/// * `e1` - First embedding vector
+/// * `e2` - Second embedding vector
+///
+/// # Returns
+///
+/// Cosine similarity score, or 0.0 if vectors have different dimensions or zero norm.
+///
+/// # Examples
+///
+/// ```
+/// use coppermind::embedding::cosine_similarity;
+///
+/// let e1 = vec![1.0, 0.0, 0.0];
+/// let e2 = vec![1.0, 0.0, 0.0];
+/// assert_eq!(cosine_similarity(&e1, &e2), 1.0);
+///
+/// let e3 = vec![0.0, 1.0, 0.0];
+/// assert_eq!(cosine_similarity(&e1, &e3), 0.0);
+/// ```
+pub fn cosine_similarity(e1: &[f32], e2: &[f32]) -> f32 {
+    if e1.len() != e2.len() {
+        return 0.0;
+    }
+
+    let dot_product: f32 = e1.iter().zip(e2.iter()).map(|(a, b)| a * b).sum();
+    let norm1: f32 = e1.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm2: f32 = e2.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if norm1 == 0.0 || norm2 == 0.0 {
+        return 0.0;
+    }
+
+    dot_product / (norm1 * norm2)
+}
+
+// WASM bindings for JavaScript interop
+#[cfg(target_arch = "wasm32")]
+pub mod wasm {
+    //! WASM bindings for JavaScript interop.
+    //!
+    //! These bindings allow the embedding model to be used from JavaScript
+    //! in a Web Worker context.
+
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    /// WASM wrapper for the embedding model.
+    #[wasm_bindgen]
+    pub struct WasmEmbeddingModel {
+        model: JinaBertEmbedder,
+    }
+
+    #[wasm_bindgen]
+    impl WasmEmbeddingModel {
+        /// Creates a new model from model bytes.
+        ///
+        /// # Arguments
+        ///
+        /// * `model_bytes` - Safetensors model weights
+        /// * `vocab_size` - Tokenizer vocabulary size
+        #[wasm_bindgen(constructor)]
+        pub fn new(model_bytes: Vec<u8>, vocab_size: usize) -> Result<WasmEmbeddingModel, JsValue> {
+            console_error_panic_hook::set_once();
+
+            let config = JinaBertConfig::default();
+            let model = JinaBertEmbedder::from_bytes(model_bytes, vocab_size, config)?;
+
+            Ok(WasmEmbeddingModel { model })
+        }
+
+        /// Creates model with custom configuration.
+        #[wasm_bindgen(js_name = newWithConfig)]
+        pub fn new_with_config(
+            model_bytes: Vec<u8>,
+            vocab_size: usize,
+            hidden_size: usize,
+            num_hidden_layers: usize,
+            num_attention_heads: usize,
+            max_position_embeddings: usize,
+        ) -> Result<WasmEmbeddingModel, JsValue> {
+            console_error_panic_hook::set_once();
+
+            let config = JinaBertConfig::new(
+                "custom".to_string(),
+                hidden_size,
+                num_hidden_layers,
+                num_attention_heads,
+                max_position_embeddings,
+            );
+
+            let model = JinaBertEmbedder::from_bytes(model_bytes, vocab_size, config)?;
+
+            Ok(WasmEmbeddingModel { model })
+        }
+
+        /// Generates embedding from token IDs.
+        #[wasm_bindgen(js_name = embedTokens)]
+        pub fn embed_tokens(&self, token_ids: Vec<u32>) -> Result<Vec<f32>, JsValue> {
+            self.model.embed_tokens(token_ids).map_err(|e| e.into())
+        }
+
+        /// Computes cosine similarity between two embeddings.
+        #[wasm_bindgen(js_name = cosineSimilarity)]
+        pub fn cosine_similarity_js(e1: &[f32], e2: &[f32]) -> f32 {
+            cosine_similarity(e1, e2)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cosine_similarity() {
+        let e1 = vec![1.0, 0.0, 0.0];
+        let e2 = vec![1.0, 0.0, 0.0];
+        let similarity = cosine_similarity(&e1, &e2);
+        assert!((similarity - 1.0).abs() < 1e-6);
+
+        let e3 = vec![0.0, 1.0, 0.0];
+        let similarity = cosine_similarity(&e1, &e3);
+        assert!((similarity - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_different_lengths() {
+        let e1 = vec![1.0, 0.0];
+        let e2 = vec![1.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&e1, &e2), 0.0);
+    }
+}

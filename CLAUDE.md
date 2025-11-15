@@ -58,14 +58,27 @@ cargo install cargo-audit --locked
 
 ### Module Organization
 - **main.rs**: Entry point, platform-specific logging and CSS loading, mounts root App component
-- **components.rs**: UI components (`TestControls` with file upload and test buttons)
-- **embedding.rs**: JinaBERT model loading, tokenization, inference using Candle
-- **worker/**: Web Worker for offloading CPU-intensive embedding to separate thread (WASM only)
+- **error.rs**: Error types (`EmbeddingError`, `FileProcessingError`) with proper Display/Error implementations
+- **components/**: UI components and file processing utilities
+  - **mod.rs**: App component, search engine context providers
+  - **file_upload.rs**: File upload UI with progress tracking and metrics
+  - **file_processing.rs**: File utilities (binary detection, chunk indexing, directory traversal)
+  - **hero.rs**: Hero section with worker state management
+  - **search.rs**: Search UI component
+  - **testing.rs**: Developer testing utilities
+- **embedding/**: ML model inference and text processing
+  - **mod.rs**: Public API, high-level embedding functions
+  - **config.rs**: Model configuration (`JinaBertConfig` with `ModelConfig` trait for multi-model support)
+  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` implementation
+  - **tokenizer.rs**: Tokenization and text chunking utilities
+  - **assets.rs**: Platform-agnostic asset loading (HTTP fetch on web, filesystem on desktop)
+- **workers/**: Web Worker for offloading CPU-intensive embedding to separate thread (WASM only)
   - **mod.rs**: Module exports, conditional compilation for WASM target
   - **embedding_worker.rs**: `EmbeddingWorker` with wasm-bindgen bindings for JS interop
 - **cpu.rs**: Web Worker spawning for parallel CPU computation (legacy/experimental)
 - **wgpu.rs**: WebGPU compute shader setup and execution
 - **search/**: Hybrid search system (vector + keyword + RRF fusion)
+  - **mod.rs**: Public exports, `HybridSearchEngine` re-exported
   - **engine.rs**: `HybridSearchEngine` orchestrating vector and keyword search
   - **vector.rs**: HNSW semantic search using instant-distance (cosine similarity)
   - **keyword.rs**: BM25 full-text search for exact keyword matching
@@ -80,8 +93,9 @@ cargo install cargo-audit --locked
 
 **WASM Memory Configuration** (`.cargo/config.toml`):
 - Initial: 128MB, Max: 512MB
-- JinaBERT `max_position_embeddings` limited to 1024 to avoid multi-GB ALiBi tensor allocation
-- ALiBi bias size scales as `heads * seq_len^2` (~32MB for 8 heads at 1024 length)
+- JinaBERT `max_position_embeddings` set to 2048 tokens (default config)
+- ALiBi bias size scales as `heads * seq_len^2` (~134MB for 8 heads at 2048 length)
+- Model supports up to 8192 tokens but requires more memory (see `docs/model-optimization.md`)
 
 **Cross-Origin Isolation**:
 - Service Worker (`public/coi-serviceworker.min.js`) injects COOP/COEP headers

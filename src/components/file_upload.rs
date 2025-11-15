@@ -1,5 +1,4 @@
 use crate::embedding::ChunkEmbeddingResult;
-use crate::search::types::{Document, DocumentMetadata};
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
@@ -18,73 +17,15 @@ use tokio::fs;
 #[cfg(target_arch = "wasm32")]
 use super::hero::{use_worker_state, WorkerStatus};
 
+use super::file_processing::{index_chunks, is_likely_binary};
 use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
+
+#[cfg(not(target_arch = "wasm32"))]
+use super::file_processing::collect_files_from_dir;
 
 // Messages for file processing coroutine
 enum FileMessage {
     ProcessFiles(Vec<(String, String)>), // Vec of (filename, contents)
-}
-
-// Helper function to detect if content is binary (not text)
-// Standard approach: check for null bytes which appear in binary but never in text
-fn is_likely_binary(content: &str) -> bool {
-    // Since we successfully read as String, it's valid UTF-8
-    // Binary files contain null bytes which don't appear in text files
-    content.contains('\0')
-}
-
-// Type alias for the boxed future returned by recursive directory walker
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedFileCollector =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Vec<(String, std::path::PathBuf)>> + Send>>;
-
-// Recursively collect all files from a directory (desktop only)
-// Web platform handles directory traversal automatically via webkitdirectory
-// Boxed because recursion in async fn requires boxing
-#[cfg(not(target_arch = "wasm32"))]
-fn collect_files_from_dir(path: std::path::PathBuf, base_name: String) -> BoxedFileCollector {
-    Box::pin(async move {
-        let mut files = Vec::new();
-
-        match fs::read_dir(&path).await {
-            Ok(mut entries) => {
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    let entry_path = entry.path();
-                    let file_name = entry.file_name();
-                    let file_name_str = file_name.to_string_lossy();
-
-                    // Create relative path from base (e.g., "folder/subfolder/file.txt")
-                    let relative_path = if base_name.is_empty() {
-                        file_name_str.to_string()
-                    } else {
-                        format!("{}/{}", base_name, file_name_str)
-                    };
-
-                    match fs::metadata(&entry_path).await {
-                        Ok(metadata) => {
-                            if metadata.is_dir() {
-                                // Recursively collect files from subdirectory
-                                let mut subfiles =
-                                    collect_files_from_dir(entry_path, relative_path.clone()).await;
-                                files.append(&mut subfiles);
-                            } else if metadata.is_file() {
-                                // Add file to collection
-                                files.push((relative_path, entry_path));
-                            }
-                        }
-                        Err(e) => {
-                            error!("❌ Failed to read metadata for {}: {}", relative_path, e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("❌ Failed to read directory {}: {}", path.display(), e);
-            }
-        }
-
-        files
-    })
 }
 
 // Processing metrics for display
@@ -214,68 +155,25 @@ pub fn FileUpload() -> Element {
                                             // Index chunks in search engine
                                             status
                                                 .set("Indexing chunks in search engine...".into());
-                                            let mut indexed_count = 0;
                                             let engine_arc = engine.read().clone();
                                             if let Some(engine_lock) = engine_arc {
-                                                // Split original text into chunks for indexing
-                                                let chunk_size = 2000;
-                                                let chunks_text: Vec<String> = contents
-                                                    .chars()
-                                                    .collect::<Vec<_>>()
-                                                    .chunks(chunk_size)
-                                                    .map(|chunk| chunk.iter().collect())
-                                                    .collect();
-
-                                                // Add all documents in batch (deferred index rebuild)
+                                                match index_chunks(
+                                                    engine_lock,
+                                                    &results,
+                                                    &file_label,
+                                                )
+                                                .await
                                                 {
-                                                    let mut search_engine =
-                                                        engine_lock.lock().await;
-                                                    for (idx, chunk_result) in
-                                                        results.iter().enumerate()
-                                                    {
-                                                        if let Some(chunk_text) =
-                                                            chunks_text.get(idx)
-                                                        {
-                                                            let doc = Document {
-                                                            text: chunk_text.clone(),
-                                                            metadata: DocumentMetadata {
-                                                                filename: Some(format!(
-                                                                    "{} (chunk {})",
-                                                                    file_label,
-                                                                    idx + 1
-                                                                )),
-                                                                source: Some(file_label.clone()),
-                                                                created_at: std::time::SystemTime::now(
-                                                                )
-                                                                .duration_since(std::time::UNIX_EPOCH)
-                                                                .unwrap()
-                                                                .as_secs(),
-                                                            },
-                                                        };
-
-                                                            match search_engine
-                                                                .add_document_deferred(
-                                                                    doc,
-                                                                    chunk_result.embedding.clone(),
-                                                                )
-                                                                .await
-                                                            {
-                                                                Ok(_) => indexed_count += 1,
-                                                                Err(e) => {
-                                                                    error!(
-                                                                    "❌ Failed to index chunk {}: {:?}",
-                                                                    idx, e
-                                                                );
-                                                                }
-                                                            }
-                                                        }
+                                                    Ok(indexed_count) => {
+                                                        info!(
+                                                            "✅ Indexed {} chunks from {}",
+                                                            indexed_count, file_label
+                                                        );
                                                     }
-                                                } // Release lock (index rebuild deferred until all files processed)
-
-                                                info!(
-                                                    "✅ Added {} chunks to search engine (rebuild pending)",
-                                                    indexed_count
-                                                );
+                                                    Err(e) => {
+                                                        error!("❌ Failed to index chunks: {}", e);
+                                                    }
+                                                }
                                             }
 
                                             status.set(format!(
@@ -367,6 +265,7 @@ pub fn FileUpload() -> Element {
                                                     results.push(ChunkEmbeddingResult {
                                                         chunk_index: idx,
                                                         token_count: computation.token_count,
+                                                        text: chunk_text.clone(),
                                                         embedding: computation.embedding,
                                                     });
 
@@ -427,61 +326,25 @@ pub fn FileUpload() -> Element {
                                             // Index chunks in search engine
                                             status
                                                 .set("Indexing chunks in search engine...".into());
-                                            let mut indexed_count = 0;
                                             let engine_arc = engine.read().clone();
                                             if let Some(engine_lock) = engine_arc {
-                                                // Add all documents in batch (deferred index rebuild)
+                                                match index_chunks(
+                                                    engine_lock,
+                                                    &results,
+                                                    &file_label,
+                                                )
+                                                .await
                                                 {
-                                                    let mut search_engine =
-                                                        engine_lock.lock().await;
-                                                    for (idx, chunk_result) in
-                                                        results.iter().enumerate()
-                                                    {
-                                                        // Get the corresponding text chunk
-                                                        if let Some(chunk_text) =
-                                                            text_chunks.get(idx)
-                                                        {
-                                                            let doc = Document {
-                                                            text: chunk_text.clone(),
-                                                            metadata: DocumentMetadata {
-                                                                filename: Some(format!(
-                                                                    "{} (chunk {})",
-                                                                    file_label,
-                                                                    idx + 1
-                                                                )),
-                                                                source: Some(file_label.clone()),
-                                                                created_at: instant::SystemTime::now()
-                                                                    .duration_since(
-                                                                        instant::SystemTime::UNIX_EPOCH,
-                                                                    )
-                                                                    .unwrap()
-                                                                    .as_secs(),
-                                                            },
-                                                        };
-
-                                                            match search_engine
-                                                                .add_document_deferred(
-                                                                    doc,
-                                                                    chunk_result.embedding.clone(),
-                                                                )
-                                                                .await
-                                                            {
-                                                                Ok(_) => indexed_count += 1,
-                                                                Err(e) => {
-                                                                    error!(
-                                                                    "❌ Failed to index chunk {}: {:?}",
-                                                                    idx, e
-                                                                );
-                                                                }
-                                                            }
-                                                        }
+                                                    Ok(indexed_count) => {
+                                                        info!(
+                                                            "✅ Indexed {} chunks from {}",
+                                                            indexed_count, file_label
+                                                        );
                                                     }
-                                                } // Release lock (index rebuild deferred until all files processed)
-
-                                                info!(
-                                                    "✅ Added {} chunks to search engine (rebuild pending)",
-                                                    indexed_count
-                                                );
+                                                    Err(e) => {
+                                                        error!("❌ Failed to index chunks: {}", e);
+                                                    }
+                                                }
                                             }
 
                                             status.set(format!(
