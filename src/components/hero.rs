@@ -28,9 +28,9 @@ pub fn provide_worker_state() -> Signal<WorkerStatus> {
     use_context_provider(|| state);
 
     // Initialize worker in effect
-    let worker_signal = state.clone();
+    let worker_signal = state;
     use_effect(move || {
-        let mut worker_state = worker_signal.clone();
+        let mut worker_state = worker_signal;
         if matches!(*worker_state.read(), WorkerStatus::Pending) {
             info!("🔧 Initializing embedding worker…");
             match EmbeddingWorkerClient::new() {

@@ -100,8 +100,7 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         let doc_id = DocId::new();
 
         // Add to vector index (deferred rebuild)
-        self.vector_engine
-            .add_document_deferred(doc_id, embedding);
+        self.vector_engine.add_document_deferred(doc_id, embedding);
 
         // Add to keyword index
         self.keyword_engine.add_document(doc_id, doc.text.clone());
@@ -280,21 +279,17 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// Debug dump of the index state
     pub fn debug_dump(&self) -> String {
         let mut output = String::new();
-        output.push_str(&format!("=== Search Index Debug Dump ===\n"));
+        output.push_str("=== Search Index Debug Dump ===\n");
         output.push_str(&format!("Total documents: {}\n", self.documents.len()));
         output.push_str(&format!("Embedding dimension: {}\n", self.embedding_dim));
-        output.push_str(&format!("\n"));
+        output.push('\n');
 
         if self.documents.is_empty() {
             output.push_str("(empty index)\n");
         } else {
             output.push_str("Documents:\n");
             for (idx, (doc_id, doc)) in self.documents.iter().enumerate() {
-                output.push_str(&format!(
-                    "\n[{}] DocId: {}\n",
-                    idx + 1,
-                    doc_id.as_u64()
-                ));
+                output.push_str(&format!("\n[{}] DocId: {}\n", idx + 1, doc_id.as_u64()));
                 output.push_str(&format!("  Filename: {:?}\n", doc.metadata.filename));
                 output.push_str(&format!("  Source: {:?}\n", doc.metadata.source));
                 if doc.text.len() > 100 {
@@ -305,7 +300,7 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
             }
         }
 
-        output.push_str(&format!("\n=== End Debug Dump ===\n"));
+        output.push_str("\n=== End Debug Dump ===\n");
         output
     }
 }

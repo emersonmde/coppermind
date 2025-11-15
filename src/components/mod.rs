@@ -75,6 +75,8 @@ pub fn App() -> Element {
                         Ok(storage) => match HybridSearchEngine::new(storage, 512).await {
                             Ok(engine) => {
                                 let doc_count = engine.len();
+                                // Arc is single-threaded on WASM (no Send/Sync needed)
+                                #[allow(clippy::arc_with_non_send_sync)]
                                 engine_signal.set(Some(Arc::new(Mutex::new(engine))));
                                 status_signal.set(SearchEngineStatus::Ready { doc_count });
                             }

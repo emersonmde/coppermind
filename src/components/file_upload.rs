@@ -7,9 +7,6 @@ use futures_util::StreamExt;
 use instant::Instant;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::JsCast;
-
-#[cfg(target_arch = "wasm32")]
 use web_sys;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +64,7 @@ pub fn FileUpload() -> Element {
     let worker_state = use_worker_state();
 
     let search_engine = use_search_engine();
-    let mut search_engine_status = use_search_engine_status();
+    let search_engine_status = use_search_engine_status();
 
     // Set webkitdirectory attribute on the directory input (web only)
     #[cfg(target_arch = "wasm32")]
@@ -96,8 +93,6 @@ pub fn FileUpload() -> Element {
         let mut warnings_signal = warnings;
         let engine = search_engine;
         let mut engine_status = search_engine_status;
-        #[cfg(target_arch = "wasm32")]
-        let worker_state = worker_state;
 
         move |mut rx: UnboundedReceiver<FileMessage>| async move {
             while let Some(msg) = rx.next().await {
@@ -110,69 +105,81 @@ pub fn FileUpload() -> Element {
                         for (file_label, contents) in files {
                             // Check if file is binary
                             if is_likely_binary(&contents) {
-                                let warning = format!("⚠️ Skipped '{}': appears to be a binary file", file_label);
+                                let warning = format!(
+                                    "⚠️ Skipped '{}': appears to be a binary file",
+                                    file_label
+                                );
                                 info!("{}", warning);
                                 warnings_signal.write().push(warning);
                                 continue;
                             }
 
                             processed_files += 1;
-                            name.set(format!("{} ({}/{})", file_label, processed_files, total_files));
-                        let start_time = Instant::now();
-                        let byte_len = contents.len();
-                        info!(
-                            "🧮 File size: {} bytes (~{:.2} KB)",
-                            byte_len,
-                            byte_len as f64 / 1024.0
-                        );
-                        status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
+                            name.set(format!(
+                                "{} ({}/{})",
+                                file_label, processed_files, total_files
+                            ));
+                            let start_time = Instant::now();
+                            let byte_len = contents.len();
+                            info!(
+                                "🧮 File size: {} bytes (~{:.2} KB)",
+                                byte_len,
+                                byte_len as f64 / 1024.0
+                            );
+                            status.set(format!("Embedding {file_label} ({} bytes)...", byte_len));
 
-                        // Reset metrics and progress
-                        metrics_signal.set(ProcessingMetrics::default());
-                        progress_signal.set(ProcessingProgress::default());
+                            // Reset metrics and progress
+                            metrics_signal.set(ProcessingMetrics::default());
+                            progress_signal.set(ProcessingProgress::default());
 
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            // Desktop: Direct async call (Dioxus already has async runtime)
-                            match embed_text_chunks(&contents, 512).await {
-                                Ok(results) => {
-                                    let elapsed = start_time.elapsed();
-                                    let chunk_count = results.len();
-                                    let total_tokens: usize =
-                                        results.iter().map(|c| c.token_count).sum();
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                // Desktop: Direct async call (Dioxus already has async runtime)
+                                match embed_text_chunks(&contents, 512).await {
+                                    Ok(results) => {
+                                        let elapsed = start_time.elapsed();
+                                        let chunk_count = results.len();
+                                        let total_tokens: usize =
+                                            results.iter().map(|c| c.token_count).sum();
 
-                                    if chunk_count == 0 {
-                                        status.set(format!(
-                                            "File {file_label} did not produce any tokens."
-                                        ));
-                                    } else {
-                                        for chunk in results.iter() {
-                                            info!(
-                                                "📦 Chunk {} embedded ({} tokens)",
-                                                chunk.chunk_index, chunk.token_count
-                                            );
-                                        }
+                                        if chunk_count == 0 {
+                                            status.set(format!(
+                                                "File {file_label} did not produce any tokens."
+                                            ));
+                                        } else {
+                                            for chunk in results.iter() {
+                                                info!(
+                                                    "📦 Chunk {} embedded ({} tokens)",
+                                                    chunk.chunk_index, chunk.token_count
+                                                );
+                                            }
 
-                                        // Index chunks in search engine
-                                        status.set("Indexing chunks in search engine...".into());
-                                        let mut indexed_count = 0;
-                                        let engine_arc = engine.read().clone();
-                                        if let Some(engine_lock) = engine_arc {
-                                            // Split original text into chunks for indexing
-                                            let chunk_size = 2000;
-                                            let chunks_text: Vec<String> = contents
-                                                .chars()
-                                                .collect::<Vec<_>>()
-                                                .chunks(chunk_size)
-                                                .map(|chunk| chunk.iter().collect())
-                                                .collect();
+                                            // Index chunks in search engine
+                                            status
+                                                .set("Indexing chunks in search engine...".into());
+                                            let mut indexed_count = 0;
+                                            let engine_arc = engine.read().clone();
+                                            if let Some(engine_lock) = engine_arc {
+                                                // Split original text into chunks for indexing
+                                                let chunk_size = 2000;
+                                                let chunks_text: Vec<String> = contents
+                                                    .chars()
+                                                    .collect::<Vec<_>>()
+                                                    .chunks(chunk_size)
+                                                    .map(|chunk| chunk.iter().collect())
+                                                    .collect();
 
-                                            // Add all documents in batch (deferred index rebuild)
-                                            {
-                                                let mut search_engine = engine_lock.lock().await;
-                                                for (idx, chunk_result) in results.iter().enumerate() {
-                                                    if let Some(chunk_text) = chunks_text.get(idx) {
-                                                        let doc = Document {
+                                                // Add all documents in batch (deferred index rebuild)
+                                                {
+                                                    let mut search_engine =
+                                                        engine_lock.lock().await;
+                                                    for (idx, chunk_result) in
+                                                        results.iter().enumerate()
+                                                    {
+                                                        if let Some(chunk_text) =
+                                                            chunks_text.get(idx)
+                                                        {
+                                                            let doc = Document {
                                                             text: chunk_text.clone(),
                                                             metadata: DocumentMetadata {
                                                                 filename: Some(format!(
@@ -189,197 +196,211 @@ pub fn FileUpload() -> Element {
                                                             },
                                                         };
 
-                                                        match search_engine
-                                                            .add_document_deferred(
-                                                                doc,
-                                                                chunk_result.embedding.clone(),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(_) => indexed_count += 1,
-                                                            Err(e) => {
-                                                                error!(
+                                                            match search_engine
+                                                                .add_document_deferred(
+                                                                    doc,
+                                                                    chunk_result.embedding.clone(),
+                                                                )
+                                                                .await
+                                                            {
+                                                                Ok(_) => indexed_count += 1,
+                                                                Err(e) => {
+                                                                    error!(
                                                                     "❌ Failed to index chunk {}: {:?}",
                                                                     idx, e
                                                                 );
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
-                                            } // Release lock before rebuilding index
+                                                } // Release lock before rebuilding index
 
-                                            // Rebuild vector index (CPU-intensive, runs in thread pool on desktop)
-                                            status.set("Building search index...".into());
-                                            {
-                                                let mut search_engine = engine_lock.lock().await;
-                                                search_engine.rebuild_vector_index().await;
+                                                // Rebuild vector index (CPU-intensive, runs in thread pool on desktop)
+                                                status.set("Building search index...".into());
+                                                {
+                                                    let mut search_engine =
+                                                        engine_lock.lock().await;
+                                                    search_engine.rebuild_vector_index().await;
+                                                }
+
+                                                info!(
+                                                    "✅ Indexed {} chunks in search engine",
+                                                    indexed_count
+                                                );
+
+                                                // Update search engine status with new document count
+                                                let doc_count = {
+                                                    let search_engine = engine_lock.lock().await;
+                                                    search_engine.len()
+                                                };
+                                                engine_status
+                                                    .set(SearchEngineStatus::Ready { doc_count });
                                             }
 
-                                            info!(
-                                                "✅ Indexed {} chunks in search engine",
-                                                indexed_count
-                                            );
+                                            status.set(format!(
+                                                "✓ Indexed {chunk_count} chunks from {file_label}"
+                                            ));
 
-                                            // Update search engine status with new document count
-                                            let doc_count = {
-                                                let search_engine = engine_lock.lock().await;
-                                                search_engine.len()
-                                            };
-                                            engine_status.set(SearchEngineStatus::Ready { doc_count });
+                                            // Calculate metrics
+                                            let elapsed_secs = elapsed.as_secs_f64();
+                                            metrics_signal.set(ProcessingMetrics {
+                                                total_tokens,
+                                                total_chunks: chunk_count,
+                                                elapsed_secs,
+                                                tokens_per_sec: total_tokens as f64 / elapsed_secs,
+                                                chunks_per_sec: chunk_count as f64 / elapsed_secs,
+                                                avg_time_per_chunk_ms: (elapsed_secs * 1000.0)
+                                                    / chunk_count as f64,
+                                            });
+
+                                            // Set progress to 100%
+                                            progress_signal.set(ProcessingProgress {
+                                                current: chunk_count,
+                                                total: chunk_count,
+                                                percentage: 100.0,
+                                            });
                                         }
-
-                                        status.set(format!(
-                                            "✓ Indexed {chunk_count} chunks from {file_label}"
-                                        ));
-
-                                        // Calculate metrics
-                                        let elapsed_secs = elapsed.as_secs_f64();
-                                        metrics_signal.set(ProcessingMetrics {
-                                            total_tokens,
-                                            total_chunks: chunk_count,
-                                            elapsed_secs,
-                                            tokens_per_sec: total_tokens as f64 / elapsed_secs,
-                                            chunks_per_sec: chunk_count as f64 / elapsed_secs,
-                                            avg_time_per_chunk_ms: (elapsed_secs * 1000.0)
-                                                / chunk_count as f64,
-                                        });
-
-                                        // Set progress to 100%
-                                        progress_signal.set(ProcessingProgress {
-                                            current: chunk_count,
-                                            total: chunk_count,
-                                            percentage: 100.0,
-                                        });
+                                        chunks.set(results);
                                     }
-                                    chunks.set(results);
-                                }
-                                Err(e) => {
-                                    error!("❌ Embedding failed: {e}");
-                                    status.set(format!("Embedding failed: {e}"));
-                                    name.set(String::new());
+                                    Err(e) => {
+                                        error!("❌ Embedding failed: {e}");
+                                        status.set(format!("Embedding failed: {e}"));
+                                        name.set(String::new());
+                                    }
                                 }
                             }
-                        }
 
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            // Web: Use embedding worker for non-blocking processing
-                            let worker_snapshot = worker_state.read().clone();
-                            match worker_snapshot {
-                                WorkerStatus::Pending => {
-                                    status
-                                        .set("Embedding worker is starting… please retry.".into());
-                                    processing.set(false);
-                                }
-                                WorkerStatus::Failed(err) => {
-                                    status.set(format!("Embedding worker unavailable: {}", err));
-                                    name.set(String::new());
-                                    processing.set(false);
-                                }
-                                WorkerStatus::Ready(client) => {
-                                    // Split text into chunks (roughly 2000 chars each)
-                                    let chunk_size = 2000;
-                                    let text_chunks: Vec<String> = contents
-                                        .chars()
-                                        .collect::<Vec<_>>()
-                                        .chunks(chunk_size)
-                                        .map(|chunk| chunk.iter().collect())
-                                        .collect();
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                // Web: Use embedding worker for non-blocking processing
+                                let worker_snapshot = worker_state.read().clone();
+                                match worker_snapshot {
+                                    WorkerStatus::Pending => {
+                                        status.set(
+                                            "Embedding worker is starting… please retry.".into(),
+                                        );
+                                        processing.set(false);
+                                    }
+                                    WorkerStatus::Failed(err) => {
+                                        status
+                                            .set(format!("Embedding worker unavailable: {}", err));
+                                        name.set(String::new());
+                                        processing.set(false);
+                                    }
+                                    WorkerStatus::Ready(client) => {
+                                        // Split text into chunks (roughly 2000 chars each)
+                                        let chunk_size = 2000;
+                                        let text_chunks: Vec<String> = contents
+                                            .chars()
+                                            .collect::<Vec<_>>()
+                                            .chunks(chunk_size)
+                                            .map(|chunk| chunk.iter().collect())
+                                            .collect();
 
-                                    let total_chunks = text_chunks.len();
-                                    info!("📄 Split file into {} text chunks", total_chunks);
+                                        let total_chunks = text_chunks.len();
+                                        info!("📄 Split file into {} text chunks", total_chunks);
 
-                                    // Initialize progress
-                                    progress_signal.set(ProcessingProgress {
-                                        current: 0,
-                                        total: total_chunks,
-                                        percentage: 0.0,
-                                    });
+                                        // Initialize progress
+                                        progress_signal.set(ProcessingProgress {
+                                            current: 0,
+                                            total: total_chunks,
+                                            percentage: 0.0,
+                                        });
 
-                                    let mut results = Vec::new();
+                                        let mut results = Vec::new();
 
-                                    for (idx, chunk_text) in text_chunks.iter().enumerate() {
-                                        status.set(format!(
-                                            "Embedding chunk {}/{} from {}...",
-                                            idx + 1,
-                                            total_chunks,
-                                            file_label
-                                        ));
+                                        for (idx, chunk_text) in text_chunks.iter().enumerate() {
+                                            status.set(format!(
+                                                "Embedding chunk {}/{} from {}...",
+                                                idx + 1,
+                                                total_chunks,
+                                                file_label
+                                            ));
 
-                                        match client.embed(chunk_text.clone()).await {
-                                            Ok(computation) => {
-                                                info!(
-                                                    "📦 Chunk {} embedded ({} tokens)",
-                                                    idx, computation.token_count
-                                                );
-                                                results.push(ChunkEmbeddingResult {
-                                                    chunk_index: idx,
-                                                    token_count: computation.token_count,
-                                                    embedding: computation.embedding,
-                                                });
+                                            match client.embed(chunk_text.clone()).await {
+                                                Ok(computation) => {
+                                                    info!(
+                                                        "📦 Chunk {} embedded ({} tokens)",
+                                                        idx, computation.token_count
+                                                    );
+                                                    results.push(ChunkEmbeddingResult {
+                                                        chunk_index: idx,
+                                                        token_count: computation.token_count,
+                                                        embedding: computation.embedding,
+                                                    });
 
-                                                // Update metrics and progress in real-time
-                                                let elapsed = start_time.elapsed();
-                                                let elapsed_secs = elapsed.as_secs_f64();
-                                                let total_tokens: usize =
-                                                    results.iter().map(|c| c.token_count).sum();
-                                                let chunk_count = results.len();
+                                                    // Update metrics and progress in real-time
+                                                    let elapsed = start_time.elapsed();
+                                                    let elapsed_secs = elapsed.as_secs_f64();
+                                                    let total_tokens: usize =
+                                                        results.iter().map(|c| c.token_count).sum();
+                                                    let chunk_count = results.len();
 
-                                                metrics_signal.set(ProcessingMetrics {
-                                                    total_tokens,
-                                                    total_chunks: chunk_count,
-                                                    elapsed_secs,
-                                                    tokens_per_sec: total_tokens as f64
-                                                        / elapsed_secs,
-                                                    chunks_per_sec: chunk_count as f64
-                                                        / elapsed_secs,
-                                                    avg_time_per_chunk_ms: (elapsed_secs * 1000.0)
-                                                        / chunk_count as f64,
-                                                });
+                                                    metrics_signal.set(ProcessingMetrics {
+                                                        total_tokens,
+                                                        total_chunks: chunk_count,
+                                                        elapsed_secs,
+                                                        tokens_per_sec: total_tokens as f64
+                                                            / elapsed_secs,
+                                                        chunks_per_sec: chunk_count as f64
+                                                            / elapsed_secs,
+                                                        avg_time_per_chunk_ms: (elapsed_secs
+                                                            * 1000.0)
+                                                            / chunk_count as f64,
+                                                    });
 
-                                                // Update progress
-                                                let percentage = (chunk_count as f64
-                                                    / total_chunks as f64)
-                                                    * 100.0;
-                                                progress_signal.set(ProcessingProgress {
-                                                    current: chunk_count,
-                                                    total: total_chunks,
-                                                    percentage,
-                                                });
-                                            }
-                                            Err(e) => {
-                                                error!("❌ Failed to embed chunk {}: {}", idx, e);
-                                                status.set(format!(
-                                                    "Failed to embed chunk {}/{}: {}",
-                                                    idx + 1,
-                                                    total_chunks,
-                                                    e
-                                                ));
-                                                name.set(String::new());
-                                                processing.set(false);
-                                                return;
+                                                    // Update progress
+                                                    let percentage = (chunk_count as f64
+                                                        / total_chunks as f64)
+                                                        * 100.0;
+                                                    progress_signal.set(ProcessingProgress {
+                                                        current: chunk_count,
+                                                        total: total_chunks,
+                                                        percentage,
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    error!(
+                                                        "❌ Failed to embed chunk {}: {}",
+                                                        idx, e
+                                                    );
+                                                    status.set(format!(
+                                                        "Failed to embed chunk {}/{}: {}",
+                                                        idx + 1,
+                                                        total_chunks,
+                                                        e
+                                                    ));
+                                                    name.set(String::new());
+                                                    processing.set(false);
+                                                    return;
+                                                }
                                             }
                                         }
-                                    }
 
-                                    let chunk_count = results.len();
-                                    if chunk_count == 0 {
-                                        status.set(format!(
-                                            "File {file_label} did not produce any tokens."
-                                        ));
-                                    } else {
-                                        // Index chunks in search engine
-                                        status.set("Indexing chunks in search engine...".into());
-                                        let mut indexed_count = 0;
-                                        let engine_arc = engine.read().clone();
-                                        if let Some(engine_lock) = engine_arc {
-                                            // Add all documents in batch (deferred index rebuild)
-                                            {
-                                                let mut search_engine = engine_lock.lock().await;
-                                                for (idx, chunk_result) in results.iter().enumerate() {
-                                                    // Get the corresponding text chunk
-                                                    if let Some(chunk_text) = text_chunks.get(idx) {
-                                                        let doc = Document {
+                                        let chunk_count = results.len();
+                                        if chunk_count == 0 {
+                                            status.set(format!(
+                                                "File {file_label} did not produce any tokens."
+                                            ));
+                                        } else {
+                                            // Index chunks in search engine
+                                            status
+                                                .set("Indexing chunks in search engine...".into());
+                                            let mut indexed_count = 0;
+                                            let engine_arc = engine.read().clone();
+                                            if let Some(engine_lock) = engine_arc {
+                                                // Add all documents in batch (deferred index rebuild)
+                                                {
+                                                    let mut search_engine =
+                                                        engine_lock.lock().await;
+                                                    for (idx, chunk_result) in
+                                                        results.iter().enumerate()
+                                                    {
+                                                        // Get the corresponding text chunk
+                                                        if let Some(chunk_text) =
+                                                            text_chunks.get(idx)
+                                                        {
+                                                            let doc = Document {
                                                             text: chunk_text.clone(),
                                                             metadata: DocumentMetadata {
                                                                 filename: Some(format!(
@@ -397,53 +418,55 @@ pub fn FileUpload() -> Element {
                                                             },
                                                         };
 
-                                                        match search_engine
-                                                            .add_document_deferred(
-                                                                doc,
-                                                                chunk_result.embedding.clone(),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(_) => indexed_count += 1,
-                                                            Err(e) => {
-                                                                error!(
+                                                            match search_engine
+                                                                .add_document_deferred(
+                                                                    doc,
+                                                                    chunk_result.embedding.clone(),
+                                                                )
+                                                                .await
+                                                            {
+                                                                Ok(_) => indexed_count += 1,
+                                                                Err(e) => {
+                                                                    error!(
                                                                     "❌ Failed to index chunk {}: {:?}",
                                                                     idx, e
                                                                 );
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
-                                            } // Release lock before rebuilding index
+                                                } // Release lock before rebuilding index
 
-                                            // Rebuild vector index
-                                            status.set("Building search index...".into());
-                                            {
-                                                let mut search_engine = engine_lock.lock().await;
-                                                search_engine.rebuild_vector_index().await;
+                                                // Rebuild vector index
+                                                status.set("Building search index...".into());
+                                                {
+                                                    let mut search_engine =
+                                                        engine_lock.lock().await;
+                                                    search_engine.rebuild_vector_index().await;
+                                                }
+
+                                                info!(
+                                                    "✅ Indexed {} chunks in search engine",
+                                                    indexed_count
+                                                );
+
+                                                // Update search engine status with new document count
+                                                let doc_count = {
+                                                    let search_engine = engine_lock.lock().await;
+                                                    search_engine.len()
+                                                };
+                                                engine_status
+                                                    .set(SearchEngineStatus::Ready { doc_count });
                                             }
 
-                                            info!(
-                                                "✅ Indexed {} chunks in search engine",
-                                                indexed_count
-                                            );
-
-                                            // Update search engine status with new document count
-                                            let doc_count = {
-                                                let search_engine = engine_lock.lock().await;
-                                                search_engine.len()
-                                            };
-                                            engine_status.set(SearchEngineStatus::Ready { doc_count });
+                                            status.set(format!(
+                                                "✓ Indexed {chunk_count} chunks from {file_label}"
+                                            ));
                                         }
-
-                                        status.set(format!(
-                                            "✓ Indexed {chunk_count} chunks from {file_label}"
-                                        ));
+                                        chunks.set(results);
                                     }
-                                    chunks.set(results);
                                 }
                             }
-                        }
                         } // End for loop over files
 
                         processing.set(false);

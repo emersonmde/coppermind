@@ -59,13 +59,11 @@ pub fn DeveloperTesting() -> Element {
     let worker_state = use_worker_state();
 
     let search_engine = use_search_engine();
-    let mut search_engine_status = use_search_engine_status();
+    let search_engine_status = use_search_engine_status();
 
     // Embedding test coroutine
     let embedding_task = use_coroutine({
         let mut result = embedding_result;
-        #[cfg(target_arch = "wasm32")]
-        let worker_state = worker_state.clone();
 
         move |mut rx: UnboundedReceiver<EmbeddingMessage>| async move {
             while let Some(msg) = rx.next().await {

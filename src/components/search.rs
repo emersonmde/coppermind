@@ -35,8 +35,6 @@ pub fn Search() -> Element {
         let mut status = search_status;
         let mut is_searching = searching;
         let engine = search_engine;
-        #[cfg(target_arch = "wasm32")]
-        let worker_state = worker_state;
 
         move |mut rx: UnboundedReceiver<SearchMessage>| async move {
             while let Some(msg) = rx.next().await {

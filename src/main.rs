@@ -22,7 +22,7 @@ fn main() {
     // Platform-specific launch configuration
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use dioxus::desktop::{Config, WindowBuilder, LogicalSize};
+        use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 
         let config = Config::default().with_window(
             WindowBuilder::new()

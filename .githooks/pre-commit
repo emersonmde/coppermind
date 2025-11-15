@@ -10,11 +10,14 @@ cd "$REPO_ROOT"
 echo "→ Running cargo fmt -- --check"
 cargo fmt -- --check
 
-echo "→ Running cargo clippy --all-targets -- -D warnings"
-cargo clippy --all-targets -- -D warnings
+echo "→ Running cargo clippy (web target)"
+cargo clippy --target wasm32-unknown-unknown --features web -- -D warnings
 
-echo "→ Running cargo test --verbose"
-cargo test --verbose
+echo "→ Running cargo clippy (desktop target)"
+cargo clippy --features desktop -- -D warnings
+
+echo "→ Running cargo test --verbose --features desktop"
+cargo test --verbose --features desktop
 
 echo "→ Running cargo doc --no-deps"
 cargo doc --no-deps

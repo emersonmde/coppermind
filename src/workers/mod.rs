@@ -14,10 +14,14 @@ pub mod embedding_worker {
 
     const EMBEDDING_WORKER_SCRIPT: Asset = asset!("/assets/workers/embedding-worker.js");
 
+    // Type alias to reduce complexity
+    type PendingRequests =
+        Rc<RefCell<HashMap<u32, oneshot::Sender<Result<EmbeddingComputation, String>>>>>;
+
     #[derive(Clone)]
     pub struct EmbeddingWorkerClient {
         worker: Worker,
-        pending: Rc<RefCell<HashMap<u32, oneshot::Sender<Result<EmbeddingComputation, String>>>>>,
+        pending: PendingRequests,
         next_id: Rc<Cell<u32>>,
         ready_state: Rc<RefCell<ReadyState>>,
         _on_message: Rc<Closure<dyn FnMut(MessageEvent)>>,
@@ -164,7 +168,7 @@ pub mod embedding_worker {
 
     fn handle_worker_message(
         event: MessageEvent,
-        pending: &Rc<RefCell<HashMap<u32, oneshot::Sender<Result<EmbeddingComputation, String>>>>>,
+        pending: &PendingRequests,
         ready_state: &Rc<RefCell<ReadyState>>,
     ) -> Result<(), String> {
         let data = event.data();
@@ -266,10 +270,7 @@ pub mod embedding_worker {
         }
     }
 
-    fn drain_pending_with_error(
-        pending: &Rc<RefCell<HashMap<u32, oneshot::Sender<Result<EmbeddingComputation, String>>>>>,
-        error: &str,
-    ) {
+    fn drain_pending_with_error(pending: &PendingRequests, error: &str) {
         let mut pending_map = pending.borrow_mut();
         for (_, sender) in pending_map.drain() {
             let _ = sender.send(Err(error.to_string()));
