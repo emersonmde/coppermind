@@ -14,7 +14,7 @@ echo "→ Running cargo clippy (web target)"
 cargo clippy --target wasm32-unknown-unknown --features web -- -D warnings
 
 echo "→ Running cargo clippy (desktop target)"
-cargo clippy --features desktop -- -D warnings
+cargo clippy --features desktop --all-targets -- -D warnings
 
 echo "→ Running cargo test --verbose --features desktop"
 cargo test --verbose --features desktop

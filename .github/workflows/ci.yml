@@ -24,16 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
-      - name: Install GTK dependencies (for desktop feature on Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Download model assets
         run: ./download-models.sh
-      - name: Run tests
-        run: cargo test --verbose --features desktop
+      - name: Run tests (library only, no platform-specific deps needed)
+        run: cargo test --lib --verbose --features desktop
 
   fmt:
     name: Rustfmt
@@ -53,10 +49,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
-      - name: Install GTK dependencies (for desktop feature on Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -66,8 +58,6 @@ jobs:
         run: ./download-models.sh
       - name: Lint with Clippy (web target)
         run: cargo clippy --target wasm32-unknown-unknown --features web -- -D warnings
-      - name: Lint with Clippy (desktop target)
-        run: cargo clippy --features desktop -- -D warnings
 
   cargo-audit:
     name: Cargo Audit
