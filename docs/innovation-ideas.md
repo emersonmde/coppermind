@@ -38,7 +38,7 @@ This document captures experimental directions for Rust + WASM + ML in browsers.
 **Status:** Implemented
 
 **Description:**
-Successfully implemented hybrid search combining vector similarity (instant-distance HNSW) with keyword matching (BM25), merged using Reciprocal Rank Fusion (RRF). See [Design Document](DESIGN.md) for full implementation details.
+Successfully implemented hybrid search combining vector similarity (instant-distance HNSW) with keyword matching (BM25), merged using Reciprocal Rank Fusion (RRF). See [Design Document](architecture-design.md) for full implementation details.
 
 **Results:**
 - Catches both semantic matches (paraphrases, synonyms) and exact keyword matches

@@ -4,7 +4,7 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 
 ## Documentation Index
 
-### [Design Document](DESIGN.md)
+### [Design Document](architecture-design.md)
 **Comprehensive technical design document covering the entire system.**
 
 **Topics:**

@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Coppermind</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./assets/coppermind.css" />
+</head>
+<body class="cm-body">
+
+<!-- App Shell -->
+<div class="cm-app">
+
+    <!-- Global Header / App Bar -->
+    <header class="cm-appbar">
+        <div class="cm-appbar-left">
+            <div class="cm-logo">
+                <span class="cm-logo-word">Copper</span><span class="cm-logo-word cm-logo-word--accent">mind</span>
+            </div>
+        </div>
+        <nav class="cm-appbar-center">
+            <button class="cm-nav-link cm-nav-link--active" data-view-target="search">Search</button>
+            <button class="cm-nav-link" data-view-target="index">Index</button>
+        </nav>
+        <div class="cm-appbar-right">
+            <!-- Future: index selector -->
+            <button class="cm-icon-button" data-action="toggle-metrics" aria-label="Toggle metrics panel">
+                <span class="cm-icon cm-icon-metrics">&lt;/&gt;</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Status Strip -->
+    <section class="cm-status-strip">
+      <span class="cm-status-pill cm-status-pill--ok">
+        <span class="cm-status-dot cm-status-dot--ok"></span>
+        Web worker ready
+      </span>
+        <span class="cm-status-pill cm-status-pill--ok">
+        <span class="cm-status-dot cm-status-dot--ok"></span>
+        Index: 6 documents • 2752 tokens
+      </span>
+        <!-- Example of active indexing pill -->
+        <!--
+        <span class="cm-status-pill cm-status-pill--warn">
+          <span class="cm-status-dot cm-status-dot--warn"></span>
+          Indexing 4 files… View details
+        </span>
+        -->
+    </section>
+
+    <!-- Metrics Panel (Developer Mode) -->
+    <section class="cm-metrics-panel cm-metrics-panel--collapsed" data-role="metrics-panel">
+        <header class="cm-metrics-header">
+            <h2 class="cm-metrics-title">Engine Metrics</h2>
+            <span class="cm-tag cm-tag--live">Live</span>
+        </header>
+        <div class="cm-metrics-grid">
+            <div class="cm-metric-card">
+                <div class="cm-metric-label">Total Documents</div>
+                <div class="cm-metric-value">6</div>
+            </div>
+            <div class="cm-metric-card">
+                <div class="cm-metric-label">Total Chunks</div>
+                <div class="cm-metric-value">64</div>
+            </div>
+            <div class="cm-metric-card">
+                <div class="cm-metric-label">Total Tokens</div>
+                <div class="cm-metric-value">27,520</div>
+            </div>
+            <div class="cm-metric-card">
+                <div class="cm-metric-label">Avg Tokens / Chunk</div>
+                <div class="cm-metric-value">430</div>
+            </div>
+        </div>
+
+        <div class="cm-metrics-sub">
+            <div class="cm-metrics-row">
+                <div>
+                    <div class="cm-metric-label">Tokens / sec</div>
+                    <div class="cm-metric-value cm-metric-value--sub">669.1</div>
+                </div>
+                <div>
+                    <div class="cm-metric-label">Chunks / sec</div>
+                    <div class="cm-metric-value cm-metric-value--sub">18.4</div>
+                </div>
+                <div>
+                    <div class="cm-metric-label">Avg Chunk Time</div>
+                    <div class="cm-metric-value cm-metric-value--sub">54ms</div>
+                </div>
+            </div>
+            <p class="cm-metrics-caption">
+                Vector engines spinning up… ⚙️
+            </p>
+        </div>
+    </section>
+
+    <!-- Main Content Area -->
+    <main class="cm-main">
+
+        <!-- SEARCH VIEW -->
+        <section class="cm-view cm-view--search cm-view--active" data-view="search">
+
+            <!-- Search Card -->
+            <section class="cm-search-card">
+                <div class="cm-search-card-top">
+                    <div class="cm-search-index-selector cm-search-index-selector--disabled">
+                        All indexes
+                        <span class="cm-caret">▾</span>
+                    </div>
+                </div>
+                <div class="cm-search-input-row">
+                    <input
+                            type="text"
+                            class="cm-search-input"
+                            placeholder="Search your knowledge base…"
+                    />
+                    <button class="cm-btn cm-btn--primary">Search</button>
+                </div>
+                <div class="cm-search-hints">
+                    <span>Local-first • Hybrid semantic + keyword search</span>
+                    <span>6 documents indexed • 2752 tokens</span>
+                </div>
+            </section>
+
+            <!-- Search Results -->
+            <section class="cm-results-section">
+                <header class="cm-results-header">
+                    <span class="cm-results-count">6 result(s) for “Rust”</span>
+                </header>
+
+                <!-- Example result card #1 -->
+                <article class="cm-result-card">
+                    <header class="cm-result-header">
+                        <div class="cm-result-rank">#1</div>
+                        <div class="cm-result-main">
+                            <a class="cm-result-title" href="#" data-action="show-source">
+                                Sentence-Based Chunking Strategy
+                            </a>
+                            <div class="cm-result-meta">
+                                <span class="cm-result-source">001-sentence-based-chunking.md</span>
+                                <span class="cm-meta-dot">•</span>
+                                <span class="cm-result-index">Index: Local Docs</span>
+                            </div>
+                        </div>
+                        <div class="cm-result-score">
+                            <span class="cm-score-label">RRF</span>
+                            <span class="cm-score-value">0.0328</span>
+                        </div>
+                    </header>
+
+                    <p class="cm-result-snippet">
+                        Use sentence-based chunking as the primary strategy. Trait-based design allows multiple chunking strategies to coexist
+                        and be swapped at runtime without reindexing the entire collection…
+                    </p>
+
+                    <footer class="cm-result-footer">
+                        <button class="cm-btn cm-btn--ghost" data-action="show-source">
+                            Show source
+                        </button>
+                        <button class="cm-btn cm-btn--ghost cm-btn--subtle" data-action="toggle-result-details">
+                            Details
+                        </button>
+                    </footer>
+
+                    <!-- Inline Details (collapsed by default) -->
+                    <div class="cm-result-details cm-result-details--collapsed">
+                        <div class="cm-result-detail-row">
+                            <div class="cm-detail-label">Fusion breakdown</div>
+                            <div class="cm-detail-bars">
+                                <div class="cm-detail-bar">
+                                    <div class="cm-detail-bar-label">Semantic vector</div>
+                                    <div class="cm-progress-bar cm-progress-bar--metric">
+                                        <span style="width: 72%;"></span>
+                                    </div>
+                                </div>
+                                <div class="cm-detail-bar">
+                                    <div class="cm-detail-bar-label">BM25</div>
+                                    <div class="cm-progress-bar cm-progress-bar--metric">
+                                        <span style="width: 54%;"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cm-result-detail-row cm-result-detail-row--meta">
+                            <div>Chunk 4 / 6</div>
+                            <div>Tokens: 384</div>
+                            <div>Indexed: 2025-11-10 14:22</div>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Example result card #2 (simpler, no expanded details shown) -->
+                <article class="cm-result-card">
+                    <header class="cm-result-header">
+                        <div class="cm-result-rank">#2</div>
+                        <div class="cm-result-main">
+                            <a class="cm-result-title" href="#" data-action="show-source">
+                                Hybrid Search: Combining BM25 and JinaBERT
+                            </a>
+                            <div class="cm-result-meta">
+                                <span class="cm-result-source">hybrid-search-overview.md</span>
+                                <span class="cm-meta-dot">•</span>
+                                <span class="cm-result-index">Index: Local Docs</span>
+                            </div>
+                        </div>
+                        <div class="cm-result-score">
+                            <span class="cm-score-label">RRF</span>
+                            <span class="cm-score-value">0.0281</span>
+                        </div>
+                    </header>
+                    <p class="cm-result-snippet">
+                        We fuse rankings from BM25 and semantic embeddings using Reciprocal Rank Fusion. This yields robust performance across
+                        both lexical and semantic similarity regimes…
+                    </p>
+                    <footer class="cm-result-footer">
+                        <button class="cm-btn cm-btn--ghost" data-action="show-source">
+                            Show source
+                        </button>
+                        <button class="cm-btn cm-btn--ghost cm-btn--subtle" data-action="toggle-result-details">
+                            Details
+                        </button>
+                    </footer>
+                </article>
+
+                <!-- Load More -->
+                <div class="cm-results-load-more">
+                    <button class="cm-btn cm-btn--secondary" data-action="load-more-results">
+                        Load more results
+                    </button>
+                </div>
+            </section>
+
+            <!-- Empty state example (keep but hide initially) -->
+            <section class="cm-empty-state cm-empty-state--hidden">
+                <div class="cm-empty-card">
+                    <h2 class="cm-empty-title">No documents indexed yet</h2>
+                    <p class="cm-empty-text">
+                        Start by indexing your local files to power Coppermind’s hybrid search engine.
+                    </p>
+                    <button class="cm-btn cm-btn--primary" data-view-target="index">
+                        Index documents
+                    </button>
+                </div>
+            </section>
+
+        </section>
+
+        <!-- INDEX VIEW -->
+        <section class="cm-view cm-view--index" data-view="index">
+
+            <section class="cm-page-header">
+                <h1 class="cm-page-title">Index your documents</h1>
+                <p class="cm-page-subtitle">
+                    Drop in files or folders to index them locally. Coppermind will chunk, embed, and index them on your machine.
+                </p>
+            </section>
+
+            <!-- Upload Zone -->
+            <section class="cm-upload-card">
+                <div class="cm-upload-header">
+                    <div class="cm-upload-tabs">
+                        <button class="cm-upload-tab cm-upload-tab--active">Files</button>
+                        <button class="cm-upload-tab cm-upload-tab--disabled">Web URLs (coming soon)</button>
+                    </div>
+                </div>
+
+                <div class="cm-upload-body">
+                    <label class="cm-dropzone" data-action="upload-files">
+                        <input type="file" class="cm-dropzone-input" multiple webkitdirectory />
+                        <div class="cm-dropzone-inner">
+                            <div class="cm-dropzone-icon">📁</div>
+                            <div class="cm-dropzone-title">Drop files or folders here</div>
+                            <div class="cm-dropzone-subtitle">
+                                Or click to select from your file system.
+                            </div>
+                        </div>
+                    </label>
+                </div>
+            </section>
+
+            <!-- Current Batch -->
+            <section class="cm-indexing-section">
+                <header class="cm-section-header">
+                    <h2 class="cm-section-title">Current indexing batch</h2>
+                    <span class="cm-section-subtitle">Engines warming up…</span>
+                </header>
+
+                <div class="cm-file-list">
+                    <!-- Example file row 1 -->
+                    <div class="cm-file-row">
+                        <div class="cm-file-main">
+                            <div class="cm-file-name">001-sentence-based-chunking.md</div>
+                            <div class="cm-file-sub">Embedding chunks… 4 / 6</div>
+                        </div>
+                        <div class="cm-file-progress">
+                            <div class="cm-progress-bar">
+                                <span style="width: 66%;"></span>
+                            </div>
+                            <div class="cm-file-percent">66%</div>
+                        </div>
+                        <button class="cm-icon-button cm-file-details-toggle" data-action="toggle-file-details">
+                            ▾
+                        </button>
+                    </div>
+                    <div class="cm-file-advanced cm-file-advanced--collapsed">
+                        <div class="cm-file-advanced-grid">
+                            <div>
+                                <div class="cm-metric-label">Tokens processed</div>
+                                <div class="cm-metric-value cm-metric-value--sub">2,752</div>
+                            </div>
+                            <div>
+                                <div class="cm-metric-label">Chunks embedded</div>
+                                <div class="cm-metric-value cm-metric-value--sub">4 / 6</div>
+                            </div>
+                            <div>
+                                <div class="cm-metric-label">Elapsed</div>
+                                <div class="cm-metric-value cm-metric-value--sub">1.2s</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Example file row 2 -->
+                    <div class="cm-file-row">
+                        <div class="cm-file-main">
+                            <div class="cm-file-name">hybrid-search-overview.md</div>
+                            <div class="cm-file-sub">Queued</div>
+                        </div>
+                        <div class="cm-file-progress">
+                            <div class="cm-progress-bar cm-progress-bar--idle">
+                                <span style="width: 0;"></span>
+                            </div>
+                            <div class="cm-file-percent">0%</div>
+                        </div>
+                        <button class="cm-icon-button cm-file-details-toggle" data-action="toggle-file-details">
+                            ▾
+                        </button>
+                    </div>
+                    <div class="cm-file-advanced cm-file-advanced--collapsed">
+                        <!-- Will remain empty until processing starts; structure reserved -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Previous Batches -->
+            <section class="cm-batches-section">
+                <header class="cm-section-header">
+                    <h2 class="cm-section-title">Recent batches</h2>
+                </header>
+                <div class="cm-batch-grid">
+                    <article class="cm-batch-card">
+                        <header class="cm-batch-header">
+                            <h3 class="cm-batch-title">Batch #12</h3>
+                            <span class="cm-tag cm-tag--success">Completed</span>
+                        </header>
+                        <div class="cm-batch-body">
+                            <div class="cm-batch-row">
+                                <span>Files</span>
+                                <span>6</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Chunks</span>
+                                <span>64</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Tokens</span>
+                                <span>27,520</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Duration</span>
+                                <span>12.3s</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="cm-batch-card">
+                        <header class="cm-batch-header">
+                            <h3 class="cm-batch-title">Batch #11</h3>
+                            <span class="cm-tag cm-tag--success">Completed</span>
+                        </header>
+                        <div class="cm-batch-body">
+                            <div class="cm-batch-row">
+                                <span>Files</span>
+                                <span>3</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Chunks</span>
+                                <span>18</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Tokens</span>
+                                <span>7,102</span>
+                            </div>
+                            <div class="cm-batch-row">
+                                <span>Duration</span>
+                                <span>4.6s</span>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+        </section>
+
+    </main>
+
+    <!-- Source Preview (used by web when "Show source" on local file) -->
+    <section class="cm-source-overlay cm-source-overlay--hidden" data-role="source-overlay">
+        <div class="cm-source-panel">
+            <header class="cm-source-header">
+                <div class="cm-source-meta">
+                    <div class="cm-source-name">001-sentence-based-chunking.md</div>
+                    <div class="cm-source-sub">Indexed locally • 2,752 tokens</div>
+                </div>
+                <button class="cm-icon-button" data-action="close-source-overlay">✕</button>
+            </header>
+            <pre class="cm-source-body">
+# Sentence-Based Chunking Strategy
+
+We use sentence-based chunking as the primary strategy…
+        </pre>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="cm-footer">
+      <span class="cm-footer-text">
+        Local-first • All processing happens on your device.
+      </span>
+    </footer>
+
+</div>
+
+<!-- Placeholder script: no real logic, just hooks for agents -->
+<script>
+    // This block intentionally left minimal.
+    // Agents/engineers can attach handlers using [data-*] attributes:
+    // - [data-view-target]
+    // - [data-action="toggle-metrics"]
+    // - [data-action="toggle-result-details"]
+    // - [data-action="upload-files"]
+    // - [data-action="show-source"]
+    // - [data-role="source-overlay"], etc.
+</script>
+</body>
+</html>
