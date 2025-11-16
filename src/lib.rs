@@ -31,7 +31,6 @@
 //! ```
 
 pub mod components;
-pub mod cpu;
 pub mod embedding;
 pub mod error;
 pub mod platform;
@@ -39,5 +38,4 @@ pub mod processing;
 pub mod search;
 pub mod storage;
 pub mod utils;
-pub mod wgpu;
 pub mod workers;

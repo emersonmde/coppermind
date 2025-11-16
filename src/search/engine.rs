@@ -371,4 +371,324 @@ mod tests {
         assert!(results.len() <= 2);
         assert!(!results.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_add_document_dimension_mismatch() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "test".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("test.txt".to_string()),
+                source: None,
+                created_at: 0,
+            },
+        };
+
+        // Try to add document with wrong embedding dimension
+        let result = engine.add_document(doc, vec![1.0, 0.0]).await; // 2D instead of 3D
+
+        assert!(result.is_err());
+        match result {
+            Err(SearchError::EmbeddingError(msg)) => {
+                assert!(msg.contains("dimension mismatch"));
+                assert!(msg.contains("expected 3"));
+                assert!(msg.contains("got 2"));
+            }
+            _ => panic!("Expected EmbeddingError with dimension mismatch"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_index() {
+        let storage = MockStorage;
+        let engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Search empty index
+        let results = engine.search(&[1.0, 0.0, 0.0], "query", 10).await.unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_dimension_mismatch() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "test document".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+
+        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        // Try to search with wrong dimension
+        let result = engine.search(&[1.0, 0.0], "query", 10).await; // 2D instead of 3D
+
+        assert!(result.is_err());
+        match result {
+            Err(SearchError::EmbeddingError(msg)) => {
+                assert!(msg.contains("dimension mismatch"));
+                assert!(msg.contains("expected 3"));
+                assert!(msg.contains("got 2"));
+            }
+            _ => panic!("Expected EmbeddingError with dimension mismatch"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_batch_add_deferred() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Add multiple documents without rebuilding index each time
+        for i in 0..5 {
+            let doc = Document {
+                text: format!("document {}", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("doc{}.txt", i)),
+                    source: None,
+                    created_at: i as u64,
+                },
+            };
+
+            engine
+                .add_document_deferred(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Rebuild index once
+        engine.rebuild_vector_index().await.unwrap();
+
+        // Verify all documents are indexed
+        assert_eq!(engine.len(), 5);
+        assert_eq!(engine.vector_index_len(), 5);
+
+        // Search should work after rebuild
+        let results = engine
+            .search(&[2.0, 0.0, 0.0], "document 2", 3)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_index_metrics() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Empty index
+        let (chunks, tokens, avg) = engine.get_index_metrics();
+        assert_eq!(chunks, 0);
+        assert_eq!(tokens, 0);
+        assert_eq!(avg, 0.0);
+
+        // Add documents with known token counts
+        let doc1 = Document {
+            text: "one two three".to_string(), // 3 tokens
+            metadata: DocumentMetadata::default(),
+        };
+        let doc2 = Document {
+            text: "four five".to_string(), // 2 tokens
+            metadata: DocumentMetadata::default(),
+        };
+
+        engine
+            .add_document(doc1, vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        engine
+            .add_document(doc2, vec![0.0, 1.0, 0.0])
+            .await
+            .unwrap();
+
+        let (chunks, tokens, avg) = engine.get_index_metrics();
+        assert_eq!(chunks, 2);
+        assert_eq!(tokens, 5); // 3 + 2
+        assert_eq!(avg, 2.5); // 5 / 2
+    }
+
+    #[tokio::test]
+    async fn test_vector_and_keyword_index_sync() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Add documents
+        for i in 0..3 {
+            let doc = Document {
+                text: format!("document {}", i),
+                metadata: DocumentMetadata::default(),
+            };
+            engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Both indexes should have same count
+        assert_eq!(engine.len(), 3);
+        assert_eq!(engine.vector_index_len(), 3);
+        assert_eq!(engine.keyword_index_len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_clear_index() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Add documents
+        let doc = Document {
+            text: "test document".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        assert_eq!(engine.len(), 1);
+
+        // Clear
+        engine.clear();
+
+        assert_eq!(engine.len(), 0);
+        assert!(engine.is_empty());
+        assert_eq!(engine.vector_index_len(), 0);
+
+        // Should be able to add documents after clear
+        let doc2 = Document {
+            text: "new document".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        let result = engine.add_document(doc2, vec![1.0, 0.0, 0.0]).await;
+        assert!(result.is_ok());
+        assert_eq!(engine.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_document() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "test document".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("test.txt".to_string()),
+                source: Some("manual".to_string()),
+                created_at: 12345,
+            },
+        };
+
+        let doc_id = engine
+            .add_document(doc.clone(), vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        // Get document by ID
+        let retrieved = engine.get_document(&doc_id);
+        assert!(retrieved.is_some());
+
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, doc_id);
+        assert_eq!(retrieved.text, doc.text);
+        assert_eq!(retrieved.metadata.filename, doc.metadata.filename);
+        assert_eq!(retrieved.metadata.source, doc.metadata.source);
+        assert_eq!(retrieved.metadata.created_at, doc.metadata.created_at);
+    }
+
+    #[tokio::test]
+    async fn test_debug_dump() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Empty index
+        let dump = engine.debug_dump();
+        assert!(dump.contains("Total documents: 0"));
+        assert!(dump.contains("(empty index)"));
+
+        // Add document
+        let doc = Document {
+            text: "This is a test document with some content".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("test.txt".to_string()),
+                source: Some("test".to_string()),
+                created_at: 123,
+            },
+        };
+        let doc_id = engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        let dump = engine.debug_dump();
+        assert!(dump.contains("Total documents: 1"));
+        assert!(dump.contains(&format!("DocId: {}", doc_id.as_u64())));
+        assert!(dump.contains("test.txt"));
+        assert!(dump.contains("test"));
+        assert!(dump.contains("This is a test document"));
+    }
+
+    #[tokio::test]
+    async fn test_search_returns_top_k() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        // Add 10 documents
+        for i in 0..10 {
+            let doc = Document {
+                text: format!("document number {}", i),
+                metadata: DocumentMetadata::default(),
+            };
+            engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Request top 3
+        let results = engine
+            .search(&[5.0, 0.0, 0.0], "document", 3)
+            .await
+            .unwrap();
+
+        // Should return at most 3 results
+        assert!(results.len() <= 3);
+
+        // Verify results have scores
+        for result in &results {
+            assert!(result.score > 0.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_result_structure() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "semantic search test".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("search.txt".to_string()),
+                source: None,
+                created_at: 999,
+            },
+        };
+
+        engine
+            .add_document(doc.clone(), vec![1.0, 0.5, 0.2])
+            .await
+            .unwrap();
+
+        let results = engine
+            .search(&[1.0, 0.5, 0.2], "semantic", 1)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+
+        // Verify SearchResult structure
+        assert!(result.score > 0.0); // RRF fused score
+        assert!(result.vector_score.is_some()); // Vector search score
+        assert!(result.keyword_score.is_some()); // BM25 score
+        assert_eq!(result.text, doc.text);
+        assert_eq!(result.metadata.filename, doc.metadata.filename);
+        assert_eq!(result.metadata.created_at, doc.metadata.created_at);
+    }
 }
