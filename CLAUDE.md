@@ -67,11 +67,16 @@ cargo install cargo-audit --locked
   - **search.rs**: Search UI component
   - **testing.rs**: Developer testing utilities
 - **embedding/**: ML model inference and text processing
-  - **mod.rs**: Public API, high-level embedding functions
+  - **mod.rs**: Public API, high-level embedding functions with automatic file-type-based chunking
   - **config.rs**: Model configuration (`JinaBertConfig` with `ModelConfig` trait for multi-model support)
   - **model.rs**: `Embedder` trait and `JinaBertEmbedder` implementation
-  - **tokenizer.rs**: Tokenization and text chunking utilities
+  - **tokenizer.rs**: Tokenization utilities
   - **assets.rs**: Platform-agnostic asset loading (HTTP fetch on web, filesystem on desktop)
+  - **chunking/**: Text chunking strategies for semantic document splitting
+    - **mod.rs**: `ChunkingStrategy` trait, `FileType` enum, file type detection
+    - **text_splitter_adapter.rs**: Generic text chunking using ICU4X sentence segmentation
+    - **markdown_splitter_adapter.rs**: Markdown-aware chunking respecting document structure
+    - **code_splitter_adapter.rs**: Syntax-aware code chunking with tree-sitter (native only)
 - **workers/**: Web Worker for offloading CPU-intensive embedding to separate thread (WASM only)
   - **mod.rs**: Module exports, conditional compilation for WASM target
   - **embedding_worker.rs**: `EmbeddingWorker` with wasm-bindgen bindings for JS interop
@@ -139,6 +144,17 @@ cargo install cargo-audit --locked
 - JinaBERT weights loaded as Dioxus `Asset` from `/assets/models/`
 - Safetensors weights auto-converted F16→F32 by VarBuilder for WASM compatibility
 - `Device::cuda_if_available(0)` falls back to CPU in browser
+
+**Text Chunking Strategy** (platform-specific):
+- Uses `text-splitter` crate with custom `TokenizerSizer` to avoid onig (C library)
+- **File type detection**: Automatic strategy selection based on file extension
+  - `.md`, `.markdown` → MarkdownSplitter (structure-aware, uses pulldown-cmark)
+  - `.rs`, `.py`, `.js`, `.java`, `.c`, `.cpp`, `.go` → CodeSplitter (syntax-aware, uses tree-sitter) **native only**
+  - All others → TextSplitter (sentence-based, uses ICU4X)
+- **Platform behavior**:
+  - Web (WASM): Markdown + Text chunking (tree-sitter C code doesn't compile to WASM)
+  - Desktop/mobile (native): Markdown + Text + Code chunking (tree-sitter works fine)
+- Code files on WASM fall back to generic text chunking (still semantic, just not syntax-aware)
 
 **Dioxus Signal Safety** (from `clippy.toml`):
 Never hold these across `.await` points (causes deadlocks):

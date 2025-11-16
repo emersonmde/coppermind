@@ -305,9 +305,20 @@ pub async fn embed_text_chunks_auto(
             );
             chunker.chunk(text)?
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        chunking::FileType::Code(language) => {
+            let chunker = chunking::code_splitter_adapter::CodeSplitterAdapter::new(
+                effective_chunk,
+                language,
+                tokenizer,
+            );
+            chunker.chunk(text)?
+        }
         chunking::FileType::Text => {
-            let chunker =
-                chunking::text_splitter_adapter::TextSplitterAdapter::new(effective_chunk, tokenizer);
+            let chunker = chunking::text_splitter_adapter::TextSplitterAdapter::new(
+                effective_chunk,
+                tokenizer,
+            );
             chunker.chunk(text)?
         }
     };

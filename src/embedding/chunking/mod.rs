@@ -29,6 +29,10 @@
 pub mod markdown_splitter_adapter;
 pub mod text_splitter_adapter;
 
+// Code chunking is only available on native platforms (tree-sitter uses C code)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod code_splitter_adapter;
+
 use crate::error::EmbeddingError;
 use std::path::Path;
 
@@ -95,7 +99,10 @@ pub trait ChunkingStrategy: Send + Sync {
 pub enum FileType {
     /// Markdown files (*.md, *.markdown)
     Markdown,
-    /// Plain text files (everything else)
+    /// Code files (*.rs, *.py, *.js, *.java, etc.) - native platforms only
+    #[cfg(not(target_arch = "wasm32"))]
+    Code(code_splitter_adapter::CodeLanguage),
+    /// Plain text files (everything else, or code files on WASM)
     Text,
 }
 
@@ -103,7 +110,11 @@ pub enum FileType {
 ///
 /// Uses file extension to determine the appropriate chunking strategy:
 /// - `.md`, `.markdown` → FileType::Markdown
+/// - Code extensions (`.rs`, `.py`, etc.) → FileType::Code (native only)
 /// - Everything else → FileType::Text
+///
+/// On WASM, code files fall back to FileType::Text since tree-sitter doesn't
+/// compile to WASM.
 ///
 /// # Arguments
 ///
@@ -120,7 +131,9 @@ pub enum FileType {
 ///
 /// assert_eq!(detect_file_type("README.md"), FileType::Markdown);
 /// assert_eq!(detect_file_type("document.txt"), FileType::Text);
-/// assert_eq!(detect_file_type("script.py"), FileType::Text);
+/// // On native: FileType::Code(CodeLanguage::Python)
+/// // On WASM: FileType::Text
+/// let _ = detect_file_type("script.py");
 /// ```
 pub fn detect_file_type<P: AsRef<Path>>(filename: P) -> FileType {
     let path = filename.as_ref();
@@ -128,13 +141,22 @@ pub fn detect_file_type<P: AsRef<Path>>(filename: P) -> FileType {
     // Check extension
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
-        match ext_str.as_str() {
-            "md" | "markdown" => return FileType::Markdown,
-            _ => {}
+
+        // Check for markdown first
+        if matches!(ext_str.as_str(), "md" | "markdown") {
+            return FileType::Markdown;
+        }
+
+        // Check for code files (native only)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(language) = code_splitter_adapter::CodeLanguage::from_extension(&ext_str) {
+                return FileType::Code(language);
+            }
         }
     }
 
-    // Default to text for everything else
+    // Default to text for everything else (including code files on WASM)
     FileType::Text
 }
 
@@ -159,14 +181,42 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_code_files_as_text() {
-        // Code files should use text chunking for now
-        // (code chunking requires tree-sitter which has WASM issues)
-        assert_eq!(detect_file_type("script.py"), FileType::Text);
-        assert_eq!(detect_file_type("main.rs"), FileType::Text);
-        assert_eq!(detect_file_type("program.java"), FileType::Text);
-        assert_eq!(detect_file_type("code.cpp"), FileType::Text);
-        assert_eq!(detect_file_type("app.js"), FileType::Text);
+    fn test_detect_code_files() {
+        // On native platforms: Code files use syntax-aware chunking
+        // On WASM: Code files fall back to text chunking (tree-sitter doesn't work)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use code_splitter_adapter::CodeLanguage;
+            assert_eq!(
+                detect_file_type("script.py"),
+                FileType::Code(CodeLanguage::Python)
+            );
+            assert_eq!(
+                detect_file_type("main.rs"),
+                FileType::Code(CodeLanguage::Rust)
+            );
+            assert_eq!(
+                detect_file_type("program.java"),
+                FileType::Code(CodeLanguage::Java)
+            );
+            assert_eq!(
+                detect_file_type("code.cpp"),
+                FileType::Code(CodeLanguage::Cpp)
+            );
+            assert_eq!(
+                detect_file_type("app.js"),
+                FileType::Code(CodeLanguage::JavaScript)
+            );
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            assert_eq!(detect_file_type("script.py"), FileType::Text);
+            assert_eq!(detect_file_type("main.rs"), FileType::Text);
+            assert_eq!(detect_file_type("program.java"), FileType::Text);
+            assert_eq!(detect_file_type("code.cpp"), FileType::Text);
+            assert_eq!(detect_file_type("app.js"), FileType::Text);
+        }
     }
 
     #[test]
@@ -175,10 +225,7 @@ mod tests {
             detect_file_type("/Users/name/Documents/README.md"),
             FileType::Markdown
         );
-        assert_eq!(
-            detect_file_type("/var/log/app.log"),
-            FileType::Text
-        );
+        assert_eq!(detect_file_type("/var/log/app.log"), FileType::Text);
     }
 
     #[test]

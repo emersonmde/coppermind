@@ -123,6 +123,9 @@ impl<T> ResultExt<T, EmbeddingError> for Result<T, EmbeddingError> {
             EmbeddingError::ModelUnavailable(msg) => {
                 EmbeddingError::ModelUnavailable(format!("{}: {}", context, msg))
             }
+            EmbeddingError::ChunkingFailed(msg) => {
+                EmbeddingError::ChunkingFailed(format!("{}: {}", context, msg))
+            }
         })
     }
 
@@ -156,6 +159,9 @@ impl<T> ResultExt<T, EmbeddingError> for Result<T, EmbeddingError> {
                 }
                 EmbeddingError::ModelUnavailable(msg) => {
                     EmbeddingError::ModelUnavailable(format!("{}: {}", context, msg))
+                }
+                EmbeddingError::ChunkingFailed(msg) => {
+                    EmbeddingError::ChunkingFailed(format!("{}: {}", context, msg))
                 }
             }
         })

@@ -29,6 +29,9 @@ pub enum EmbeddingError {
     /// Model not available or initialization failed
     #[error("Model unavailable: {0}")]
     ModelUnavailable(String),
+    /// Text chunking failed
+    #[error("Chunking failed: {0}")]
+    ChunkingFailed(String),
 }
 
 /// Errors that can occur during file processing operations.

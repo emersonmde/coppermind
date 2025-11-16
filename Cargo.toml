@@ -47,7 +47,6 @@ instant-distance = "0.6"
 # Note: We implement our own ChunkSizer instead of using the tokenizers feature
 # to avoid pulling in onig (C library) which breaks WASM builds
 # markdown feature uses pulldown-cmark (pure Rust, WASM-compatible)
-# code feature requires tree-sitter which has WASM compatibility issues, so we skip it
 text-splitter = { version = "0.18", default-features = false, features = ["markdown"] }
 
 # Error handling with derive macros
@@ -79,6 +78,22 @@ web-sys = { version = "0.3", features = [
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
+
+# Code chunking with tree-sitter (native only - C library doesn't work on WASM)
+# Enables syntax-aware chunking for programming languages
+text-splitter = { version = "0.18", default-features = false, features = ["code"] }
+tree-sitter = "0.24"
+
+# Tree-sitter language parsers for code chunking
+# Versions are determined by what tree-sitter version text-splitter requires
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 # GPU acceleration features for Apple platforms (Metal + Accelerate)
