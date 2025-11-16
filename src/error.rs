@@ -51,10 +51,24 @@ pub enum FileProcessingError {
     DirectoryTraversal(String),
 }
 
+/// Convert from String to EmbeddingError for platform::run_blocking compatibility
+impl From<String> for EmbeddingError {
+    fn from(s: String) -> Self {
+        EmbeddingError::InferenceFailed(s)
+    }
+}
+
 /// Convert from EmbeddingError to String for backward compatibility
 impl From<EmbeddingError> for String {
     fn from(err: EmbeddingError) -> String {
         err.to_string()
+    }
+}
+
+/// Convert from String to FileProcessingError for platform::run_blocking compatibility
+impl From<String> for FileProcessingError {
+    fn from(s: String) -> Self {
+        FileProcessingError::EmbeddingFailed(s)
     }
 }
 

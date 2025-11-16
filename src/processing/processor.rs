@@ -33,7 +33,7 @@ pub struct ChunkProcessingResult {
 ///
 /// * `content` - File text content
 /// * `embedder` - Platform-specific embedder
-/// * `progress_callback` - Called after each chunk with (current, total, progress_pct)
+/// * `progress_callback` - Called after each chunk with (current, total, progress_pct, tokens_so_far, elapsed_ms)
 ///
 /// # Returns
 ///
@@ -46,8 +46,8 @@ pub struct ChunkProcessingResult {
 /// let result = process_file_chunks(
 ///     &file_content,
 ///     &embedder,
-///     |current, total, pct| {
-///         println!("Progress: {}/{} ({:.1}%)", current, total, pct);
+///     |current, total, pct, tokens, elapsed| {
+///         println!("Progress: {}/{} ({:.1}%) - {} tokens in {}ms", current, total, pct, tokens, elapsed);
 ///     }
 /// ).await?;
 /// ```
@@ -57,7 +57,7 @@ pub async fn process_file_chunks<F>(
     mut progress_callback: F,
 ) -> Result<ChunkProcessingResult, EmbeddingError>
 where
-    F: FnMut(usize, usize, f64),
+    F: FnMut(usize, usize, f64, usize, u64),
 {
     let start_time = Instant::now();
 
@@ -72,22 +72,31 @@ where
 
     let chunks_total = text_chunks.len();
     let mut results = Vec::new();
+    let mut tokens_so_far = 0;
 
     // Process each chunk
     for (chunk_idx, chunk_text) in text_chunks.iter().enumerate() {
-        // Update progress
-        let progress_pct = (chunk_idx as f64 / chunks_total as f64) * 100.0;
-        progress_callback(chunk_idx, chunks_total, progress_pct);
-
         // Compute embedding
         match embedder.embed(chunk_text).await {
             Ok(computation) => {
+                tokens_so_far += computation.token_count;
                 results.push(ChunkEmbeddingResult {
                     chunk_index: chunk_idx,
                     token_count: computation.token_count,
                     text: chunk_text.clone(),
                     embedding: computation.embedding,
                 });
+
+                // Update progress with partial metrics
+                let progress_pct = ((chunk_idx + 1) as f64 / chunks_total as f64) * 100.0;
+                let elapsed_ms = start_time.elapsed().as_millis() as u64;
+                progress_callback(
+                    chunk_idx + 1,
+                    chunks_total,
+                    progress_pct,
+                    tokens_so_far,
+                    elapsed_ms,
+                );
             }
             Err(e) => {
                 error!("❌ Failed to embed chunk {}: {}", chunk_idx, e);
@@ -95,9 +104,6 @@ where
             }
         }
     }
-
-    // Final progress update
-    progress_callback(chunks_total, chunks_total, 100.0);
 
     // Calculate metrics
     let elapsed_ms = start_time.elapsed().as_millis() as u64;

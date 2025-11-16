@@ -14,11 +14,16 @@ use tokio::fs;
 pub fn UploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
     let mut mode = use_signal(|| "files"); // "files" or "folder"
 
-    // Set webkitdirectory attribute on folder input (web only)
+    // Set webkitdirectory attribute on folder input when in folder mode (web only)
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
         use dioxus::logger::tracing::info;
         use wasm_bindgen::JsCast;
+
+        // Only set attribute when in folder mode (element exists)
+        if mode() != "folder" {
+            return;
+        }
 
         // Small delay to ensure DOM is ready
         spawn(async move {

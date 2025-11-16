@@ -186,64 +186,77 @@ pub mod embedding_worker {
             .ok_or_else(|| "Worker message type not a string".to_string())?;
 
         match msg_type_str.as_str() {
-            "ready" => {
-                notify_ready(ready_state);
-                Ok(())
-            }
-            "worker-error" => {
-                let error_text = Reflect::get(&obj, &"error".into())
-                    .unwrap_or(JsValue::from("Unknown worker error"))
-                    .as_string()
-                    .unwrap_or_else(|| "Unknown worker error".into());
-                notify_failure(ready_state, &error_text);
-                drain_pending_with_error(pending, &error_text);
-                Err(error_text)
-            }
-            "embedding" => {
-                let request_id = Reflect::get(&obj, &"requestId".into())
-                    .map_err(|e| format!("Missing requestId: {:?}", e))?
-                    .as_f64()
-                    .ok_or_else(|| "requestId not numeric".to_string())?
-                    as u32;
-                let token_count = Reflect::get(&obj, &"tokenCount".into())
-                    .map_err(|e| format!("Missing tokenCount: {:?}", e))?
-                    .as_f64()
-                    .ok_or_else(|| "tokenCount not numeric".to_string())?
-                    as usize;
-                let embedding_val = Reflect::get(&obj, &"embedding".into())
-                    .map_err(|e| format!("Missing embedding: {:?}", e))?;
-                let typed_array = embedding_val
-                    .dyn_into::<Float32Array>()
-                    .map_err(|_| "embedding field was not Float32Array".to_string())?;
-                let mut buffer = vec![0f32; typed_array.length() as usize];
-                typed_array.copy_to(&mut buffer);
-
-                if let Some(sender) = pending.borrow_mut().remove(&request_id) {
-                    let _ = sender.send(Ok(EmbeddingComputation {
-                        token_count,
-                        embedding: buffer,
-                    }));
-                }
-                Ok(())
-            }
-            "embedding-error" => {
-                let request_id = Reflect::get(&obj, &"requestId".into())
-                    .map_err(|e| format!("Missing requestId: {:?}", e))?
-                    .as_f64()
-                    .ok_or_else(|| "requestId not numeric".to_string())?
-                    as u32;
-                let error_text = Reflect::get(&obj, &"error".into())
-                    .unwrap_or(JsValue::from("Unknown embedding error"))
-                    .as_string()
-                    .unwrap_or_else(|| "Unknown embedding error".into());
-
-                if let Some(sender) = pending.borrow_mut().remove(&request_id) {
-                    let _ = sender.send(Err(error_text.clone()));
-                }
-                Err(error_text)
-            }
+            "ready" => handle_ready_message(ready_state),
+            "worker-error" => handle_worker_error_message(&obj, pending, ready_state),
+            "embedding" => handle_embedding_message(&obj, pending),
+            "embedding-error" => handle_embedding_error_message(&obj, pending),
             other => Err(format!("Unknown worker message type: {}", other)),
         }
+    }
+
+    fn handle_ready_message(ready_state: &Rc<RefCell<ReadyState>>) -> Result<(), String> {
+        notify_ready(ready_state);
+        Ok(())
+    }
+
+    fn handle_worker_error_message(
+        obj: &Object,
+        pending: &PendingRequests,
+        ready_state: &Rc<RefCell<ReadyState>>,
+    ) -> Result<(), String> {
+        let error_text = Reflect::get(obj, &"error".into())
+            .unwrap_or(JsValue::from("Unknown worker error"))
+            .as_string()
+            .unwrap_or_else(|| "Unknown worker error".into());
+        notify_failure(ready_state, &error_text);
+        drain_pending_with_error(pending, &error_text);
+        Err(error_text)
+    }
+
+    fn handle_embedding_message(obj: &Object, pending: &PendingRequests) -> Result<(), String> {
+        let request_id = Reflect::get(obj, &"requestId".into())
+            .map_err(|e| format!("Missing requestId: {:?}", e))?
+            .as_f64()
+            .ok_or_else(|| "requestId not numeric".to_string())? as u32;
+        let token_count = Reflect::get(obj, &"tokenCount".into())
+            .map_err(|e| format!("Missing tokenCount: {:?}", e))?
+            .as_f64()
+            .ok_or_else(|| "tokenCount not numeric".to_string())?
+            as usize;
+        let embedding_val = Reflect::get(obj, &"embedding".into())
+            .map_err(|e| format!("Missing embedding: {:?}", e))?;
+        let typed_array = embedding_val
+            .dyn_into::<Float32Array>()
+            .map_err(|_| "embedding field was not Float32Array".to_string())?;
+        let mut buffer = vec![0f32; typed_array.length() as usize];
+        typed_array.copy_to(&mut buffer);
+
+        if let Some(sender) = pending.borrow_mut().remove(&request_id) {
+            let _ = sender.send(Ok(EmbeddingComputation {
+                token_count,
+                embedding: buffer,
+            }));
+        }
+        Ok(())
+    }
+
+    fn handle_embedding_error_message(
+        obj: &Object,
+        pending: &PendingRequests,
+    ) -> Result<(), String> {
+        let request_id = Reflect::get(obj, &"requestId".into())
+            .map_err(|e| format!("Missing requestId: {:?}", e))?
+            .as_f64()
+            .ok_or_else(|| "requestId not numeric".to_string())? as u32;
+        let error_text = Reflect::get(obj, &"error".into())
+            .unwrap_or(JsValue::from("Unknown embedding error"))
+            .as_string()
+            .unwrap_or_else(|| "Unknown embedding error".into());
+
+        if let Some(sender) = pending.borrow_mut().remove(&request_id) {
+            let _ = sender.send(Err(error_text.clone()));
+        }
+        Err(error_text)
     }
 
     fn notify_ready(ready_state: &Rc<RefCell<ReadyState>>) {
@@ -284,6 +297,29 @@ pub mod embedding_worker {
         text: String,
     }
 
+    fn handle_worker_request(event: MessageEvent) {
+        let request: WorkerRequest = match serde_wasm_bindgen::from_value(event.data()) {
+            Ok(req) => req,
+            Err(err) => {
+                web_sys::console::error_1(&format!("Malformed worker request: {:?}", err).into());
+                return;
+            }
+        };
+
+        spawn_local(async move {
+            let response = match compute_embedding(&request.text).await {
+                Ok(result) => build_success_payload(request.request_id, result),
+                Err(err) => build_error_payload(Some(request.request_id), &err.to_string()),
+            };
+
+            if let Err(e) = post_message_to_main(&response) {
+                web_sys::console::error_1(
+                    &format!("Failed to post worker response: {:?}", e).into(),
+                );
+            }
+        });
+    }
+
     #[wasm_bindgen]
     pub fn start_embedding_worker() -> Result<(), JsValue> {
         console_error_panic_hook::set_once();
@@ -291,30 +327,7 @@ pub mod embedding_worker {
             .dyn_into()
             .map_err(|_| JsValue::from_str("Not running inside a worker scope"))?;
 
-        let handler = Closure::wrap(Box::new(move |event: MessageEvent| {
-            let request: WorkerRequest = match serde_wasm_bindgen::from_value(event.data()) {
-                Ok(req) => req,
-                Err(err) => {
-                    web_sys::console::error_1(
-                        &format!("Malformed worker request: {:?}", err).into(),
-                    );
-                    return;
-                }
-            };
-
-            spawn_local(async move {
-                let response = match compute_embedding(&request.text).await {
-                    Ok(result) => build_success_payload(request.request_id, result),
-                    Err(err) => build_error_payload(Some(request.request_id), &err.to_string()),
-                };
-
-                if let Err(e) = post_message_to_main(&response) {
-                    web_sys::console::error_1(
-                        &format!("Failed to post worker response: {:?}", e).into(),
-                    );
-                }
-            });
-        }) as Box<dyn FnMut(_)>);
+        let handler = Closure::wrap(Box::new(handle_worker_request) as Box<dyn FnMut(_)>);
 
         scope.set_onmessage(Some(handler.as_ref().unchecked_ref()));
         handler.forget();

@@ -6,13 +6,12 @@
 //! 3. Update batch/file status as processing progresses
 //! 4. Index embedded chunks in the search engine
 
-use super::{Batch, BatchMetrics, BatchStatus, FileStatus};
+use super::{Batch, BatchMetrics, BatchStatus, FileMetrics, FileStatus};
 use crate::components::file_processing::{index_chunks, is_likely_binary};
 use crate::processing::embedder::PlatformEmbedder;
 use crate::processing::processor::process_file_chunks;
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageBackend;
-use crate::utils::SignalExt;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures::lock::Mutex;
@@ -45,9 +44,7 @@ pub async fn process_batch<S: StorageBackend>(
     mut engine_status: Signal<super::SearchEngineStatus>,
 ) -> Result<BatchMetrics, String> {
     // Update batch status to Processing
-    batches_signal.mutate(|batches| {
-        batches[batch_idx].status = BatchStatus::Processing;
-    });
+    batches_signal.write()[batch_idx].status = BatchStatus::Processing;
 
     // Track batch timing and stats
     let batch_start = Instant::now();
@@ -60,24 +57,33 @@ pub async fn process_batch<S: StorageBackend>(
         // Check if binary
         if is_likely_binary(contents) {
             info!("⚠️ Skipped '{}': binary file", file_name);
-            batches_signal.mutate(|batches| {
-                batches[batch_idx].files[file_idx].status =
-                    FileStatus::Failed("Binary file".to_string());
-            });
+            batches_signal.write()[batch_idx].files[file_idx].status =
+                FileStatus::Failed("Binary file".to_string());
             continue;
         }
 
         processed_count += 1;
 
-        // Process file chunks with progress tracking
-        let result = process_file_chunks(contents, embedder, |current, total, pct| {
-            // Update UI with progress
-            batches_signal.mutate(|batches| {
+        // Process file chunks with progress tracking and live metrics updates
+        let result = process_file_chunks(
+            contents,
+            embedder,
+            |current, total, pct, tokens, elapsed_ms| {
+                // Use .write() directly for better reactivity from async contexts
+                let mut batches = batches_signal.write();
                 batches[batch_idx].files[file_idx].status =
                     FileStatus::Processing { current, total };
                 batches[batch_idx].files[file_idx].progress_pct = pct;
-            });
-        })
+                // Update metrics with partial results as chunks complete
+                batches[batch_idx].files[file_idx].metrics = Some(FileMetrics {
+                    tokens_processed: tokens,
+                    chunks_embedded: current,
+                    chunks_total: total,
+                    elapsed_ms,
+                });
+                // Write guard is dropped here, triggering reactivity
+            },
+        )
         .await;
 
         match result {
@@ -86,11 +92,12 @@ pub async fn process_batch<S: StorageBackend>(
                 total_tokens += chunk_result.metrics.tokens_processed;
 
                 // Update file status to completed
-                batches_signal.mutate(|batches| {
+                {
+                    let mut batches = batches_signal.write();
                     batches[batch_idx].files[file_idx].status = FileStatus::Completed;
                     batches[batch_idx].files[file_idx].progress_pct = 100.0;
                     batches[batch_idx].files[file_idx].metrics = Some(chunk_result.metrics);
-                });
+                }
 
                 // Index chunks in search engine
                 if let Some(engine_lock) = &engine {
@@ -100,19 +107,16 @@ pub async fn process_batch<S: StorageBackend>(
                         }
                         Err(e) => {
                             error!("❌ Failed to index chunks: {}", e);
-                            batches_signal.mutate(|batches| {
-                                batches[batch_idx].files[file_idx].status =
-                                    FileStatus::Failed(format!("Indexing failed: {}", e));
-                            });
+                            batches_signal.write()[batch_idx].files[file_idx].status =
+                                FileStatus::Failed(format!("Indexing failed: {}", e));
                         }
                     }
                 }
             }
             Err(e) => {
                 error!("❌ Failed to process file {}: {}", file_name, e);
-                batches_signal.mutate(|batches| {
-                    batches[batch_idx].files[file_idx].status = FileStatus::Failed(e.to_string());
-                });
+                batches_signal.write()[batch_idx].files[file_idx].status =
+                    FileStatus::Failed(e.to_string());
                 continue;
             }
         }
@@ -150,10 +154,11 @@ pub async fn process_batch<S: StorageBackend>(
     };
 
     // Mark batch as completed
-    batches_signal.mutate(|batches| {
+    {
+        let mut batches = batches_signal.write();
         batches[batch_idx].status = BatchStatus::Completed;
         batches[batch_idx].metrics = Some(metrics.clone());
-    });
+    }
 
     info!(
         "✅ Batch complete: {} files, {} chunks, {} tokens in {:.1}s",

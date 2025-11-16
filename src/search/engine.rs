@@ -173,21 +173,11 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
         // Get vector search results (semantic similarity)
         let vector_results = self.vector_engine.search(query_embedding, k * 2);
-        info!("📊 Vector search (semantic) results:");
-        for (i, (doc_id, score)) in vector_results.iter().take(k).enumerate() {
-            if let Some(doc) = self.documents.get(doc_id) {
-                info!("  {}. [Vector: {:.4}] {}", i + 1, score, doc.text);
-            }
-        }
+        info!("📊 Vector search found {} results", vector_results.len());
 
         // Get keyword search results (BM25)
         let keyword_results = self.keyword_engine.search(query_text, k * 2);
-        info!("📊 Keyword search (BM25) results:");
-        for (i, (doc_id, score)) in keyword_results.iter().take(k).enumerate() {
-            if let Some(doc) = self.documents.get(doc_id) {
-                info!("  {}. [BM25: {:.4}] {}", i + 1, score, doc.text);
-            }
-        }
+        info!("📊 Keyword search found {} results", keyword_results.len());
 
         // Fuse results using Reciprocal Rank Fusion (RRF)
         info!("🔀 Applying Reciprocal Rank Fusion (RRF)...");

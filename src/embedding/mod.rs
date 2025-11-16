@@ -62,6 +62,7 @@ pub use config::{JinaBertConfig, ModelConfig};
 pub use model::{Embedder, JinaBertEmbedder};
 
 use crate::error::EmbeddingError;
+use crate::platform::run_blocking;
 use dioxus::logger::tracing::{debug, info, warn};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
 use std::sync::Arc;
@@ -127,21 +128,7 @@ pub async fn get_or_load_model() -> Result<Arc<dyn Embedder>, EmbeddingError> {
     let config = JinaBertConfig::default();
 
     // Model creation is CPU-intensive - run in blocking thread pool on desktop
-    let model = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            tokio::task::spawn_blocking(move || {
-                model::get_or_load_model(model_bytes, 30528, config)
-            })
-            .await
-            .map_err(|e| EmbeddingError::ModelUnavailable(format!("Task join failed: {}", e)))??
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            model::get_or_load_model(model_bytes, 30528, config)?
-        }
-    };
+    let model = run_blocking(move || model::get_or_load_model(model_bytes, 30528, config)).await?;
 
     Ok(model)
 }
@@ -217,22 +204,8 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
 
     // On desktop: Use spawn_blocking to prevent UI freezing
     // On WASM: Run directly (web worker handles parallelism)
-    let embedding = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let model_clone = model.clone();
-            tokio::task::spawn_blocking(move || model_clone.embed_tokens(token_ids))
-                .await
-                .map_err(|e| {
-                    EmbeddingError::InferenceFailed(format!("Task join failed: {}", e))
-                })??
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            model.embed_tokens(token_ids)?
-        }
-    };
+    let model_clone = model.clone();
+    let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
 
     debug!("✓ Generated {}-dimensional embedding", embedding.len());
 
@@ -240,6 +213,54 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
         token_count,
         embedding,
     })
+}
+
+/// Process a single text chunk: tokenize, validate, and embed.
+///
+/// # Arguments
+///
+/// * `chunk` - Text chunk to process
+/// * `model` - Embedding model
+/// * `tokenizer` - Tokenizer instance
+/// * `max_positions` - Maximum token count allowed
+///
+/// # Returns
+///
+/// `ChunkEmbeddingResult` on success, or `None` if chunk exceeds token limits.
+async fn process_single_chunk(
+    chunk: chunking::TextChunk,
+    model: &Arc<dyn Embedder>,
+    tokenizer: &tokenizers::Tokenizer,
+    max_positions: usize,
+) -> Result<Option<ChunkEmbeddingResult>, EmbeddingError> {
+    // Tokenize this chunk
+    let token_ids = tokenizer::tokenize_text_async(tokenizer, &chunk.text).await?;
+    let token_count = token_ids.len();
+
+    // Check if chunk exceeds model limits (shouldn't happen but handle edge case)
+    if token_count > max_positions {
+        warn!(
+            "⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
+            chunk.index, max_positions, token_count
+        );
+        return Ok(None);
+    }
+
+    debug!(
+        "🚀 Embedding chunk {} ({} tokens)",
+        chunk.index, token_count
+    );
+
+    // Embed this chunk with platform-specific threading
+    let model_clone = model.clone();
+    let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
+
+    Ok(Some(ChunkEmbeddingResult {
+        chunk_index: chunk.index,
+        token_count,
+        text: chunk.text,
+        embedding,
+    }))
 }
 
 /// Embeds long text by splitting into chunks and processing each.
@@ -303,63 +324,25 @@ pub async fn embed_text_chunks(
         effective_chunk
     );
 
-    // Tokenize and embed each chunk
+    // Process each chunk
     let total_chunks = text_chunks.len();
     let mut results = Vec::with_capacity(total_chunks);
 
-    for chunk in text_chunks {
-        // Tokenize this chunk
-        let token_ids = tokenizer::tokenize_text_async(tokenizer, &chunk.text).await?;
-        let token_count = token_ids.len();
-
-        // Check if chunk exceeds model limits (shouldn't happen but handle edge case)
-        if token_count > max_positions {
-            warn!(
-                "⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
-                chunk.index, max_positions, token_count
-            );
-            continue;
+    for (idx, chunk) in text_chunks.into_iter().enumerate() {
+        // Process this chunk (tokenize, validate, embed)
+        if let Some(result) = process_single_chunk(chunk, &model, tokenizer, max_positions).await? {
+            results.push(result);
         }
 
-        debug!(
-            "🚀 Embedding chunk {} ({} tokens)",
-            chunk.index, token_count
-        );
-
-        // Embed this chunk with platform-specific threading
-        let embedding = {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let model_clone = model.clone();
-                tokio::task::spawn_blocking(move || model_clone.embed_tokens(token_ids))
-                    .await
-                    .map_err(|e| {
-                        EmbeddingError::InferenceFailed(format!("Task join failed: {}", e))
-                    })??
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            {
-                model.embed_tokens(token_ids)?
-            }
-        };
-
-        results.push(ChunkEmbeddingResult {
-            chunk_index: chunk.index,
-            token_count,
-            text: chunk.text,
-            embedding,
-        });
-
-        // Yield to event loop between chunks
+        // Yield to event loop between chunks to maintain responsiveness
         #[cfg(target_arch = "wasm32")]
-        if chunk.index < total_chunks - 1 {
+        if idx < total_chunks - 1 {
             use gloo_timers::future::TimeoutFuture;
             TimeoutFuture::new(0).await;
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        if chunk.index < total_chunks - 1 {
+        if idx < total_chunks - 1 {
             tokio::task::yield_now().await;
         }
     }
