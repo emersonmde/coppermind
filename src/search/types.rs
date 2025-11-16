@@ -1,37 +1,16 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::{SystemTime, UNIX_EPOCH};
-
 /// Returns the current Unix timestamp (seconds since UNIX_EPOCH).
 ///
-/// Platform-specific implementation:
-/// - **Web**: Uses `instant::SystemTime` (WASM-compatible)
-/// - **Desktop**: Uses `std::time::SystemTime`
+/// Uses `instant::SystemTime` which provides cross-platform timing
+/// (works on both WASM and native platforms).
 ///
 /// If the system time is before UNIX_EPOCH (extremely unlikely),
 /// returns 0 instead of panicking.
-#[cfg(target_arch = "wasm32")]
 pub fn get_current_timestamp() -> u64 {
     instant::SystemTime::now()
         .duration_since(instant::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Returns the current Unix timestamp (seconds since UNIX_EPOCH).
-///
-/// Platform-specific implementation:
-/// - **Web**: Uses `instant::SystemTime` (WASM-compatible)
-/// - **Desktop**: Uses `std::time::SystemTime`
-///
-/// If the system time is before UNIX_EPOCH (extremely unlikely),
-/// returns 0 instead of panicking.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn get_current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }

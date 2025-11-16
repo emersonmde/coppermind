@@ -27,6 +27,7 @@
 
 pub mod fixed;
 pub mod sentence;
+pub mod text_splitter_adapter;
 
 use crate::error::EmbeddingError;
 
