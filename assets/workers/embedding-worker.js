@@ -95,6 +95,17 @@ async function boot() {
         console.log("[EmbeddingWorker] Initializing WASM module...");
         await module.default(absoluteWasmUrl);
 
+        // Initialize Rayon thread pool for parallel inference (3x speedup)
+        // Only available when built with wasm-threading feature + nightly Rust
+        if (typeof module.init_thread_pool === "function") {
+            const threadCount = navigator.hardwareConcurrency || 4;
+            console.log(`[EmbeddingWorker] Initializing Rayon thread pool with ${threadCount} threads...`);
+            await module.init_thread_pool(threadCount);
+            console.log("[EmbeddingWorker] Rayon thread pool initialized successfully");
+        } else {
+            console.log("[EmbeddingWorker] Running single-threaded (wasm-threading feature not enabled)");
+        }
+
         if (typeof module.start_embedding_worker !== "function") {
             throw new Error("start_embedding_worker export not found");
         }

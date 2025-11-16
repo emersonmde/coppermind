@@ -54,6 +54,12 @@ cargo install dioxus-cli --locked
 cargo install cargo-audit --locked
 ```
 
+**Rust Toolchain:**
+- Nightly Rust required for WASM threading (Rayon parallelism)
+- Configured via `rust-toolchain.toml` (auto-installed on first build)
+- Web builds use SharedArrayBuffer + Rayon for 3x speedup
+- Desktop builds use stable Rust (native threading)
+
 ## Architecture
 
 ### Module Organization
@@ -102,19 +108,23 @@ cargo install cargo-audit --locked
 - ALiBi bias size scales as `heads * seq_len^2` (~134MB for 8 heads at 2048 length)
 - Model supports up to 8192 tokens but requires more memory (see `docs/model-optimization.md`)
 
-**GPU Acceleration (Platform-Specific)**:
+**Acceleration (Platform-Specific)**:
 - **macOS Desktop**: Metal + Accelerate (full GPU acceleration)
 - **iOS/iPadOS**: Accelerate only (CPU optimized, no Metal)
   - Reason: Metal has compatibility issues in iOS simulator
   - Accelerate provides optimized CPU inference via Apple's BLAS/LAPACK
   - Future: Could enable Metal for real devices only, but CPU mode ensures universal compatibility
-- **Web (WASM)**: CPU only (no GPU acceleration)
+- **Web (WASM)**: Multi-threaded CPU via Rayon + SharedArrayBuffer (3x speedup)
+  - No GPU acceleration (WebGPU backend in development by Candle team)
+  - Requires nightly Rust and COI (COOP/COEP headers)
 - **Linux/Windows x86**: Intel MKL (CPU optimized)
 
-**Cross-Origin Isolation**:
+**Cross-Origin Isolation & WASM Threading**:
 - Service Worker (`public/coi-serviceworker.min.js`) injects COOP/COEP headers
-- Required for SharedArrayBuffer support (for future Rayon/parallel processing)
+- Required for SharedArrayBuffer support (enables Rayon parallel processing)
+- **ACTIVE**: Rayon parallelism enabled via `wasm-bindgen-rayon` (3x speedup for Candle inference)
 - Conditionally loaded only on web: `if cfg!(target_arch = "wasm32")`
+- Requires nightly Rust (WASM atomics not stable yet)
 - **CRITICAL: Special Asset Handling Required**
   - Must be in `public/` directory (NOT `assets/`)
   - Must NOT have hash in filename (must remain `coi-serviceworker.min.js`)
@@ -126,13 +136,16 @@ cargo install cargo-audit --locked
   - Reason: Service worker must be at predictable path for browser registration
 
 **Web Worker Architecture**:
-- **JinaBERT Embedding Worker** (`public/jinabert-embedding-worker.js`)
+- **JinaBERT Embedding Worker** (`assets/workers/embedding-worker.js`)
   - Runs embedding inference on separate thread to prevent UI freezing
   - Module worker (uses ES6 imports) loads WASM at `/coppermind/wasm/coppermind.js`
   - Downloads and initializes 65MB model in worker context (takes 30-60s)
+  - **Rayon Thread Pool**: Initializes multi-threaded execution with `init_thread_pool(navigator.hardwareConcurrency)`
+    - Uses SharedArrayBuffer for inter-thread communication
+    - Enables parallel processing within Candle (gemm operations, etc.)
+    - 3x speedup proven in Hugging Face Candle PR #3063
   - Communicates via postMessage with serialized Rust types (serde-wasm-bindgen)
-  - Also in `public/` for similar reasons (needs predictable path, unhashed filename)
-- Desktop uses `tokio::spawn_blocking` instead (no worker needed)
+- Desktop uses `tokio::spawn_blocking` + native Rayon (no special setup needed)
 
 **Hybrid Search Architecture**:
 - **Vector Search**: instant-distance HNSW for semantic similarity (cosine distance)

@@ -7,11 +7,11 @@
 //!
 //! # Architecture
 //!
-//! - [`types`]: Core types (DocId, Document, SearchResult, SearchError)
-//! - [`engine`]: HybridSearchEngine orchestrating vector + keyword search
-//! - [`vector`]: HNSW-based semantic similarity search
-//! - [`keyword`]: BM25 full-text keyword search
-//! - [`fusion`]: Reciprocal Rank Fusion algorithm for merging results
+//! - `types`: Core types (DocId, Document, SearchResult, SearchError)
+//! - `engine`: HybridSearchEngine orchestrating vector + keyword search
+//! - `vector`: HNSW-based semantic similarity search
+//! - `keyword`: BM25 full-text keyword search
+//! - `fusion`: Reciprocal Rank Fusion algorithm for merging results
 //!
 //! # Usage
 //!

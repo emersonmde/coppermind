@@ -4,15 +4,15 @@
 //!
 //! # New Component Architecture (UI Migration)
 //!
-//! - [`app_shell`]: AppBar, StatusStrip, MetricsPane, Footer
-//! - [`search`]: SearchView, SearchCard, ResultCard, EmptyState (Phase 2+)
-//! - [`index`]: IndexView, UploadCard, FileRow, BatchCard (Phase 3+)
+//! - `app_shell`: AppBar, StatusStrip, MetricsPane, Footer
+//! - `search`: SearchView, SearchCard, ResultCard, EmptyState (Phase 2+)
+//! - `index`: IndexView, UploadCard, FileRow, BatchCard (Phase 3+)
 //!
 //! # Legacy Components (to be removed in Phase 6)
 //!
-//! - [`Hero`]: Old landing section
-//! - [`FileUpload`]: Old file upload interface
-//! - [`Search`]: Old search interface
+//! - Old landing section (removed)
+//! - Old file upload interface (removed)
+//! - Old search interface (removed)
 //! - [`DeveloperTesting`]: Developer tools
 //! - `file_processing`: Utilities (will be kept)
 //!

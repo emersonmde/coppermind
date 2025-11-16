@@ -63,6 +63,12 @@ instant = { version = "0.1", features = ["wasm-bindgen"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 
+# WASM threading support (enables 3x speedup for Candle inference)
+# OPTIONAL: Requires nightly Rust - incompatible with dioxus-cli (dx serve)
+# Enable with: cargo build --target wasm32-unknown-unknown --features wasm-threading
+wasm-bindgen-rayon = { version = "1.2", optional = true }
+rayon = { version = "1.11", features = ["web_spin_lock"], optional = true }
+
 # OPFS storage features (web-only)
 web-sys = { version = "0.3", features = [
     "FileSystemDirectoryHandle",
@@ -120,6 +126,8 @@ default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+# WASM threading for 3x Candle speedup (requires nightly Rust, breaks dx serve)
+wasm-threading = ["wasm-bindgen-rayon", "rayon"]
 # Optional CUDA support for NVIDIA GPUs (requires CUDA toolkit installed)
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 # Enhanced CUDA with cuDNN for deep learning (requires CUDA + cuDNN installed)

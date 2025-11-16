@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-protoc@v3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
           targets: wasm32-unknown-unknown
@@ -79,7 +79,7 @@ jobs:
     needs: [ test, fmt, clippy, cargo-audit ]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -87,6 +87,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: dioxus-cli@0.7
+      - name: Update dioxus-cli to nightly
+        run: dx self-update --nightly --force
       - name: Download model assets
         run: ./download-models.sh
       - name: Build Dioxus web assets
@@ -110,6 +112,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: dioxus-cli@0.7
+      - name: Update dioxus-cli to nightly
+        run: dx self-update --nightly --force
       - name: Download model assets
         run: ./download-models.sh
       - name: Build macOS DMG bundle

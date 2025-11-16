@@ -39,9 +39,12 @@ if ! command -v dx >/dev/null 2>&1; then
 🚫 Missing required tooling: dioxus-cli (dx).
 Install it once with:
   cargo install dioxus-cli --locked
+  dx self-update --nightly --force
 EOF
   exit 1
 fi
 
+echo "→ Running dx bundle --release (WASM build)"
+dx bundle --release
 
 echo "✓ All pre-commit checks passed"

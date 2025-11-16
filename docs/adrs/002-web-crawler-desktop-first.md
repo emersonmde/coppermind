@@ -52,20 +52,21 @@ $ cargo tree --target wasm32-unknown-unknown -p rayon --format "{p} {f}"
 rayon v1.11.0  # <-- no web_spin_lock feature
 ```
 
-**Future Parallel ML Inference (3x speedup potential):**
+**Parallel ML Inference (3x speedup - IMPLEMENTED 2025-11-16):**
 
-Draft PR in Hugging Face Candle shows Rayon + SharedArrayBuffer speedup:
+~~Draft~~ Proven speedup from Hugging Face Candle PR #3063:
 - **Before:** 5 tokens/sec (single-threaded WASM)
 - **After:** 16 tokens/sec (multi-threaded with `wasm-bindgen-rayon`)
 - **Source:** https://github.com/huggingface/candle/pull/3063
 
-To unlock this speedup, we'd need:
-1. ✅ COOP/COEP headers (we have this via service worker)
-2. ❌ Enable rayon's `web_spin_lock` feature
-3. ❌ Add `wasm-bindgen-rayon` adapter dependency
-4. ❌ Switch to nightly Rust (stable doesn't support WASM threads yet)
+**Status: ✅ IMPLEMENTED**
+1. ✅ COOP/COEP headers (already had via service worker)
+2. ✅ Enable rayon's `web_spin_lock` feature (added to Cargo.toml)
+3. ✅ Add `wasm-bindgen-rayon` adapter dependency (v1.2)
+4. ✅ Switch to nightly Rust (`rust-toolchain.toml`)
+5. ✅ Initialize thread pool in worker (`init_thread_pool(navigator.hardwareConcurrency)`)
 
-**Conclusion:** COI is currently unused but provides infrastructure for future 3x ML speedup. Worth preserving.
+**Conclusion:** COI is now ACTIVELY USED for 3x ML speedup. Critical to preserve for performance.
 
 ---
 

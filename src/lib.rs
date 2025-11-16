@@ -39,3 +39,8 @@ pub mod search;
 pub mod storage;
 pub mod utils;
 pub mod workers;
+
+// Export Rayon thread pool initialization for WASM parallelism
+// Only available when wasm-threading feature is enabled
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threading"))]
+pub use wasm_bindgen_rayon::init_thread_pool;
