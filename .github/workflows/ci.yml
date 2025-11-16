@@ -98,6 +98,29 @@ jobs:
           # Dioxus web output location (0.7 default)
           path: target/dx/coppermind/release/web/public
 
+  macos-bundle:
+    name: macOS Bundle
+    runs-on: macos-latest
+    needs: [ test, fmt, clippy, cargo-audit ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install dioxus-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7
+      - name: Download model assets
+        run: ./download-models.sh
+      - name: Build macOS DMG bundle
+        run: dx bundle --release --platform desktop
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coppermind-macos
+          path: target/dx/coppermind/bundle/macos/bundle/dmg/*.dmg
+          if-no-files-found: error
+
   deploy:
     name: Deploy to GitHub Pages
     needs: wasm-build

@@ -3,6 +3,10 @@
 # Source assets are in assets/, copied to public/assets/ for builds
 asset_dir = "public"
 
+[bundle]
+identifier = "dev.errorsignal"
+publisher = "Matthew Emerson"
+
 [web.watcher]
 # When watcher is triggered, regenerate the `index.html`
 reload_html = true
