@@ -51,7 +51,64 @@ Successfully implemented hybrid search combining vector similarity (instant-dist
 
 ### 🚀 High Priority: Novel & Feasible
 
-#### 1. Candle WebGPU Backend for Browser ML
+#### 1. Enable Rayon WASM Parallelism for Candle (3x Speedup)
+**Status:** Ready to implement (COI infrastructure already in place)
+
+**Description:**
+- We already have Cross-Origin Isolation enabled (COOP/COEP headers via service worker)
+- Candle includes Rayon for CPU parallelism, but it's currently single-threaded on WASM
+- Adding `wasm-bindgen-rayon` adapter unlocks SharedArrayBuffer parallelism
+- **Proven 3x speedup** in Candle PR #3063: 5 → 16 tokens/sec (Phi-1.5 model)
+
+**Current Status:**
+```bash
+# Rayon is in WASM dependency tree but NOT parallelizing
+$ cargo tree --target wasm32-unknown-unknown -p rayon
+rayon v1.11.0
+├── candle-core v0.8.4  # ← Already using Rayon
+├── instant-distance v0.6.1  # ← HNSW also uses Rayon
+└── ...
+
+# Missing: web_spin_lock feature + wasm-bindgen-rayon adapter
+```
+
+**Requirements:**
+1. ✅ COOP/COEP headers (already have via `coi-serviceworker.min.js`)
+2. ❌ Enable rayon's `web_spin_lock` feature
+3. ❌ Add `wasm-bindgen-rayon` dependency
+4. ❌ Switch to nightly Rust (WASM threads not stable yet)
+
+**Implementation Steps:**
+1. Add to `Cargo.toml`:
+   ```toml
+   [target.'cfg(target_arch = "wasm32")'.dependencies]
+   wasm-bindgen-rayon = "1.2"
+   rayon = { version = "1.11", features = ["web_spin_lock"] }
+   ```
+2. Initialize rayon in worker context (see Candle PR for pattern)
+3. Switch to nightly Rust: `rustup override set nightly`
+4. Test embedding throughput before/after
+5. Document nightly requirement in README
+
+**Expected Outcome:**
+- 3x faster JinaBERT inference on web (proven in similar Candle model)
+- Embedding 100 chunks: ~10s → ~3s
+- Significantly better UX for large file indexing
+- Desktop remains unchanged (already uses native threads)
+
+**Trade-offs:**
+- Requires nightly Rust (not stable yet)
+- Increases WASM binary size slightly
+- More complex build setup
+
+**References:**
+- [Candle Rayon WASM PR #3063](https://github.com/huggingface/candle/pull/3063) (3x speedup demo)
+- [wasm-bindgen-rayon](https://github.com/GoogleChromeLabs/wasm-bindgen-rayon)
+- [ADR 002](adrs/002-web-crawler-desktop-first.md) (documents current COI setup)
+
+---
+
+#### 2. Candle WebGPU Backend for Browser ML
 **Status:** In progress by Candle team
 
 **Description:**
