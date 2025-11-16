@@ -19,6 +19,8 @@
     --cm-status-ok-border: #44ffb2;
     --cm-status-warn-bg: rgba(255,154,74,0.1);
     --cm-status-warn-border: #ff9a4a;
+    --cm-status-error-bg: rgba(255,77,109,0.1);
+    --cm-status-error-border: #ff4d6d;
 
     --cm-metric-positive: #44ffb2;
     --cm-metric-neutral: #6b7699;
@@ -166,6 +168,15 @@ body.cm-body {
 
 .cm-status-dot--warn {
     background: var(--cm-status-warn-border);
+}
+
+.cm-status-pill--error {
+    background: var(--cm-status-error-bg);
+    border-color: var(--cm-status-error-border);
+}
+
+.cm-status-dot--error {
+    background: var(--cm-status-error-border);
 }
 
 .cm-status-pill--clickable {
@@ -408,6 +419,7 @@ body.cm-body {
     border: 1px solid var(--cm-border-subtle);
     box-shadow: var(--cm-glow-soft);
     width: 100%;
+    min-width: 700px;
 }
 
 .cm-search-card-top {
@@ -497,6 +509,7 @@ body.cm-body {
 .cm-results-section {
     margin-top: 1.25rem;
     width: 100%;
+    min-width: 700px;
 }
 
 .cm-results-header {
@@ -720,6 +733,7 @@ body.cm-body {
     border: 1px solid var(--cm-border-subtle);
     margin: 1.5rem 0 1.2rem;
     width: 100%;
+    min-width: 700px;
 }
 
 .cm-upload-tabs {
@@ -779,6 +793,7 @@ body.cm-body {
 .cm-indexing-section {
     margin-bottom: 1.5rem;
     width: 100%;
+    min-width: 700px;
 }
 
 .cm-section-header {
@@ -820,11 +835,17 @@ body.cm-body {
 
 .cm-file-name {
     font-size: var(--cm-font-size-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .cm-file-sub {
     font-size: var(--cm-font-size-xs);
     color: var(--cm-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .cm-file-progress {
@@ -874,6 +895,9 @@ body.cm-body {
     border-radius: var(--cm-radius-card);
     border: 1px solid var(--cm-border-subtle);
     background: var(--cm-bg-elevated-soft);
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
 }
 
 .cm-batch-header {
@@ -933,6 +957,9 @@ body.cm-body {
     font-size: var(--cm-font-size-xs);
     color: var(--cm-text-secondary);
     margin-top: 0.4rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Batch status variants */
@@ -969,6 +996,8 @@ body.cm-body {
     margin-top: 0.75rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--cm-border-subtle);
+    width: 100%;
+    overflow: hidden;
 }
 
 /* Tag variants for batch status */

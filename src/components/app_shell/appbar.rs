@@ -54,6 +54,41 @@ pub fn AppBar(
     #[cfg(not(target_arch = "wasm32"))]
     let worker_pill = rsx! { Fragment {} };
 
+    // COI (Cross-Origin Isolation) status pill (web only)
+    #[cfg(target_arch = "wasm32")]
+    let coi_pill = {
+        use js_sys::Reflect;
+        use wasm_bindgen::JsValue;
+        use web_sys::window;
+
+        let is_isolated = window()
+            .and_then(|w| {
+                Reflect::get(&w, &JsValue::from_str("crossOriginIsolated"))
+                    .ok()
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(false);
+
+        if is_isolated {
+            rsx! {
+                span { class: "cm-status-pill cm-status-pill--ok",
+                    span { class: "cm-status-dot cm-status-dot--ok" }
+                    "Isolated"
+                }
+            }
+        } else {
+            rsx! {
+                span { class: "cm-status-pill cm-status-pill--error",
+                    span { class: "cm-status-dot cm-status-dot--error" }
+                    "Not isolated"
+                }
+            }
+        }
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let coi_pill = rsx! { Fragment {} };
+
     // Index status pill (clickable to toggle metrics)
     let index_pill = {
         let status = engine_status.read().clone();
@@ -138,6 +173,7 @@ pub fn AppBar(
             }
             div { class: "cm-appbar-right",
                 {worker_pill}
+                {coi_pill}
                 {index_pill}
             }
         }

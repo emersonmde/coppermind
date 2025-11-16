@@ -240,7 +240,7 @@ info!("Message");  // → Browser console on web, stdout on desktop
 if cfg!(target_arch = "wasm32") {
     document::Stylesheet { href: MAIN_CSS }  // Web: use asset!
 } else {
-    style { {include_str!("../assets/main.css")} }  // Desktop: embed directly
+    style { {include_str!("../assets/coppermind.css")} }  // Desktop: embed directly
 }
 
 // 6. Conditional code blocks in rsx!

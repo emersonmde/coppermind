@@ -33,7 +33,7 @@
 //!
 //! ## Web (WASM)
 //! - CPU-only inference (WebGPU not yet supported in Candle)
-//! - Memory-constrained (512MB WASM limit)
+//! - Memory-constrained (4GB WASM limit)
 //! - Direct async/await (no spawn_blocking needed)
 //!
 //! ## Desktop
