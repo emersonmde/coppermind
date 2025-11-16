@@ -20,7 +20,7 @@ fn main() {
     dioxus::logger::init(dioxus::logger::tracing::Level::INFO).expect("logger failed to init");
 
     // Platform-specific launch configuration
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "desktop")]
     {
         use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 
@@ -39,7 +39,12 @@ fn main() {
             .launch(App);
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(feature = "mobile")]
+    {
+        dioxus::LaunchBuilder::mobile().launch(App);
+    }
+
+    #[cfg(feature = "web")]
     {
         dioxus::launch(App);
     }

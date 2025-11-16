@@ -57,7 +57,7 @@ cargo install cargo-audit --locked
 ## Architecture
 
 ### Module Organization
-- **main.rs**: Entry point, platform-specific logging and CSS loading, mounts root App component
+- **main.rs**: Entry point, platform-specific launch configuration (desktop/mobile/web), logging, and CSS loading
 - **error.rs**: Error types (`EmbeddingError`, `FileProcessingError`) with proper Display/Error implementations
 - **components/**: UI components and file processing utilities
   - **mod.rs**: App component, search engine context providers
@@ -101,6 +101,15 @@ cargo install cargo-audit --locked
 - JinaBERT `max_position_embeddings` set to 2048 tokens (default config)
 - ALiBi bias size scales as `heads * seq_len^2` (~134MB for 8 heads at 2048 length)
 - Model supports up to 8192 tokens but requires more memory (see `docs/model-optimization.md`)
+
+**GPU Acceleration (Platform-Specific)**:
+- **macOS Desktop**: Metal + Accelerate (full GPU acceleration)
+- **iOS/iPadOS**: Accelerate only (CPU optimized, no Metal)
+  - Reason: Metal has compatibility issues in iOS simulator
+  - Accelerate provides optimized CPU inference via Apple's BLAS/LAPACK
+  - Future: Could enable Metal for real devices only, but CPU mode ensures universal compatibility
+- **Web (WASM)**: CPU only (no GPU acceleration)
+- **Linux/Windows x86**: Intel MKL (CPU optimized)
 
 **Cross-Origin Isolation**:
 - Service Worker (`public/coi-serviceworker.min.js`) injects COOP/COEP headers
@@ -199,25 +208,42 @@ js-sys = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
-// 2. Platform-specific imports
+// 2. Platform-specific launch (IMPORTANT: use feature flags, NOT target_arch)
+// Use feature flags to distinguish desktop vs mobile - both are native but have different APIs
+#[cfg(feature = "desktop")]
+{
+    dioxus::LaunchBuilder::desktop().with_cfg(config).launch(App);
+}
+
+#[cfg(feature = "mobile")]
+{
+    dioxus::LaunchBuilder::mobile().launch(App);
+}
+
+#[cfg(feature = "web")]
+{
+    dioxus::launch(App);
+}
+
+// 3. Platform-specific imports
 #[cfg(target_arch = "wasm32")]
 use OpfsStorage;  // Web-specific
 
 #[cfg(not(target_arch = "wasm32"))]
 use NativeStorage;  // Desktop/mobile
 
-// 3. Logging with dioxus::logger (works on all platforms)
+// 4. Logging with dioxus::logger (works on all platforms)
 use dioxus::logger::tracing::{info, error};
 info!("Message");  // → Browser console on web, stdout on desktop
 
-// 4. CSS loading (asset! macro has issues on desktop)
+// 5. CSS loading (asset! macro has issues on desktop)
 if cfg!(target_arch = "wasm32") {
     document::Stylesheet { href: MAIN_CSS }  // Web: use asset!
 } else {
     style { {include_str!("../assets/main.css")} }  // Desktop: embed directly
 }
 
-// 5. Conditional code blocks in rsx!
+// 6. Conditional code blocks in rsx!
 if cfg!(target_arch = "wasm32") {
     document::Script { src: "/coi-serviceworker.min.js" }  // Web only
 }
@@ -228,7 +254,7 @@ if cfg!(target_arch = "wasm32") {
 **Every milestone MUST:**
 1. **Pass all quality checks:** Run `.githooks/pre-commit` successfully
    - This covers: fmt, clippy, tests, cargo audit, web build
-2. **Work on both platforms:** Test with both `dx serve` and `dx serve --platform desktop`
+2. **Work on all platforms:** Test with `dx serve` (web), `dx serve --platform desktop`, and `dx build --platform ios`
 3. **Update documentation:** After completing each milestone, you MUST:
    - Update `CLAUDE.md` if architecture or module structure changed
    - Update relevant `docs/*.md` files with new patterns/implementations
