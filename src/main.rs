@@ -62,12 +62,7 @@ fn App() -> Element {
             document::Script {
                 r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
             }
-            // In dev mode, public/ files are served at /assets/, but in release they're at root
-            if cfg!(debug_assertions) {
-                document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
-            } else {
-                document::Script { src: "/coppermind/coi-serviceworker.min.js" }
-            }
+            document::Script { src: "/coppermind/coi-serviceworker.min.js" }
         }
 
         body { class: "cm-body",

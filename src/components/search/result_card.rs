@@ -13,6 +13,14 @@ pub fn ResultCard(
 
     // Format scores for display
     let fusion_score_fmt = format!("{:.4}", result.score);
+    let vector_score_fmt = result
+        .vector_score
+        .map(|s| format!("{:.4}", s))
+        .unwrap_or_else(|| "N/A".to_string());
+    let bm25_score_fmt = result
+        .keyword_score
+        .map(|s| format!("{:.4}", s))
+        .unwrap_or_else(|| "N/A".to_string());
 
     // Calculate percentage bars for detail view
     let vector_pct = result.vector_score.map(|s| (s * 100.0) as u32).unwrap_or(0);
@@ -101,7 +109,10 @@ pub fn ResultCard(
                     div { class: "cm-detail-bars",
                         if let Some(_vec_score) = result.vector_score {
                             div { class: "cm-detail-bar",
-                                div { class: "cm-detail-bar-label", "Semantic vector" }
+                                div { class: "cm-detail-bar-label",
+                                    span { class: "cm-detail-bar-name", "HNSW" }
+                                    span { class: "cm-detail-bar-score", "{vector_score_fmt}" }
+                                }
                                 div { class: "cm-progress-bar cm-progress-bar--metric",
                                     span { style: "width: {vector_pct}%;" }
                                 }
@@ -109,7 +120,10 @@ pub fn ResultCard(
                         }
                         if let Some(_kw_score) = result.keyword_score {
                             div { class: "cm-detail-bar",
-                                div { class: "cm-detail-bar-label", "BM25" }
+                                div { class: "cm-detail-bar-label",
+                                    span { class: "cm-detail-bar-name", "BM25" }
+                                    span { class: "cm-detail-bar-score", "{bm25_score_fmt}" }
+                                }
                                 div { class: "cm-progress-bar cm-progress-bar--metric",
                                     span { style: "width: {bm25_pct}%;" }
                                 }

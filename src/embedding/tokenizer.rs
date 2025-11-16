@@ -13,6 +13,15 @@ use tokenizers::tokenizer::{Tokenizer, TruncationDirection, TruncationParams, Tr
 /// In a multi-model future, this may become a HashMap<ModelId, Tokenizer>.
 static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
 
+/// Returns cached tokenizer if already initialized.
+///
+/// # Returns
+///
+/// Some(tokenizer) if already initialized, None otherwise.
+pub fn get_cached_tokenizer() -> Option<&'static Tokenizer> {
+    TOKENIZER.get()
+}
+
 /// Ensures the tokenizer is initialized and returns a reference.
 ///
 /// Downloads and configures the tokenizer on first call, then caches it

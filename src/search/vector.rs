@@ -70,6 +70,12 @@ impl VectorSearchEngine {
     }
 
     /// Rebuild the HNSW index from all stored embeddings
+    ///
+    /// NOTE: This is CPU-intensive and rebuilds the entire graph from scratch.
+    /// instant-distance HNSW does not support incremental insertion.
+    /// Time complexity: O(n log n) where n is the number of documents.
+    ///
+    /// For large indexes (10k+ documents), this can take several minutes.
     pub fn rebuild_index(&mut self) {
         if self.embeddings.is_empty() {
             self.index = None;
@@ -83,8 +89,9 @@ impl VectorSearchEngine {
             .map(|(doc_id, embedding)| (EmbeddingPoint(embedding.clone()), *doc_id))
             .unzip();
 
-        // Build HNSW index
-        // Using default Builder parameters
+        // Build HNSW index (CPU-intensive for large datasets)
+        // instant-distance constructs the entire navigable small world graph
+        // Using default Builder parameters (M=12, ef_construction=100)
         let map = Builder::default().build(points, values);
 
         self.index = Some(map);

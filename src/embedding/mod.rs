@@ -62,7 +62,7 @@ pub use config::{JinaBertConfig, ModelConfig};
 pub use model::{Embedder, JinaBertEmbedder};
 
 use crate::error::EmbeddingError;
-use dioxus::logger::tracing::{info, warn};
+use dioxus::logger::tracing::{debug, info, warn};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
 use std::sync::Arc;
 
@@ -165,8 +165,13 @@ pub async fn get_or_load_model() -> Result<Arc<dyn Embedder>, EmbeddingError> {
 async fn ensure_tokenizer(
     max_positions: usize,
 ) -> Result<&'static tokenizers::Tokenizer, EmbeddingError> {
+    // Check cache first to avoid fetching 466KB asset on every call
+    if let Some(tokenizer) = tokenizer::get_cached_tokenizer() {
+        return Ok(tokenizer);
+    }
+
     let tokenizer_url = TOKENIZER_FILE.to_string();
-    info!("📚 Loading tokenizer from {}", tokenizer_url);
+    debug!("📚 Loading tokenizer from {}", tokenizer_url);
 
     let tokenizer_bytes = assets::fetch_asset_bytes(&tokenizer_url).await?;
     tokenizer::ensure_tokenizer(tokenizer_bytes, max_positions)
@@ -207,8 +212,8 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
     let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
     let token_count = token_ids.len();
 
-    info!("🧾 Tokenized into {} tokens", token_count);
-    info!("Generating embedding vector...");
+    debug!("🧾 Tokenized into {} tokens", token_count);
+    debug!("Generating embedding vector...");
 
     // On desktop: Use spawn_blocking to prevent UI freezing
     // On WASM: Run directly (web worker handles parallelism)
@@ -229,7 +234,7 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
         }
     };
 
-    info!("✓ Generated {}-dimensional embedding", embedding.len());
+    debug!("✓ Generated {}-dimensional embedding", embedding.len());
 
     Ok(EmbeddingComputation {
         token_count,
@@ -316,7 +321,7 @@ pub async fn embed_text_chunks(
             continue;
         }
 
-        info!(
+        debug!(
             "🚀 Embedding chunk {} ({} tokens)",
             chunk.index, token_count
         );

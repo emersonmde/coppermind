@@ -229,6 +229,45 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         self.documents.is_empty()
     }
 
+    /// Get detailed index metrics
+    ///
+    /// Returns (total_chunks, total_tokens, avg_tokens_per_chunk)
+    pub fn get_index_metrics(&self) -> (usize, usize, f64) {
+        let total_chunks = self.documents.len();
+
+        if total_chunks == 0 {
+            return (0, 0, 0.0);
+        }
+
+        // Count total tokens across all documents
+        // Approximate using whitespace tokenization (fast, good enough for metrics)
+        let total_tokens: usize = self
+            .documents
+            .values()
+            .map(|doc| doc.text.split_whitespace().count())
+            .sum();
+
+        let avg_tokens_per_chunk = if total_chunks > 0 {
+            total_tokens as f64 / total_chunks as f64
+        } else {
+            0.0
+        };
+
+        (total_chunks, total_tokens, avg_tokens_per_chunk)
+    }
+
+    /// Get vector index size (number of embeddings)
+    pub fn vector_index_len(&self) -> usize {
+        self.vector_engine.len()
+    }
+
+    /// Get keyword index size (number of documents in BM25)
+    /// Note: This returns the same count as len() since both indexes share documents
+    pub fn keyword_index_len(&self) -> usize {
+        // BM25 doesn't expose count, but it has the same documents
+        self.documents.len()
+    }
+
     /// Get a document by ID
     #[allow(dead_code)] // Public API
     pub fn get_document(&self, doc_id: &DocId) -> Option<&DocumentRecord> {

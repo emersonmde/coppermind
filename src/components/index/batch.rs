@@ -1,5 +1,13 @@
-use super::current_batch::FileInBatch;
-use super::file_row::FileStatus;
+use super::file_row::{FileMetrics, FileStatus};
+
+/// File being processed in a batch
+#[derive(Clone, PartialEq)]
+pub struct FileInBatch {
+    pub name: String,
+    pub status: FileStatus,
+    pub progress_pct: f64,
+    pub metrics: Option<FileMetrics>,
+}
 
 /// Status of a batch in the processing queue
 #[derive(Clone, PartialEq)]
@@ -57,7 +65,13 @@ impl Batch {
                     .iter()
                     .filter(|f| matches!(f.status, FileStatus::Completed))
                     .count();
-                format!("Processing file {}/{}", completed + 1, self.files.len())
+
+                // If all files are completed, we're in the index rebuild phase
+                if completed == self.files.len() {
+                    format!("Rebuilding index ({} files)...", self.files.len())
+                } else {
+                    format!("Processing file {}/{}", completed + 1, self.files.len())
+                }
             }
             BatchStatus::Completed => {
                 if let Some(metrics) = &self.metrics {

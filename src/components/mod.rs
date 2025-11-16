@@ -40,19 +40,15 @@ pub mod search; // Public for SearchView re-export
 
 // Legacy components (Phase 6: remove)
 mod file_processing;
-mod file_upload;
-pub mod hero; // Public for WorkerStatus context
-mod legacy_search;
 mod testing;
+pub mod worker; // Worker state management (web only)
 
 // Re-export new components
-pub use app_shell::{AppBar, Footer, MetricsPane, StatusStrip, View};
+pub use app_shell::{AppBar, Footer, MetricsPane, View};
 pub use index::{Batch, BatchMetrics, BatchStatus, FileInBatch, IndexView};
 pub use search::SearchView;
 
-// Re-export legacy components (Phase 6: remove these)
-pub use file_upload::FileUpload;
-pub use hero::Hero;
+// Re-export testing component
 pub use testing::DeveloperTesting;
 
 // Main app component that composes all sections
@@ -73,7 +69,7 @@ use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use crate::storage::OpfsStorage;
 #[cfg(target_arch = "wasm32")]
-use hero::provide_worker_state;
+use worker::provide_worker_state;
 #[cfg(target_arch = "wasm32")]
 type PlatformStorage = OpfsStorage;
 
@@ -88,9 +84,6 @@ type PlatformStorage = NativeStorage;
 // ============================================================================
 // File processing for indexing
 // ============================================================================
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::embedding::embed_text_chunks;
 
 use file_processing::{index_chunks, is_likely_binary};
 use index::file_row::{FileMetrics, FileStatus};
@@ -136,6 +129,148 @@ pub fn use_batches() -> Signal<Vec<Batch>> {
 /// Context provider for sending files to the processing coroutine
 pub fn use_processing_sender() -> Coroutine<ProcessingMessage> {
     use_context::<Coroutine<ProcessingMessage>>()
+}
+
+// ============================================================================
+// Engine metrics (aggregate statistics from all batches)
+// ============================================================================
+
+/// Aggregate engine statistics calculated from all completed batches
+#[derive(Clone, Default, PartialEq)]
+pub struct EngineMetrics {
+    /// Total number of documents indexed
+    pub total_docs: usize,
+    /// Total number of chunks created
+    pub total_chunks: usize,
+    /// Total number of tokens processed
+    pub total_tokens: usize,
+    /// Average tokens per chunk
+    pub avg_tokens_per_chunk: usize,
+}
+
+/// Live indexing metrics from currently active batch
+#[derive(Clone, Default, PartialEq)]
+pub struct LiveIndexingMetrics {
+    /// Tokens processed per second
+    pub tokens_per_sec: f64,
+    /// Chunks processed per second
+    pub chunks_per_sec: f64,
+    /// Average time per chunk in milliseconds
+    pub avg_chunk_time_ms: f64,
+    /// Whether these metrics are from an active batch (true) or last completed batch (false)
+    pub is_live: bool,
+}
+
+/// Calculate aggregate engine metrics from all completed batches
+pub fn calculate_engine_metrics(batches: &[Batch]) -> EngineMetrics {
+    let mut total_docs = 0;
+    let mut total_chunks = 0;
+    let mut total_tokens = 0;
+
+    for batch in batches {
+        if let Some(metrics) = &batch.metrics {
+            total_docs += metrics.file_count;
+            total_chunks += metrics.chunk_count;
+            total_tokens += metrics.token_count;
+        }
+    }
+
+    let avg_tokens_per_chunk = if total_chunks > 0 {
+        total_tokens / total_chunks
+    } else {
+        0
+    };
+
+    EngineMetrics {
+        total_docs,
+        total_chunks,
+        total_tokens,
+        avg_tokens_per_chunk,
+    }
+}
+
+/// Calculate live indexing metrics from currently processing batch or last completed batch
+pub fn calculate_live_metrics(batches: &[Batch]) -> Option<LiveIndexingMetrics> {
+    // First, try to find a batch that's currently processing
+    if let Some(processing_batch) = batches
+        .iter()
+        .find(|b| matches!(b.status, BatchStatus::Processing))
+    {
+        // Calculate from all files that have metrics (completed + currently processing)
+        let mut total_chunks = 0;
+        let mut total_tokens = 0;
+        let mut total_elapsed_ms = 0u64;
+
+        for file in &processing_batch.files {
+            // Include both completed files AND currently processing files with metrics
+            if let Some(metrics) = &file.metrics {
+                total_chunks += metrics.chunks_embedded;
+                total_tokens += metrics.tokens_processed;
+                total_elapsed_ms += metrics.elapsed_ms;
+            }
+        }
+
+        if total_chunks > 0 {
+            let elapsed_secs = total_elapsed_ms as f64 / 1000.0;
+            let tokens_per_sec = if elapsed_secs > 0.0 {
+                total_tokens as f64 / elapsed_secs
+            } else {
+                0.0
+            };
+            let chunks_per_sec = if elapsed_secs > 0.0 {
+                total_chunks as f64 / elapsed_secs
+            } else {
+                0.0
+            };
+            let avg_chunk_time_ms = if total_chunks > 0 {
+                total_elapsed_ms as f64 / total_chunks as f64
+            } else {
+                0.0
+            };
+
+            return Some(LiveIndexingMetrics {
+                tokens_per_sec,
+                chunks_per_sec,
+                avg_chunk_time_ms,
+                is_live: true,
+            });
+        }
+    }
+
+    // No active batch, find the most recently completed batch
+    let last_completed = batches
+        .iter()
+        .rev() // Reverse to get newest first
+        .find(|b| matches!(b.status, BatchStatus::Completed) && b.metrics.is_some())?;
+
+    // Calculate metrics from the batch metadata
+    if let Some(batch_metrics) = &last_completed.metrics {
+        let elapsed_secs = batch_metrics.duration_ms as f64 / 1000.0;
+        let tokens_per_sec = if elapsed_secs > 0.0 {
+            batch_metrics.token_count as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+        let chunks_per_sec = if elapsed_secs > 0.0 {
+            batch_metrics.chunk_count as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+        let avg_chunk_time_ms = if batch_metrics.chunk_count > 0 {
+            batch_metrics.duration_ms as f64 / batch_metrics.chunk_count as f64
+        } else {
+            0.0
+        };
+
+        return Some(LiveIndexingMetrics {
+            tokens_per_sec,
+            chunks_per_sec,
+            avg_chunk_time_ms,
+            is_live: false,
+        });
+    }
+
+    None
 }
 
 // ============================================================================
@@ -224,7 +359,7 @@ pub fn App() -> Element {
 
     // File processing coroutine (runs in background, persists across view switches)
     #[cfg(target_arch = "wasm32")]
-    let worker_state = hero::use_worker_state();
+    let worker_state = worker::use_worker_state();
 
     let processing_coroutine = use_coroutine({
         let mut batches_signal = batches;
@@ -302,58 +437,123 @@ pub fn App() -> Element {
 
                                 #[cfg(not(target_arch = "wasm32"))]
                                 {
-                                    // Desktop: Direct embedding
-                                    match embed_text_chunks(contents, 512).await {
-                                        Ok(results) => {
-                                            let chunk_count = results.len();
-                                            let file_tokens: usize =
-                                                results.iter().map(|c| c.token_count).sum();
-                                            let elapsed_ms =
-                                                start_time.elapsed().as_millis() as u64;
+                                    // Desktop: Process chunks individually for real-time metric updates
+                                    // Split into chunks (2000 chars each)
+                                    let chunk_size = 2000;
+                                    let text_chunks: Vec<String> = contents
+                                        .chars()
+                                        .collect::<Vec<_>>()
+                                        .chunks(chunk_size)
+                                        .map(|chunk| chunk.iter().collect())
+                                        .collect();
 
-                                            // Accumulate batch totals
-                                            total_chunks += chunk_count;
-                                            total_tokens += file_tokens;
+                                    let chunks_in_file = text_chunks.len();
+                                    let mut results = Vec::new();
 
-                                            // Update file status to completed (read latest state first)
-                                            let mut all_batches = batches_signal_clone();
-                                            all_batches[batch_idx].files[file_idx].status =
-                                                FileStatus::Completed;
-                                            all_batches[batch_idx].files[file_idx].progress_pct =
-                                                100.0;
-                                            all_batches[batch_idx].files[file_idx].metrics =
-                                                Some(FileMetrics {
-                                                    tokens_processed: file_tokens,
-                                                    chunks_embedded: chunk_count,
-                                                    chunks_total: chunk_count,
-                                                    elapsed_ms,
-                                                });
-                                            batches_signal_clone.set(all_batches.clone());
+                                    // Initialize metrics before processing
+                                    let mut all_batches = batches_signal_clone();
+                                    all_batches[batch_idx].files[file_idx].metrics =
+                                        Some(FileMetrics {
+                                            tokens_processed: 0,
+                                            chunks_embedded: 0,
+                                            chunks_total: chunks_in_file,
+                                            elapsed_ms: 0,
+                                        });
+                                    batches_signal_clone.set(all_batches.clone());
 
-                                            // Index chunks
-                                            let engine_arc = engine_clone.read().clone();
-                                            if let Some(engine_lock) = engine_arc {
-                                                match index_chunks(engine_lock, &results, file_name)
-                                                    .await
-                                                {
-                                                    Ok(indexed_count) => {
-                                                        info!(
-                                                            "✅ Indexed {} chunks from {}",
-                                                            indexed_count, file_name
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        error!("❌ Failed to index chunks: {}", e);
-                                                    }
-                                                }
+                                    // Process each chunk and update metrics
+                                    for (chunk_idx, chunk_text) in text_chunks.iter().enumerate() {
+                                        // Update progress (read latest state first)
+                                        let progress =
+                                            (chunk_idx as f64 / chunks_in_file as f64) * 100.0;
+                                        let mut all_batches = batches_signal_clone();
+                                        all_batches[batch_idx].files[file_idx].status =
+                                            FileStatus::Processing {
+                                                current: chunk_idx,
+                                                total: chunks_in_file,
+                                            };
+                                        all_batches[batch_idx].files[file_idx].progress_pct =
+                                            progress;
+                                        batches_signal_clone.set(all_batches.clone());
+
+                                        match crate::embedding::compute_embedding(chunk_text).await
+                                        {
+                                            Ok(computation) => {
+                                                results.push(
+                                                    crate::embedding::ChunkEmbeddingResult {
+                                                        chunk_index: chunk_idx,
+                                                        token_count: computation.token_count,
+                                                        text: chunk_text.clone(),
+                                                        embedding: computation.embedding,
+                                                    },
+                                                );
+
+                                                // Update metrics after each chunk (read latest state first)
+                                                let elapsed_ms =
+                                                    start_time.elapsed().as_millis() as u64;
+                                                let mut all_batches = batches_signal_clone();
+                                                all_batches[batch_idx].files[file_idx].metrics =
+                                                    Some(FileMetrics {
+                                                        tokens_processed: results
+                                                            .iter()
+                                                            .map(|c| c.token_count)
+                                                            .sum(),
+                                                        chunks_embedded: results.len(),
+                                                        chunks_total: chunks_in_file,
+                                                        elapsed_ms,
+                                                    });
+                                                batches_signal_clone.set(all_batches.clone());
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    "❌ Failed to embed chunk {}: {}",
+                                                    chunk_idx, e
+                                                );
+                                                let mut all_batches = batches_signal_clone();
+                                                all_batches[batch_idx].files[file_idx].status =
+                                                    FileStatus::Failed(e.to_string());
+                                                batches_signal_clone.set(all_batches.clone());
+                                                break;
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("❌ Embedding failed for {}: {}", file_name, e);
-                                            let mut all_batches = batches_signal_clone();
-                                            all_batches[batch_idx].files[file_idx].status =
-                                                FileStatus::Failed(e.to_string());
-                                            batches_signal_clone.set(all_batches.clone());
+                                    }
+
+                                    let chunk_count = results.len();
+                                    let file_tokens: usize =
+                                        results.iter().map(|c| c.token_count).sum();
+                                    let elapsed_ms = start_time.elapsed().as_millis() as u64;
+
+                                    // Accumulate batch totals
+                                    total_chunks += chunk_count;
+                                    total_tokens += file_tokens;
+
+                                    // Update file status to completed (read latest state first)
+                                    let mut all_batches = batches_signal_clone();
+                                    all_batches[batch_idx].files[file_idx].status =
+                                        FileStatus::Completed;
+                                    all_batches[batch_idx].files[file_idx].progress_pct = 100.0;
+                                    all_batches[batch_idx].files[file_idx].metrics =
+                                        Some(FileMetrics {
+                                            tokens_processed: file_tokens,
+                                            chunks_embedded: chunk_count,
+                                            chunks_total: chunk_count,
+                                            elapsed_ms,
+                                        });
+                                    batches_signal_clone.set(all_batches.clone());
+
+                                    // Index chunks
+                                    let engine_arc = engine_clone.read().clone();
+                                    if let Some(engine_lock) = engine_arc {
+                                        match index_chunks(engine_lock, &results, file_name).await {
+                                            Ok(indexed_count) => {
+                                                info!(
+                                                    "✅ Indexed {} chunks from {}",
+                                                    indexed_count, file_name
+                                                );
+                                            }
+                                            Err(e) => {
+                                                error!("❌ Failed to index chunks: {}", e);
+                                            }
                                         }
                                     }
                                 }
@@ -363,21 +563,21 @@ pub fn App() -> Element {
                                     // Web: Use embedding worker
                                     let worker_snapshot = worker_state_clone.read().clone();
                                     match worker_snapshot {
-                                        hero::WorkerStatus::Pending => {
+                                        worker::WorkerStatus::Pending => {
                                             let mut all_batches = batches_signal_clone();
                                             all_batches[batch_idx].files[file_idx].status =
                                                 FileStatus::Failed("Worker starting".to_string());
                                             batches_signal_clone.set(all_batches.clone());
                                             continue;
                                         }
-                                        hero::WorkerStatus::Failed(err) => {
+                                        worker::WorkerStatus::Failed(err) => {
                                             let mut all_batches = batches_signal_clone();
                                             all_batches[batch_idx].files[file_idx].status =
                                                 FileStatus::Failed(err);
                                             batches_signal_clone.set(all_batches.clone());
                                             continue;
                                         }
-                                        hero::WorkerStatus::Ready(client) => {
+                                        worker::WorkerStatus::Ready(client) => {
                                             // Split into chunks (2000 chars each)
                                             let chunk_size = 2000;
                                             let text_chunks: Vec<String> = contents
@@ -389,6 +589,17 @@ pub fn App() -> Element {
 
                                             let chunks_in_file = text_chunks.len();
                                             let mut results = Vec::new();
+
+                                            // Initialize metrics before processing
+                                            let mut all_batches = batches_signal_clone();
+                                            all_batches[batch_idx].files[file_idx].metrics =
+                                                Some(FileMetrics {
+                                                    tokens_processed: 0,
+                                                    chunks_embedded: 0,
+                                                    chunks_total: chunks_in_file,
+                                                    elapsed_ms: 0,
+                                                });
+                                            batches_signal_clone.set(all_batches.clone());
 
                                             for (chunk_idx, chunk_text) in
                                                 text_chunks.iter().enumerate()
@@ -417,6 +628,24 @@ pub fn App() -> Element {
                                                             embedding: computation.embedding,
                                                         },
                                                     );
+
+                                                        // Update metrics after each chunk (read latest state first)
+                                                        let elapsed_ms =
+                                                            start_time.elapsed().as_millis() as u64;
+                                                        let mut all_batches =
+                                                            batches_signal_clone();
+                                                        all_batches[batch_idx].files[file_idx]
+                                                            .metrics = Some(FileMetrics {
+                                                            tokens_processed: results
+                                                                .iter()
+                                                                .map(|c| c.token_count)
+                                                                .sum(),
+                                                            chunks_embedded: results.len(),
+                                                            chunks_total: chunks_in_file,
+                                                            elapsed_ms,
+                                                        });
+                                                        batches_signal_clone
+                                                            .set(all_batches.clone());
                                                     }
                                                     Err(e) => {
                                                         error!(
@@ -485,16 +714,19 @@ pub fn App() -> Element {
                             // Rebuild vector index once after all files
                             let engine_arc = engine_clone.read().clone();
                             if let Some(engine_lock) = engine_arc {
+                                let doc_count = {
+                                    let search_engine = engine_lock.lock().await;
+                                    search_engine.len()
+                                };
+
+                                info!("🔨 Rebuilding HNSW index for {} documents... (this may take a few minutes for large batches)", doc_count);
+
                                 {
                                     let mut search_engine = engine_lock.lock().await;
                                     search_engine.rebuild_vector_index().await;
                                 }
 
                                 // Update search engine status
-                                let doc_count = {
-                                    let search_engine = engine_lock.lock().await;
-                                    search_engine.len()
-                                };
                                 engine_status_clone.set(SearchEngineStatus::Ready { doc_count });
                                 info!("✅ Search index rebuilt with {} documents", doc_count);
                             }
@@ -540,10 +772,9 @@ pub fn App() -> Element {
                 on_view_change: move |view| current_view.set(view),
                 on_metrics_toggle: move |_| {
                     metrics_collapsed.set(!metrics_collapsed());
-                }
+                },
+                metrics_collapsed
             }
-
-            StatusStrip {}
 
             MetricsPane {
                 collapsed: metrics_collapsed

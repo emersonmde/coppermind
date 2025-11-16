@@ -5,11 +5,11 @@ use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
 
 #[cfg(target_arch = "wasm32")]
-use crate::components::hero::{use_worker_state, WorkerStatus};
+use crate::components::worker::{use_worker_state, WorkerStatus};
 
 use crate::components::{use_search_engine, use_search_engine_status, SearchEngineStatus, View};
 
-use super::{EmptyState, ResultCard, SearchCard};
+use super::{EmptyState, ResultCard, SearchCard, SourcePreviewOverlay};
 
 // Messages for search coroutine
 enum SearchMessage {
@@ -45,6 +45,7 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     let search_results = use_signal(Vec::<SearchResult>::new);
     let mut searching = use_signal(|| false);
     let search_status = use_signal(String::new);
+    let mut preview_result = use_signal(|| None::<SearchResult>);
 
     let search_engine = use_search_engine();
     let engine_status = use_search_engine_status();
@@ -177,9 +178,14 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
         search_task.send(SearchMessage::RunSearch(query));
     };
 
+    let mut preview_signal = preview_result;
     let handle_show_source = move |result: SearchResult| {
-        // TODO Phase 5: Implement source preview overlay
         info!("Show source for: {:?}", result.metadata.filename);
+        preview_signal.set(Some(result));
+    };
+
+    let handle_close_preview = move |_| {
+        preview_result.set(None);
     };
 
     // Determine what to show
@@ -247,6 +253,12 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                     "{search_status}"
                 }
             }
+        }
+
+        // Source preview overlay (shown when user clicks "Show Source")
+        SourcePreviewOverlay {
+            result: preview_result,
+            on_close: handle_close_preview,
         }
     }
 }

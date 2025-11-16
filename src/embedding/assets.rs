@@ -4,7 +4,7 @@
 //! the network (web platform) or filesystem (desktop platform).
 
 use crate::error::EmbeddingError;
-use dioxus::logger::tracing::info;
+use dioxus::logger::tracing::debug;
 
 #[cfg(target_arch = "wasm32")]
 use dioxus::logger::tracing::error;
@@ -68,7 +68,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         resolve_asset_url(url)
     };
 
-    info!(
+    debug!(
         "📥 Fetching asset (raw: {}, resolved: {})...",
         url, resolved_url
     );
@@ -84,7 +84,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         ))
     })?;
 
-    info!("✓ Fetch completed");
+    debug!("✓ Fetch completed");
 
     let resp: web_sys::Response = resp_value
         .dyn_into()
@@ -99,7 +99,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         )));
     }
 
-    info!("✓ Response OK, reading array buffer...");
+    debug!("✓ Response OK, reading array buffer...");
 
     let array_buffer =
         JsFuture::from(resp.array_buffer().map_err(|e| {
@@ -113,7 +113,7 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     let bytes = uint8_array.to_vec();
 
-    info!(
+    debug!(
         "✓ Asset fetched successfully ({} bytes, {:.2}MB)",
         bytes.len(),
         bytes.len() as f64 / 1_000_000.0
@@ -209,7 +209,7 @@ fn resolve_with_worker_base(path: &str) -> Option<String> {
 async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, EmbeddingError> {
     use std::path::PathBuf;
 
-    info!("📥 Reading asset from {}...", asset_path);
+    debug!("📥 Reading asset from {}...", asset_path);
 
     // Get the current executable directory
     let exe_path = std::env::current_exe()
@@ -218,8 +218,8 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
         EmbeddingError::AssetFetch("Failed to get exe parent directory".to_string())
     })?;
 
-    info!("📂 Executable directory: {:?}", exe_dir);
-    info!("📂 Current directory: {:?}", std::env::current_dir());
+    debug!("📂 Executable directory: {:?}", exe_dir);
+    debug!("📂 Current directory: {:?}", std::env::current_dir());
 
     // Search locations for bundled assets
     let asset_locations = vec![
@@ -238,7 +238,7 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
 
     for base_dir in &asset_locations {
         let full_path = base_dir.join(filename);
-        info!("  Trying: {:?}", full_path);
+        debug!("  Trying: {:?}", full_path);
 
         // Use spawn_blocking for file I/O to prevent UI freezing with large files (62MB model)
         let path_clone = full_path.clone();
@@ -247,7 +247,7 @@ async fn fetch_asset_bytes_desktop(asset_path: &str) -> Result<Vec<u8>, Embeddin
             .map_err(|e| EmbeddingError::AssetFetch(format!("Task join failed: {}", e)))?;
 
         if let Ok(bytes) = read_result {
-            info!(
+            debug!(
                 "✓ Asset loaded from {:?}: {:.2}MB ({} bytes)",
                 full_path,
                 bytes.len() as f64 / 1_000_000.0,

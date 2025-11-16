@@ -13,7 +13,7 @@ use crate::embedding::run_embedding;
 use crate::embedding::format_embedding_summary;
 
 #[cfg(target_arch = "wasm32")]
-use super::hero::{use_worker_state, WorkerStatus};
+use super::worker::{use_worker_state, WorkerStatus};
 
 use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
 
