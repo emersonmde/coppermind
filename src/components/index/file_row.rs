@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 /// File processing status for display
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum FileStatus {
     Queued,
     Processing { current: usize, total: usize },
@@ -10,7 +10,7 @@ pub enum FileStatus {
 }
 
 /// File metrics for advanced view
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, Debug)]
 pub struct FileMetrics {
     pub tokens_processed: usize,
     pub chunks_embedded: usize,

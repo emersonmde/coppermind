@@ -73,7 +73,7 @@ const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
 /// Result of embedding a single text chunk.
 ///
 /// Contains the chunk index, token count, text content, and embedding vector.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChunkEmbeddingResult {
     /// Index of this chunk in the original document (0-based)
     pub chunk_index: usize,
