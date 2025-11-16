@@ -63,7 +63,7 @@ pub use model::{Embedder, JinaBertEmbedder};
 
 use crate::error::EmbeddingError;
 use crate::platform::run_blocking;
-use dioxus::logger::tracing::{debug, info, warn};
+use dioxus::logger::tracing::{debug, info};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
 use std::sync::Arc;
 
@@ -215,54 +215,6 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
     })
 }
 
-/// Process a single text chunk: tokenize, validate, and embed.
-///
-/// # Arguments
-///
-/// * `chunk` - Text chunk to process
-/// * `model` - Embedding model
-/// * `tokenizer` - Tokenizer instance
-/// * `max_positions` - Maximum token count allowed
-///
-/// # Returns
-///
-/// `ChunkEmbeddingResult` on success, or `None` if chunk exceeds token limits.
-async fn process_single_chunk(
-    chunk: chunking::TextChunk,
-    model: &Arc<dyn Embedder>,
-    tokenizer: &tokenizers::Tokenizer,
-    max_positions: usize,
-) -> Result<Option<ChunkEmbeddingResult>, EmbeddingError> {
-    // Tokenize this chunk
-    let token_ids = tokenizer::tokenize_text_async(tokenizer, &chunk.text).await?;
-    let token_count = token_ids.len();
-
-    // Check if chunk exceeds model limits (shouldn't happen but handle edge case)
-    if token_count > max_positions {
-        warn!(
-            "⚠️ Chunk {} exceeds {} tokens ({} tokens), skipping",
-            chunk.index, max_positions, token_count
-        );
-        return Ok(None);
-    }
-
-    debug!(
-        "🚀 Embedding chunk {} ({} tokens)",
-        chunk.index, token_count
-    );
-
-    // Embed this chunk with platform-specific threading
-    let model_clone = model.clone();
-    let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
-
-    Ok(Some(ChunkEmbeddingResult {
-        chunk_index: chunk.index,
-        token_count,
-        text: chunk.text,
-        embedding,
-    }))
-}
-
 /// Embeds long text by splitting into chunks and processing each.
 ///
 /// Uses sentence-based chunking to preserve semantic coherence. Splits text at
@@ -300,9 +252,39 @@ async fn process_single_chunk(
 ///              chunk.text);
 /// }
 /// ```
-pub async fn embed_text_chunks(
+/// Embed text chunks with automatic chunking strategy selection based on file type.
+///
+/// This is a convenience wrapper around `embed_text_chunks` that automatically
+/// selects the appropriate chunking strategy based on the filename extension:
+/// - `.md`, `.markdown` → Markdown-aware chunking
+/// - Everything else → Generic text chunking
+///
+/// # Arguments
+///
+/// * `text` - Text content to embed
+/// * `chunk_tokens` - Target tokens per chunk
+/// * `filename` - Optional filename to detect file type (if None, uses text chunking)
+///
+/// # Returns
+///
+/// Vector of `ChunkEmbeddingResult` with embeddings, token counts, and text for each chunk.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Markdown file - will use MarkdownSplitter
+/// let chunks = embed_text_chunks_auto(markdown_content, 512, Some("README.md")).await?;
+///
+/// // Plain text - will use TextSplitter
+/// let chunks = embed_text_chunks_auto(text_content, 512, Some("document.txt")).await?;
+///
+/// // No filename - defaults to TextSplitter
+/// let chunks = embed_text_chunks_auto(content, 512, None).await?;
+/// ```
+pub async fn embed_text_chunks_auto(
     text: &str,
     chunk_tokens: usize,
+    filename: Option<&str>,
 ) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError> {
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
@@ -310,46 +292,92 @@ pub async fn embed_text_chunks(
 
     let effective_chunk = chunk_tokens.min(max_positions);
 
-    // Use sentence-based chunking with 2-sentence overlap for context preservation
-    let chunker = chunking::sentence::SentenceChunker::new(effective_chunk, 2);
-    let text_chunks = chunker.chunk(text)?;
+    // Detect file type and select appropriate chunking strategy
+    let file_type = filename
+        .map(chunking::detect_file_type)
+        .unwrap_or(chunking::FileType::Text);
+
+    let text_chunks = match file_type {
+        chunking::FileType::Markdown => {
+            let chunker = chunking::markdown_splitter_adapter::MarkdownSplitterAdapter::new(
+                effective_chunk,
+                tokenizer,
+            );
+            chunker.chunk(text)?
+        }
+        chunking::FileType::Text => {
+            let chunker =
+                chunking::text_splitter_adapter::TextSplitterAdapter::new(effective_chunk, tokenizer);
+            chunker.chunk(text)?
+        }
+    };
 
     if text_chunks.is_empty() {
         return Ok(vec![]);
     }
 
     info!(
-        "🧩 Embedding {} chunks ({} tokens max per chunk, sentence-based)",
+        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking)",
         text_chunks.len(),
-        effective_chunk
+        effective_chunk,
+        file_type
     );
 
     // Process each chunk
     let total_chunks = text_chunks.len();
     let mut results = Vec::with_capacity(total_chunks);
 
-    for (idx, chunk) in text_chunks.into_iter().enumerate() {
-        // Process this chunk (tokenize, validate, embed)
-        if let Some(result) = process_single_chunk(chunk, &model, tokenizer, max_positions).await? {
-            results.push(result);
-        }
+    for (idx, text_chunk) in text_chunks.iter().enumerate() {
+        info!(
+            "📝 Chunk {}/{}: {} chars",
+            idx + 1,
+            total_chunks,
+            text_chunk.text.len()
+        );
 
-        // Yield to event loop between chunks to maintain responsiveness
-        #[cfg(target_arch = "wasm32")]
-        if idx < total_chunks - 1 {
-            use gloo_timers::future::TimeoutFuture;
-            TimeoutFuture::new(0).await;
-        }
+        let computation = compute_embedding(&text_chunk.text).await?;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if idx < total_chunks - 1 {
-            tokio::task::yield_now().await;
-        }
+        results.push(ChunkEmbeddingResult {
+            chunk_index: text_chunk.index,
+            token_count: computation.token_count,
+            text: text_chunk.text.clone(),
+            embedding: computation.embedding,
+        });
     }
 
-    info!("✅ All {} chunks embedded successfully", results.len());
+    info!("✅ Embedded all {} chunks successfully", total_chunks);
 
     Ok(results)
+}
+
+/// Embed text chunks using generic text chunking strategy.
+///
+/// This function always uses the generic TextSplitter regardless of content type.
+/// For automatic strategy selection based on file type, use `embed_text_chunks_auto`.
+///
+/// # Arguments
+///
+/// * `text` - Text content to embed
+/// * `chunk_tokens` - Target tokens per chunk
+///
+/// # Returns
+///
+/// Vector of `ChunkEmbeddingResult` with embeddings, token counts, and text for each chunk.
+///
+/// # Examples
+///
+/// ```ignore
+/// let results = embed_text_chunks("Long document with many paragraphs...", 512).await?;
+/// for chunk in results {
+///     println!("Chunk {} has {} tokens: {}",
+///              chunk.chunk_index, chunk.token_count, chunk.text);
+/// }
+/// ```
+pub async fn embed_text_chunks(
+    text: &str,
+    chunk_tokens: usize,
+) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError> {
+    embed_text_chunks_auto(text, chunk_tokens, None).await
 }
 
 /// Generates an embedding and formats it for display.

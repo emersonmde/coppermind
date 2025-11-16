@@ -46,7 +46,9 @@ instant-distance = "0.6"
 # Text chunking (semantic splitting)
 # Note: We implement our own ChunkSizer instead of using the tokenizers feature
 # to avoid pulling in onig (C library) which breaks WASM builds
-text-splitter = { version = "0.18", default-features = false }
+# markdown feature uses pulldown-cmark (pure Rust, WASM-compatible)
+# code feature requires tree-sitter which has WASM compatibility issues, so we skip it
+text-splitter = { version = "0.18", default-features = false, features = ["markdown"] }
 
 # Error handling with derive macros
 thiserror = "2.0"
