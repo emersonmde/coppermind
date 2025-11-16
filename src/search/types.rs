@@ -179,3 +179,10 @@ impl From<crate::error::FileProcessingError> for SearchError {
         SearchError::IndexError(err.to_string())
     }
 }
+
+/// Convert String to SearchError for platform::run_blocking compatibility
+impl From<String> for SearchError {
+    fn from(s: String) -> Self {
+        SearchError::IndexError(s)
+    }
+}

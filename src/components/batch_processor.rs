@@ -136,7 +136,10 @@ pub async fn process_batch<S: StorageBackend>(
 
         {
             let mut search_engine = engine_lock.lock().await;
-            search_engine.rebuild_vector_index().await;
+            if let Err(e) = search_engine.rebuild_vector_index().await {
+                error!("❌ Failed to rebuild vector index: {}", e);
+                return Err(format!("Index rebuild failed: {}", e));
+            }
         }
 
         // Update search engine status

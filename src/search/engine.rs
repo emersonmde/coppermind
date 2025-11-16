@@ -6,6 +6,7 @@ use super::keyword::KeywordSearchEngine;
 use super::types::DocumentMetadata;
 use super::types::{DocId, Document, DocumentRecord, SearchError, SearchResult};
 use super::vector::VectorSearchEngine;
+use crate::platform::run_blocking;
 use crate::storage::StorageBackend;
 use dioxus::logger::tracing::info;
 use std::collections::HashMap;
@@ -121,30 +122,21 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
     /// Rebuild the vector search index after batch operations
     /// This is CPU-intensive and should be called after all documents are added
-    pub async fn rebuild_vector_index(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // Desktop: Run in thread pool to avoid blocking UI
-            // We need to extract the vector engine, rebuild it, then put it back
-            let mut vector_engine = std::mem::replace(
-                &mut self.vector_engine,
-                VectorSearchEngine::new(self.embedding_dim),
-            );
+    pub async fn rebuild_vector_index(&mut self) -> Result<(), SearchError> {
+        // Extract the vector engine, rebuild it, then put it back
+        let mut vector_engine = std::mem::replace(
+            &mut self.vector_engine,
+            VectorSearchEngine::new(self.embedding_dim),
+        );
 
-            let rebuilt = tokio::task::spawn_blocking(move || {
-                vector_engine.rebuild_index();
-                vector_engine
-            })
-            .await
-            .expect("Failed to join rebuild task");
+        let rebuilt = run_blocking(move || -> Result<VectorSearchEngine, SearchError> {
+            vector_engine.rebuild_index();
+            Ok(vector_engine)
+        })
+        .await?;
 
-            self.vector_engine = rebuilt;
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.vector_engine.rebuild_index();
-        }
+        self.vector_engine = rebuilt;
+        Ok(())
     }
 
     /// Perform hybrid search combining vector and keyword search
