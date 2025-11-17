@@ -44,6 +44,9 @@ mod file_processing;
 mod testing;
 pub mod worker; // Worker state management (web only)
 
+// Web crawler (functional on desktop, stub on web due to CORS restrictions)
+mod web_crawler;
+
 // Re-export new components
 pub use app_shell::{AppBar, Footer, MetricsPane, View};
 pub use index::{
@@ -53,6 +56,9 @@ pub use search::SearchView;
 
 // Re-export testing component
 pub use testing::DeveloperTesting;
+
+// Re-export web crawler
+pub use web_crawler::WebCrawlerCard;
 
 // Main app component that composes all sections
 use crate::search::HybridSearchEngine;
@@ -67,21 +73,27 @@ use std::sync::Arc;
 // Platform-specific imports and types
 // ============================================================================
 
-// Web platform (WASM)
+// Storage backends
+use crate::storage::InMemoryStorage;
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(unused_imports)] // Used when persistence is re-enabled
+use crate::storage::NativeStorage;
 #[cfg(target_arch = "wasm32")]
+#[allow(unused_imports)] // Used when persistence is re-enabled
 use crate::storage::OpfsStorage;
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(unused_imports)] // Used when persistence is re-enabled
+use std::path::PathBuf;
+
+// Web platform (WASM)
 #[cfg(target_arch = "wasm32")]
 use worker::provide_worker_state;
 #[cfg(target_arch = "wasm32")]
-type PlatformStorage = OpfsStorage;
+type PlatformStorage = InMemoryStorage;
 
 // Desktop platform (Native)
 #[cfg(not(target_arch = "wasm32"))]
-use crate::storage::NativeStorage;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
-#[cfg(not(target_arch = "wasm32"))]
-type PlatformStorage = NativeStorage;
+type PlatformStorage = InMemoryStorage;
 
 // ============================================================================
 // File processing for indexing
@@ -110,6 +122,15 @@ pub enum SearchEngineStatus {
     Failed(String),
 }
 
+// Model status for UI display
+#[derive(Clone, PartialEq)]
+pub enum ModelStatus {
+    Cold,           // Not loaded yet
+    Loading,        // Downloading and initializing
+    Ready,          // Loaded and ready for inference
+    Failed(String), // Error during initialization
+}
+
 // Search engine context provider (platform-agnostic via type alias)
 pub fn use_search_engine() -> SearchEngineSignal {
     use_context::<SearchEngineSignal>()
@@ -118,6 +139,11 @@ pub fn use_search_engine() -> SearchEngineSignal {
 // Search engine status context provider
 pub fn use_search_engine_status() -> Signal<SearchEngineStatus> {
     use_context::<Signal<SearchEngineStatus>>()
+}
+
+// Model status context provider
+pub fn use_model_status() -> Signal<ModelStatus> {
+    use_context::<Signal<ModelStatus>>()
 }
 
 // ============================================================================
@@ -280,19 +306,24 @@ pub fn calculate_live_metrics(batches: &[Batch]) -> Option<LiveIndexingMetrics> 
 // Platform-specific initialization helpers
 // ============================================================================
 
-/// Initialize platform-specific storage backend.
-#[cfg(target_arch = "wasm32")]
-async fn create_platform_storage() -> Result<PlatformStorage, String> {
-    OpfsStorage::new()
-        .await
-        .map_err(|e| format!("Storage error: {:?}", e))
-}
+// TODO: Enable persistence once storage layer is fully implemented
+// To re-enable persistence, uncomment the platform-specific code below and remove InMemoryStorage
 
-/// Initialize platform-specific storage backend.
-#[cfg(not(target_arch = "wasm32"))]
+/// Initialize storage backend (currently in-memory only, no persistence).
 async fn create_platform_storage() -> Result<PlatformStorage, String> {
-    NativeStorage::new(PathBuf::from("./coppermind-storage"))
-        .map_err(|e| format!("Storage error: {:?}", e))
+    // Persistence disabled - using in-memory storage
+    Ok(InMemoryStorage::new())
+
+    // Uncomment for OPFS persistence on web:
+    // #[cfg(target_arch = "wasm32")]
+    // return OpfsStorage::new()
+    //     .await
+    //     .map_err(|e| format!("Storage error: {:?}", e));
+
+    // Uncomment for native filesystem persistence on desktop:
+    // #[cfg(not(target_arch = "wasm32"))]
+    // return NativeStorage::new(PathBuf::from("./coppermind-storage"))
+    //     .map_err(|e| format!("Storage error: {:?}", e));
 }
 
 /// Setup search engine with initialized storage.
@@ -317,6 +348,10 @@ pub fn App() -> Element {
     // Initialize search engine status
     let search_engine_status = use_signal(|| SearchEngineStatus::Pending);
     use_context_provider(|| search_engine_status);
+
+    // Initialize model status
+    let model_status = use_signal(|| ModelStatus::Cold);
+    use_context_provider(|| model_status);
 
     // Initialize search engine with platform-specific storage (unified logic)
     let search_engine = use_signal(|| None);
@@ -355,14 +390,71 @@ pub fn App() -> Element {
         }
     });
 
+    // Initialize worker state first (web only) - needed for model status derivation
+    #[cfg(target_arch = "wasm32")]
+    let worker_state = worker::use_worker_state();
+
+    // Pre-warm embedding model on startup (desktop only)
+    // On web, embeddings run in worker - we track worker status instead
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut model_status_signal = model_status;
+        use_effect(move || {
+            if model_status_signal.read().clone() == ModelStatus::Cold {
+                spawn(async move {
+                    model_status_signal.set(ModelStatus::Loading);
+
+                    // Trigger model load by computing a dummy embedding
+                    // This will cache the model for subsequent uses
+                    match crate::embedding::compute_embedding("a").await {
+                        Ok(_) => {
+                            model_status_signal.set(ModelStatus::Ready);
+                        }
+                        Err(e) => {
+                            error!("Failed to pre-warm embedding model: {}", e);
+                            model_status_signal.set(ModelStatus::Failed(e.to_string()));
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    // Pre-warm embedding model on startup (web: wait for worker to be ready first)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut model_status_signal = model_status;
+        use_effect(move || {
+            let worker_status = worker_state.read().clone();
+            let current_model_status = model_status_signal.read().clone();
+
+            // Only pre-warm once worker is ready and model is still cold
+            if let worker::WorkerStatus::Ready(worker_client) = worker_status {
+                if current_model_status == ModelStatus::Cold {
+                    spawn(async move {
+                        model_status_signal.set(ModelStatus::Loading);
+
+                        // Trigger model load by computing a dummy embedding through the worker
+                        // This will cache the model for subsequent uses
+                        match worker_client.embed("a".to_string()).await {
+                            Ok(_) => {
+                                model_status_signal.set(ModelStatus::Ready);
+                            }
+                            Err(e) => {
+                                error!("Failed to pre-warm embedding model: {}", e);
+                                model_status_signal.set(ModelStatus::Failed(e));
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
     // Initialize batches state (persists across view switches)
     let batches = use_signal(Vec::<Batch>::new);
     let batch_counter = use_signal(|| 0usize);
     use_context_provider(|| batches);
-
-    // File processing coroutine (runs in background, persists across view switches)
-    #[cfg(target_arch = "wasm32")]
-    let worker_state = worker::use_worker_state();
 
     let processing_coroutine = use_coroutine({
         let mut batches_signal = batches;

@@ -3,7 +3,9 @@ use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use crate::components::worker::{use_worker_state, WorkerStatus};
 
-use crate::components::{use_search_engine_status, SearchEngineStatus};
+use crate::components::{
+    use_model_status, use_search_engine_status, ModelStatus, SearchEngineStatus,
+};
 
 /// View selection enum for navigation
 #[derive(Clone, Copy, PartialEq)]
@@ -53,6 +55,38 @@ pub fn AppBar(
 
     #[cfg(not(target_arch = "wasm32"))]
     let worker_pill = rsx! { Fragment {} };
+
+    // Model status pill (shows embedding model state)
+    let model_pill = {
+        let model_status_signal = use_model_status();
+        let status = model_status_signal.read().clone();
+        match status {
+            ModelStatus::Cold => rsx! {
+                span { class: "cm-status-pill cm-status-pill--muted",
+                    span { class: "cm-status-dot cm-status-dot--muted" }
+                    "Model: cold"
+                }
+            },
+            ModelStatus::Loading => rsx! {
+                span { class: "cm-status-pill cm-status-pill--warn",
+                    span { class: "cm-status-dot cm-status-dot--warn" }
+                    "Model: loading…"
+                }
+            },
+            ModelStatus::Ready => rsx! {
+                span { class: "cm-status-pill cm-status-pill--ok",
+                    span { class: "cm-status-dot cm-status-dot--ok" }
+                    "Model: ready"
+                }
+            },
+            ModelStatus::Failed(err) => rsx! {
+                span { class: "cm-status-pill cm-status-pill--error",
+                    span { class: "cm-status-dot cm-status-dot--error" }
+                    "Model: {err}"
+                }
+            },
+        }
+    };
 
     // Index status pill (clickable to toggle metrics)
     let index_pill = {
@@ -138,6 +172,7 @@ pub fn AppBar(
             }
             div { class: "cm-appbar-right",
                 {worker_pill}
+                {model_pill}
                 {index_pill}
             }
         }

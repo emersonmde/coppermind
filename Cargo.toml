@@ -58,6 +58,12 @@ regex = "1.11"
 # Cross-platform timing (works on WASM and native)
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 
+# Web crawler (platform-specific - desktop only for now due to CORS)
+scraper = "0.22"  # Pure Rust HTML parser, works on WASM and native
+url = "2.5"       # URL parsing and same-origin detection
+reqwest = { version = "0.12", default-features = false }
+content_inspector = "0.2"  # Binary vs text detection (NULL byte + BOM checking)
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -78,6 +84,9 @@ web-sys = { version = "0.3", features = [
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
+
+# Web crawler with TLS support (desktop only - CORS blocks web platform)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # Code chunking with tree-sitter (native only - C library doesn't work on WASM)
 # Enables syntax-aware chunking for programming languages

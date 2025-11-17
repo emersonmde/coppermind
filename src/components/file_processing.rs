@@ -20,8 +20,10 @@ use std::{future::Future, path::PathBuf, pin::Pin};
 
 /// Detects if file contents appear to be binary (not text).
 ///
-/// Uses a simple heuristic: binary files contain null bytes (`\0`),
-/// which never appear in valid UTF-8 text files.
+/// Uses the `content_inspector` crate which provides industry-standard heuristics:
+/// - NULL bytes (`\0`) indicating binary content
+/// - Byte order marks (BOMs) for text encoding detection
+/// - UTF-8 validity checks
 ///
 /// # Arguments
 ///
@@ -31,15 +33,17 @@ use std::{future::Future, path::PathBuf, pin::Pin};
 ///
 /// `true` if the content appears to be binary, `false` if it's likely text.
 ///
-/// # Notes
+/// # Examples
 ///
-/// This is a simple heuristic and may have false positives/negatives.
-/// More sophisticated detection could check for:
-/// - Percentage of non-printable characters
-/// - Magic numbers (file type signatures)
-/// - Character encoding patterns
+/// ```ignore
+/// // Internal module - not part of public API
+/// use coppermind::components::file_processing::is_likely_binary;
+///
+/// assert!(!is_likely_binary("Hello, world!"));
+/// assert!(is_likely_binary("Binary\0data"));
+/// ```
 pub fn is_likely_binary(content: &str) -> bool {
-    content.contains('\0')
+    content_inspector::inspect(content.as_bytes()).is_binary()
 }
 
 /// Indexes embedding chunks in the search engine.

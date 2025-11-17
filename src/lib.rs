@@ -39,3 +39,7 @@ pub mod search;
 pub mod storage;
 pub mod utils;
 pub mod workers;
+
+// Web crawler (desktop-only for now due to CORS restrictions on web)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod crawler;

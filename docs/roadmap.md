@@ -42,10 +42,11 @@ Automatic strategy selection based on file type:
 - **Text**: Sentence-based chunking using ICU4X segmentation
 - **Platform Behavior**: Web uses Markdown + Text; Desktop/mobile adds Code chunking
 
-#### ✅ Cross-Platform Storage
-Platform-specific persistence via `StorageBackend` trait:
-- **Web**: OPFS (Origin Private File System) for large binary data
+#### 🚧 Cross-Platform Storage
+Storage backend infrastructure implemented via `StorageBackend` trait:
+- **Web**: OPFS (Origin Private File System) implementation ready
 - **Desktop/Mobile**: Native filesystem access via tokio::fs
+- **Current Status**: Temporarily disabled (using `InMemoryStorage`) - see Phase 2 roadmap
 
 #### ✅ Web Worker Architecture
 Non-blocking ML inference on web platform:
@@ -95,15 +96,21 @@ Add web crawler feature to fetch and index web pages, initially for desktop plat
 
 ### Phase 2: Persistence Layer
 
-**Status:** Planned (Currently Broken)
+**Status:** Temporarily Disabled (In-Memory Only)
 **ADR:** TBD
 
 **Description:**
-Fix and build out a robust persistence layer to save and restore indexed documents and embeddings across sessions. Currently broken on multiple platforms:
-- **DMG builds**: Errors due to read-only filesystem
-- **iOS**: Cannot write to storage
-- **Web**: Doesn't actually persist anything
-- **Desktop (`dx serve --desktop`)**: No persistence working
+Persistence is currently disabled across all platforms using `InMemoryStorage` to allow testing of the crawler and other features in bundled apps (DMG, iOS). The storage backend infrastructure exists but is commented out due to path issues:
+- **DMG builds**: Read-only filesystem errors (`./coppermind-storage` path invalid)
+- **iOS**: Sandbox requirements for writable directories
+- **Desktop (`dx serve --desktop`)**: Works but path not suitable for bundled apps
+- **Web**: OPFS implementation exists but untested
+
+**Re-enabling Persistence:**
+To restore persistence, edit `src/components/mod.rs` line ~310:
+- Uncomment platform-specific storage code
+- Update `PlatformStorage` type alias to use `OpfsStorage` (web) or `NativeStorage` (desktop)
+- Configure proper platform-specific paths (see below)
 
 **Goals:**
 1. Debug and fix current persistence issues across all platforms

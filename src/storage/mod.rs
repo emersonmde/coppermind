@@ -137,3 +137,47 @@ pub use opfs::OpfsStorage;
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]
 pub use native::NativeStorage;
+
+/// In-memory storage backend that doesn't persist data.
+/// Useful for testing or when persistence is disabled.
+#[derive(Default)]
+pub struct InMemoryStorage;
+
+impl InMemoryStorage {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl StorageBackend for InMemoryStorage {
+    async fn save(&self, _key: &str, _data: &[u8]) -> Result<(), StorageError> {
+        // No-op: don't persist anything
+        Ok(())
+    }
+
+    async fn load(&self, key: &str) -> Result<Vec<u8>, StorageError> {
+        // Nothing is persisted, so always return NotFound
+        Err(StorageError::NotFound(key.to_string()))
+    }
+
+    async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
+        // Nothing is persisted
+        Ok(false)
+    }
+
+    async fn delete(&self, _key: &str) -> Result<(), StorageError> {
+        // No-op: nothing to delete
+        Ok(())
+    }
+
+    async fn list_keys(&self) -> Result<Vec<String>, StorageError> {
+        // No keys stored
+        Ok(Vec::new())
+    }
+
+    async fn clear(&self) -> Result<(), StorageError> {
+        // No-op: nothing to clear
+        Ok(())
+    }
+}
