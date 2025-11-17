@@ -1,36 +1,43 @@
 use dioxus::prelude::*;
 
-use crate::search::types::SearchResult;
+use crate::search::types::FileSearchResult;
 
-/// Source preview overlay showing document content
+/// Source preview overlay showing reconstructed file content from all chunks.
+///
+/// Takes a FileSearchResult and reconstructs the full file by concatenating
+/// all chunks in order (sorted by chunk index). This provides the "Show Source"
+/// functionality matching the UX spec requirements.
 #[component]
 pub fn SourcePreviewOverlay(
-    result: ReadSignal<Option<SearchResult>>,
+    file_result: ReadSignal<Option<FileSearchResult>>,
     on_close: EventHandler<()>,
 ) -> Element {
-    let result_data = result.read();
+    let result_data = file_result.read();
 
     if result_data.is_none() {
         return rsx! { div {} };
     }
 
-    let search_result = result_data.as_ref().unwrap();
+    let file = result_data.as_ref().unwrap();
+
+    // Reconstruct full file text from chunks
+    // Chunks are stored with filenames like "file.md (chunk 3)"
+    // Sort by chunk number, then concatenate
+    let full_text = reconstruct_file_from_chunks(&file.chunks);
+
+    // Calculate total token count (approximate)
+    let token_count: usize = file
+        .chunks
+        .iter()
+        .map(|c| c.text.split_whitespace().count())
+        .sum();
 
     // Extract metadata
-    let filename = search_result
-        .metadata
-        .filename
-        .as_deref()
-        .unwrap_or("Untitled");
-    let source = search_result
-        .metadata
-        .source
-        .as_deref()
-        .unwrap_or("Unknown source");
+    let filename = &file.file_name;
+    let source = &file.file_path;
 
     // Format timestamp
-    let created_at = search_result.metadata.created_at;
-    let date_str = format_timestamp(created_at);
+    let date_str = format_timestamp(file.created_at);
 
     rsx! {
         // Overlay backdrop
@@ -64,21 +71,69 @@ pub fn SourcePreviewOverlay(
                             span { class: "cm-meta-value", "{date_str}" }
                         }
                         div { class: "cm-meta-item",
-                            span { class: "cm-meta-label", "Doc ID: " }
-                            span { class: "cm-meta-value", "{search_result.doc_id.as_u64()}" }
+                            span { class: "cm-meta-label", "Chunks: " }
+                            span { class: "cm-meta-value", "{file.chunks.len()}" }
+                        }
+                        div { class: "cm-meta-item",
+                            span { class: "cm-meta-label", "Tokens: " }
+                            span { class: "cm-meta-value", "~{token_count}" }
                         }
                     }
                 }
 
-                // Document text content
+                // Reconstructed file content (from all chunks)
                 div { class: "cm-source-preview-content",
                     pre { class: "cm-source-text",
-                        code { "{search_result.text}" }
+                        code { "{full_text}" }
                     }
                 }
             }
         }
     }
+}
+
+/// Reconstructs full file text from chunks.
+///
+/// Chunks have filenames like "file.md (chunk 3)". This function:
+/// 1. Extracts chunk indices from filenames
+/// 2. Sorts chunks by index
+/// 3. Concatenates chunk text with newlines
+///
+/// If chunk indices can't be extracted, chunks are concatenated in order.
+fn reconstruct_file_from_chunks(chunks: &[crate::search::types::SearchResult]) -> String {
+    use crate::search::types::SearchResult;
+
+    // Try to extract chunk index from filename
+    let mut indexed_chunks: Vec<(usize, &SearchResult)> = chunks
+        .iter()
+        .enumerate()
+        .map(|(idx, chunk)| {
+            // Try to parse chunk index from filename like "file.md (chunk 3)"
+            let chunk_idx = chunk
+                .metadata
+                .filename
+                .as_ref()
+                .and_then(|f| {
+                    f.rsplit(" (chunk ")
+                        .next()
+                        .and_then(|s| s.strip_suffix(")"))
+                        .and_then(|num| num.parse::<usize>().ok())
+                })
+                .unwrap_or(idx + 1); // Fallback: use position in array
+
+            (chunk_idx, chunk)
+        })
+        .collect();
+
+    // Sort by chunk index
+    indexed_chunks.sort_by_key(|(idx, _)| *idx);
+
+    // Concatenate chunks with double newlines for readability
+    indexed_chunks
+        .iter()
+        .map(|(_, chunk)| chunk.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Format Unix timestamp to human-readable date

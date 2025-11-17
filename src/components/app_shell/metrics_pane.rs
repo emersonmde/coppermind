@@ -111,7 +111,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
             }
             div { class: "cm-metrics-grid",
                 div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Total Documents" }
+                    div { class: "cm-metric-label", "Files Indexed" }
                     div { class: "cm-metric-value", "{batch_total_docs}" }
                 }
                 div { class: "cm-metric-card",
@@ -128,6 +128,46 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
+            // Per-index metrics
+            div { class: "cm-metrics-separator" }
+            div { class: "cm-metrics-section-header",
+                h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
+            }
+            div { class: "cm-metrics-grid",
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Chunks" }
+                    div { class: "cm-metric-value", "{vector_chunks}" }
+                }
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Tokens" }
+                    div { class: "cm-metric-value", "{vector_tokens}" }
+                }
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
+                    div { class: "cm-metric-value", "{formatted_vector_avg}" }
+                }
+            }
+
+            div { class: "cm-metrics-separator" }
+            div { class: "cm-metrics-section-header",
+                h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
+            }
+            div { class: "cm-metrics-grid",
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Chunks" }
+                    div { class: "cm-metric-value", "{keyword_chunks}" }
+                }
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Tokens" }
+                    div { class: "cm-metric-value", "{keyword_tokens}" }
+                }
+                div { class: "cm-metric-card",
+                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
+                    div { class: "cm-metric-value", "{formatted_keyword_avg}" }
+                }
+            }
+
+            // Performance metrics (live/historical indexing stats)
             div { class: "cm-metrics-separator" }
             div { class: "cm-metrics-section-header",
                 h3 { class: "cm-metrics-section-title", "Indexing Performance" }
@@ -152,53 +192,6 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
             }
             p { class: "cm-metrics-caption",
                 "{state_caption}"
-            }
-
-            // Per-index metrics
-            div { class: "cm-metrics-separator" }
-            div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
-            }
-            div { class: "cm-metrics-grid",
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Documents" }
-                    div { class: "cm-metric-value", "{batch_total_docs}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Chunks" }
-                    div { class: "cm-metric-value", "{vector_chunks}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Tokens" }
-                    div { class: "cm-metric-value", "{vector_tokens}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
-                    div { class: "cm-metric-value", "{formatted_vector_avg}" }
-                }
-            }
-
-            div { class: "cm-metrics-separator" }
-            div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
-            }
-            div { class: "cm-metrics-grid",
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Documents" }
-                    div { class: "cm-metric-value", "{batch_total_docs}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Chunks" }
-                    div { class: "cm-metric-value", "{keyword_chunks}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Tokens" }
-                    div { class: "cm-metric-value", "{keyword_tokens}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
-                    div { class: "cm-metric-value", "{formatted_keyword_avg}" }
-                }
             }
         }
     }

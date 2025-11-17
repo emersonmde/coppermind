@@ -7,11 +7,12 @@
 //!
 //! # Architecture
 //!
-//! - `types`: Core types (DocId, Document, SearchResult, SearchError)
+//! - `types`: Core types (DocId, Document, SearchResult, FileSearchResult, SearchError)
 //! - `engine`: HybridSearchEngine orchestrating vector + keyword search
 //! - `vector`: HNSW-based semantic similarity search
 //! - `keyword`: BM25 full-text keyword search
 //! - `fusion`: Reciprocal Rank Fusion algorithm for merging results
+//! - `aggregation`: File-level aggregation for chunk-based search results
 //!
 //! # Usage
 //!
@@ -69,6 +70,7 @@
 pub mod types;
 
 // Internal modules (will be implemented in phases)
+mod aggregation;
 mod engine;
 mod fusion;
 mod keyword;
@@ -76,7 +78,10 @@ mod vector;
 
 // Re-export main types (public API)
 #[allow(unused_imports)]
-pub use types::{DocId, Document, DocumentMetadata, DocumentRecord, SearchError, SearchResult};
+pub use types::{
+    DocId, Document, DocumentMetadata, DocumentRecord, FileSearchResult, SearchError, SearchResult,
+};
 
-// Re-export search engine (will implement later)
+// Re-export search engine and aggregation
+pub use aggregation::aggregate_chunks_by_file;
 pub use engine::HybridSearchEngine;

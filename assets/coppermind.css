@@ -431,7 +431,6 @@ body.cm-body {
     border: 1px solid var(--cm-border-subtle);
     box-shadow: var(--cm-glow-soft);
     width: 100%;
-    min-width: 700px;
 }
 
 .cm-search-card-top {
@@ -521,7 +520,6 @@ body.cm-body {
 .cm-results-section {
     margin-top: 1.25rem;
     width: 100%;
-    min-width: 700px;
 }
 
 .cm-results-header {
@@ -696,6 +694,79 @@ body.cm-body {
     margin-top: 0.75rem;
 }
 
+/* Chunk Preview (within file results) */
+.cm-chunk-preview {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--cm-bg-elevated);
+    border: 1px solid var(--cm-border-subtle);
+    border-radius: 8px;
+}
+
+.cm-chunk-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.cm-chunk-label {
+    font-size: var(--cm-font-size-sm);
+    color: var(--cm-text-secondary);
+    font-weight: 500;
+}
+
+.cm-chunk-score {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.cm-chunk-score-label-inline {
+    font-size: var(--cm-font-size-xs);
+    color: var(--cm-text-muted);
+    font-weight: 500;
+}
+
+.cm-chunk-score-value-inline {
+    font-size: var(--cm-font-size-sm);
+    color: var(--cm-accent-copper);
+    font-weight: 600;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+}
+
+.cm-chunk-text {
+    margin: 0 0 0.5rem;
+    font-size: var(--cm-font-size-sm);
+    color: var(--cm-text-muted);
+    line-height: 1.5;
+}
+
+.cm-chunk-scores {
+    display: flex;
+    gap: 1rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--cm-border-subtle);
+}
+
+.cm-chunk-score-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.cm-chunk-score-label {
+    font-size: var(--cm-font-size-xs);
+    color: var(--cm-text-muted);
+    font-weight: 500;
+}
+
+.cm-chunk-score-value {
+    font-size: var(--cm-font-size-xs);
+    color: var(--cm-text-secondary);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+}
+
 /* Empty State */
 .cm-empty-state--hidden {
     display: none;
@@ -745,7 +816,6 @@ body.cm-body {
     border: 1px solid var(--cm-border-subtle);
     margin: 1.5rem 0 1.2rem;
     width: 100%;
-    min-width: 700px;
 }
 
 /* Upload Tabs Container */
@@ -1260,6 +1330,34 @@ body.cm-body {
     text-align: center;
 }
 
+/* Desktop download prompt (web platform only) */
+.cm-crawler-desktop-prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--cm-bg-elevated);
+    border-radius: var(--cm-radius-card);
+    border: 1px solid var(--cm-border-subtle);
+    text-align: center;
+}
+
+.cm-crawler-desktop-text {
+    font-size: var(--cm-font-size-md);
+    color: var(--cm-text-primary);
+    margin: 0;
+    line-height: 1.5;
+    max-width: 500px;
+}
+
+.cm-crawler-desktop-help {
+    font-size: var(--cm-font-size-xs);
+    color: var(--cm-text-muted);
+    margin: 0;
+    font-style: italic;
+}
+
 .cm-crawler-input-group {
     display: flex;
     gap: 0.75rem;
@@ -1365,7 +1463,6 @@ body.cm-body {
     font-family: var(--cm-font-sans);
     cursor: pointer;
     transition: all 150ms ease;
-    min-width: 200px;
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
@@ -1480,7 +1577,57 @@ body.cm-body {
 }
 
 /* Mobile responsive */
-@media (max-width: 768px) {
+/* ============================================
+   RESPONSIVE DESIGN
+   Simple breakpoint-based layout changes
+   ============================================ */
+
+/* Mobile: < 768px - Stack everything vertically */
+@media (max-width: 767px) {
+    .cm-view {
+        padding: 0 0.75rem;
+    }
+
+    .cm-container {
+        padding: 0.75rem;
+    }
+
+    .cm-upload-card {
+        padding: 1rem;
+        margin: 1rem 0 0.75rem;
+    }
+
+    /* Stack crawler controls vertically */
+    .cm-crawler-input-group {
+        flex-direction: column;
+    }
+
+    .cm-crawler-button-group {
+        flex-direction: column;
+    }
+
+    /* Result cards: simplified layout */
+    .cm-result-card {
+        padding: 0.75rem 0.9rem;
+    }
+
+    .cm-result-header {
+        grid-template-columns: 1fr;
+    }
+
+    .cm-result-rank {
+        display: none; /* Hide rank number on mobile */
+    }
+
+    .cm-result-score {
+        text-align: left;
+    }
+
+    .cm-result-footer {
+        flex-wrap: wrap;
+    }
+
+    /* Source preview */
     .cm-overlay {
         padding: 1rem;
     }
@@ -1489,10 +1636,7 @@ body.cm-body {
         max-height: 90vh;
     }
 
-    .cm-source-preview-header {
-        padding: 1rem 1.25rem;
-    }
-
+    .cm-source-preview-header,
     .cm-source-preview-content {
         padding: 1rem 1.25rem;
     }
@@ -1500,5 +1644,28 @@ body.cm-body {
     .cm-source-text {
         padding: 1rem;
         font-size: 0.8rem;
+    }
+}
+
+/* Desktop: ≥ 768px - Constrain width at container level to prevent layout shift */
+@media (min-width: 768px) {
+    /* Constrain view container width - all cards inherit this */
+    .cm-view {
+        min-width: 700px;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+        padding: 0 1rem;
+    }
+
+    /* Crawler controls: fixed widths to prevent shift */
+    .cm-crawler-url-input {
+        min-width: 300px;
+    }
+
+    .cm-crawler-depth-select {
+        min-width: 180px;
+        max-width: 200px;
+        flex-shrink: 0;
     }
 }

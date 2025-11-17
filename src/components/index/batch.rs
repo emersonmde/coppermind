@@ -76,9 +76,32 @@ impl Batch {
             BatchStatus::Completed => {
                 if let Some(metrics) = &self.metrics {
                     let duration_secs = metrics.duration_ms as f64 / 1000.0;
+
+                    let file_word = if metrics.file_count == 1 {
+                        "file"
+                    } else {
+                        "files"
+                    };
+                    let chunk_word = if metrics.chunk_count == 1 {
+                        "chunk"
+                    } else {
+                        "chunks"
+                    };
+                    let token_word = if metrics.token_count == 1 {
+                        "token"
+                    } else {
+                        "tokens"
+                    };
+
                     format!(
-                        "{} files, {} chunks, {} tokens in {:.1}s",
-                        metrics.file_count, metrics.chunk_count, metrics.token_count, duration_secs
+                        "{} {}, {} {}, {} {} in {:.1}s",
+                        metrics.file_count,
+                        file_word,
+                        metrics.chunk_count,
+                        chunk_word,
+                        metrics.token_count,
+                        token_word,
+                        duration_secs
                     )
                 } else {
                     "Completed".to_string()

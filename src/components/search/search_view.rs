@@ -1,4 +1,5 @@
 use crate::search::types::{DocId, DocumentMetadata, SearchResult};
+use crate::search::{aggregate_chunks_by_file, types::FileSearchResult};
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
@@ -16,10 +17,13 @@ enum SearchMessage {
     RunSearch(String), // query text
 }
 
-/// Easter egg: hardcoded result that appears when searching for "coppermind"
+/// Easter egg: hardcoded file result that appears when searching for "coppermind"
 /// This is NOT indexed and does NOT affect document counts - it's purely a UI-level feature.
-fn create_easter_egg_result() -> SearchResult {
-    SearchResult {
+fn create_easter_egg_result() -> FileSearchResult {
+    // First git commit timestamp: 2025-10-31 01:16:40 -0400
+    const FIRST_COMMIT_TIMESTAMP: u64 = 1761887800;
+
+    let chunk = SearchResult {
         doc_id: DocId::from_u64(u64::MAX), // Special ID to avoid conflicts
         score: 1.0,
         vector_score: Some(1.0),
@@ -31,10 +35,20 @@ fn create_easter_egg_result() -> SearchResult {
                approximate nearest neighbor search and provides detailed fusion scores for transparency."
             .to_string(),
         metadata: DocumentMetadata {
-            filename: Some("welcome.md".to_string()),
-            source: Some("Built-in example document".to_string()),
-            ..Default::default()
+            filename: Some("welcome.md (chunk 1)".to_string()),
+            source: Some("welcome.md".to_string()),
+            created_at: FIRST_COMMIT_TIMESTAMP,
         },
+    };
+
+    FileSearchResult {
+        file_path: "welcome.md".to_string(),
+        file_name: "welcome.md".to_string(),
+        score: 1.0,
+        vector_score: Some(1.0),
+        keyword_score: Some(1.0),
+        chunks: vec![chunk],
+        created_at: FIRST_COMMIT_TIMESTAMP,
     }
 }
 
@@ -42,10 +56,10 @@ fn create_easter_egg_result() -> SearchResult {
 #[component]
 pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     let search_query = use_signal(String::new);
-    let search_results = use_signal(Vec::<SearchResult>::new);
+    let search_results = use_signal(Vec::<FileSearchResult>::new);
     let mut searching = use_signal(|| false);
     let search_status = use_signal(String::new);
-    let mut preview_result = use_signal(|| None::<SearchResult>);
+    let mut preview_result = use_signal(|| None::<FileSearchResult>);
 
     let search_engine = use_search_engine();
     let engine_status = use_search_engine_status();
@@ -131,28 +145,47 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                             if let Some(engine) = engine_arc {
                                 // Acquire lock and run search
                                 let search_engine = engine.lock().await;
-                                match search_engine.search(&embedding, &query, 10).await {
-                                    Ok(mut search_results) => {
+                                match search_engine.search(&embedding, &query, 20).await {
+                                    Ok(chunk_results) => {
+                                        info!(
+                                            "✅ Search completed: {} chunk results",
+                                            chunk_results.len()
+                                        );
+
+                                        // Aggregate chunks into file-level results
+                                        let mut file_results =
+                                            aggregate_chunks_by_file(chunk_results);
+
                                         // Easter egg: prepend hardcoded result when searching for "coppermind"
                                         if query.trim().to_lowercase() == "coppermind" {
                                             let easter_egg = create_easter_egg_result();
-                                            search_results.insert(0, easter_egg);
+                                            file_results.insert(0, easter_egg);
                                             info!("🥚 Easter egg activated!");
                                         }
 
                                         info!(
-                                            "✅ Search completed: {} results",
-                                            search_results.len()
+                                            "📁 Aggregated to {} file results",
+                                            file_results.len()
                                         );
-                                        if search_results.is_empty() {
+
+                                        if file_results.is_empty() {
                                             status.set("No results found.".into());
                                         } else {
+                                            let file_count = file_results.len();
+                                            let chunk_count: usize =
+                                                file_results.iter().map(|f| f.chunks.len()).sum();
+
+                                            let file_word =
+                                                if file_count == 1 { "file" } else { "files" };
+                                            let chunk_word =
+                                                if chunk_count == 1 { "chunk" } else { "chunks" };
+
                                             status.set(format!(
-                                                "Found {} results",
-                                                search_results.len()
+                                                "Found {} {} ({} {})",
+                                                file_count, file_word, chunk_count, chunk_word
                                             ));
                                         }
-                                        results.set(search_results);
+                                        results.set(file_results);
                                     }
                                     Err(e) => {
                                         error!("❌ Search failed: {:?}", e);
@@ -179,9 +212,9 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     };
 
     let mut preview_signal = preview_result;
-    let handle_show_source = move |result: SearchResult| {
-        info!("Show source for: {:?}", result.metadata.filename);
-        preview_signal.set(Some(result));
+    let handle_show_source = move |file_result: FileSearchResult| {
+        info!("Show source for: {}", file_result.file_name);
+        preview_signal.set(Some(file_result));
     };
 
     let handle_close_preview = move |_| {
@@ -192,6 +225,17 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     let engine_ready = matches!(engine_status.read().clone(), SearchEngineStatus::Ready { doc_count } if doc_count > 0);
     let has_results = !search_results.read().is_empty();
     let show_empty_state = !engine_ready && !searching();
+
+    // Compute result count text with proper pluralization
+    let result_count_text = if !searching() && has_results {
+        let count = search_results.read().len();
+        let result_word = if count == 1 { "result" } else { "results" };
+        format!("{} {} for \"{}\"", count, result_word, search_query.read())
+    } else if searching() {
+        "Searching…".to_string()
+    } else {
+        String::new()
+    };
 
     rsx! {
         section {
@@ -216,20 +260,16 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                 section { class: "cm-results-section",
                     header { class: "cm-results-header",
                         span { class: "cm-results-count",
-                            if searching() {
-                                "Searching…"
-                            } else {
-                                "{search_results.read().len()} result(s) for \"{search_query}\""
-                            }
+                            "{result_count_text}"
                         }
                     }
 
-                    // Result cards
-                    for (idx, result) in search_results.read().iter().enumerate() {
+                    // File result cards
+                    for (idx, file_result) in search_results.read().iter().enumerate() {
                         ResultCard {
-                            key: "{result.doc_id.as_u64()}",
+                            key: "{file_result.file_path}",
                             rank: idx + 1,
-                            result: result.clone(),
+                            file_result: file_result.clone(),
                             on_show_source: handle_show_source,
                         }
                     }
@@ -257,7 +297,7 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
 
         // Source preview overlay (shown when user clicks "Show Source")
         SourcePreviewOverlay {
-            result: preview_result,
+            file_result: preview_result,
             on_close: handle_close_preview,
         }
     }

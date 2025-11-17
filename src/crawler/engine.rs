@@ -36,6 +36,33 @@ fn normalize_url(url: &str) -> String {
     }
 }
 
+/// Filters links to only include same-origin URLs under the start path (standalone version for concurrent use).
+fn filter_same_origin_links(links: Vec<String>, start_url: &url::Url) -> Vec<String> {
+    let mut filtered = Vec::new();
+
+    // Extract base path from start URL
+    let start_path = start_url.path();
+    let base_path = if start_path.ends_with('/') {
+        start_path.to_string()
+    } else {
+        match start_path.rfind('/') {
+            Some(idx) => start_path[..=idx].to_string(),
+            None => "/".to_string(),
+        }
+    };
+
+    for link in links {
+        if let Ok(parsed) = url::Url::parse(&link) {
+            // Check if origin matches and path is under base_path
+            if parsed.origin() == start_url.origin() && parsed.path().starts_with(&base_path) {
+                filtered.push(link);
+            }
+        }
+    }
+
+    filtered
+}
+
 /// Crawl engine for fetching and processing web pages.
 pub struct CrawlEngine {
     config: CrawlConfig,
@@ -71,6 +98,7 @@ impl CrawlEngine {
     ///         same_origin_only: true,
     ///         max_pages: 10,
     ///         delay_ms: 1000,
+    ///         parallel_requests: 2,
     ///     };
     ///
     ///     let mut engine = CrawlEngine::new(config);
@@ -103,8 +131,8 @@ impl CrawlEngine {
             self.config.start_url, self.config.max_depth, self.config.max_pages
         );
 
-        // BFS traversal
-        while let Some((url, depth)) = self.queue.pop_front() {
+        // BFS traversal with concurrent fetching
+        while !self.queue.is_empty() {
             // Check cancellation
             if let Some(ref flag) = cancel_flag {
                 if flag.load(Ordering::Relaxed) {
@@ -122,24 +150,43 @@ impl CrawlEngine {
                 break;
             }
 
-            if depth > self.config.max_depth {
-                continue;
+            // Collect batch of URLs to fetch in parallel
+            let mut batch = Vec::new();
+            for _ in 0..self.config.parallel_requests {
+                // Pop URLs until we hit depth limit or queue is empty
+                while let Some((url, depth)) = self.queue.pop_front() {
+                    if depth > self.config.max_depth {
+                        continue; // Skip and try next
+                    }
+
+                    // Normalize URL to handle trailing slashes
+                    let normalized_url = normalize_url(&url);
+
+                    // Skip if already visited (using normalized URL)
+                    if self.visited.contains(&normalized_url) {
+                        continue; // Skip and try next
+                    }
+
+                    self.visited.insert(normalized_url);
+                    batch.push((url, depth));
+                    break; // Got valid URL, move to next batch slot
+                }
+
+                // Stop collecting if queue is empty or we hit max_pages
+                if self.queue.is_empty() || results.len() + batch.len() >= self.config.max_pages {
+                    break;
+                }
             }
 
-            // Normalize URL to handle trailing slashes
-            let normalized_url = normalize_url(&url);
-
-            // Skip if already visited (using normalized URL)
-            if self.visited.contains(&normalized_url) {
-                continue;
+            // If no URLs in batch, we're done
+            if batch.is_empty() {
+                break;
             }
 
-            self.visited.insert(normalized_url);
-
-            // Send progress update
+            // Send progress update (show all URLs in batch as "current")
             if let Some(ref mut callback) = progress_callback {
                 let progress = CrawlProgress {
-                    current_url: Some(url.clone()),
+                    current_urls: batch.iter().map(|(u, _)| u.clone()).collect(),
                     queue: self.queue.iter().map(|(u, _)| u.clone()).collect(),
                     visited_count: self.visited.len(),
                     completed_count: results.len(),
@@ -147,44 +194,98 @@ impl CrawlEngine {
                 callback(progress);
             }
 
-            // Politeness delay (except for first page)
+            // Politeness delay (except for first batch)
             if !results.is_empty() && self.config.delay_ms > 0 {
                 sleep(Duration::from_millis(self.config.delay_ms)).await;
             }
 
-            // Fetch and parse page
-            info!("Crawling: {} (depth: {})", url, depth);
+            // Fetch all pages in batch concurrently
+            // Clone start_url and config for use in concurrent tasks
+            let start_url_clone = start_url.clone();
+            let same_origin_only = self.config.same_origin_only;
 
-            match self.crawl_page(&url, depth, &start_url).await {
-                Ok(result) => {
-                    // Add discovered links to queue if we haven't reached max depth
-                    if depth < self.config.max_depth {
-                        for link in &result.links {
-                            let normalized_link = normalize_url(link);
-                            if !self.visited.contains(&normalized_link) {
-                                self.queue.push_back((link.clone(), depth + 1));
+            let fetch_futures: Vec<_> = batch
+                .into_iter()
+                .map(|(url, depth)| {
+                    let start_url_ref = start_url_clone.clone();
+                    async move {
+                        info!("Crawling: {} (depth: {})", url, depth);
+
+                        // Fetch HTML
+                        let fetch_result = fetch_html(&url).await;
+
+                        let crawl_result = match fetch_result {
+                            Ok((html, status_code)) => {
+                                // Extract text content
+                                match extract_text(&html) {
+                                    Ok(text) => {
+                                        // Extract links
+                                        match extract_links(&html, &url) {
+                                            Ok(mut links) => {
+                                                // Filter same-origin links if configured
+                                                if same_origin_only {
+                                                    links = filter_same_origin_links(
+                                                        links,
+                                                        &start_url_ref,
+                                                    );
+                                                }
+
+                                                Ok(CrawlResult {
+                                                    url: url.clone(),
+                                                    text,
+                                                    links,
+                                                    status_code,
+                                                    success: true,
+                                                })
+                                            }
+                                            Err(e) => Err(e),
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            Err(e) => Err(e),
+                        };
+
+                        (url, depth, crawl_result)
+                    }
+                })
+                .collect();
+
+            let fetch_results = futures::future::join_all(fetch_futures).await;
+
+            // Process results from concurrent fetches
+            for (url, depth, result) in fetch_results {
+                match result {
+                    Ok(result) => {
+                        // Add discovered links to queue if we haven't reached max depth
+                        if depth < self.config.max_depth {
+                            for link in &result.links {
+                                let normalized_link = normalize_url(link);
+                                if !self.visited.contains(&normalized_link) {
+                                    self.queue.push_back((link.clone(), depth + 1));
+                                }
                             }
                         }
-                    }
 
-                    // Call page callback immediately (for streaming indexing)
-                    if let Some(ref mut callback) = page_callback {
-                        callback(&result);
-                    }
+                        // Call page callback immediately (for streaming indexing)
+                        if let Some(ref mut callback) = page_callback {
+                            callback(&result);
+                        }
 
-                    results.push(result);
-                }
-                Err(e) => {
-                    // Use info level for expected skips (binary/non-HTML content)
-                    // Use error level for actual failures (network errors, etc.)
-                    let error_msg = e.to_string();
-                    if error_msg.contains("Skipping") {
-                        info!("Skipped {}: {}", url, error_msg);
-                    } else {
-                        error!("Failed to crawl {}: {}", url, e);
+                        results.push(result);
                     }
-                    // Continue crawling other pages even if one fails
-                    continue;
+                    Err(e) => {
+                        // Use info level for expected skips (binary/non-HTML content)
+                        // Use error level for actual failures (network errors, etc.)
+                        let error_msg = e.to_string();
+                        if error_msg.contains("Skipping") {
+                            info!("Skipped {}: {}", url, error_msg);
+                        } else {
+                            error!("Failed to crawl {}: {}", url, e);
+                        }
+                        // Continue crawling other pages even if one fails
+                    }
                 }
             }
         }
@@ -192,7 +293,7 @@ impl CrawlEngine {
         // Send final progress update
         if let Some(ref mut callback) = progress_callback {
             let progress = CrawlProgress {
-                current_url: None,
+                current_urls: Vec::new(),
                 queue: Vec::new(),
                 visited_count: self.visited.len(),
                 completed_count: results.len(),
@@ -209,74 +310,6 @@ impl CrawlEngine {
         self.crawl_with_progress::<fn(CrawlProgress), fn(&CrawlResult)>(None, None, None)
             .await
     }
-
-    /// Crawls a single page and returns the result.
-    async fn crawl_page(
-        &self,
-        url: &str,
-        _depth: usize,
-        start_url: &url::Url,
-    ) -> Result<CrawlResult, CrawlError> {
-        // Fetch HTML
-        let (html, status_code) = fetch_html(url).await?;
-
-        // Extract text content
-        let text = extract_text(&html)?;
-
-        // Extract links
-        let mut links = extract_links(&html, url)?;
-
-        // Filter same-origin links if configured
-        if self.config.same_origin_only {
-            links = self.filter_same_origin(links, start_url)?;
-        }
-
-        Ok(CrawlResult {
-            url: url.to_string(),
-            text,
-            links,
-            status_code,
-            success: true,
-        })
-    }
-
-    /// Filters links to only include same-origin URLs under the start path.
-    ///
-    /// For example, if start_url is `https://example.com/docs/guide`, only links
-    /// under `https://example.com/docs/` will be included.
-    fn filter_same_origin(
-        &self,
-        links: Vec<String>,
-        start_url: &url::Url,
-    ) -> Result<Vec<String>, CrawlError> {
-        let mut filtered = Vec::new();
-
-        // Extract base path from start URL (directory containing the start page)
-        // e.g., "https://example.com/docs/guide" -> "/docs/"
-        // e.g., "https://example.com/docs/" -> "/docs/"
-        let start_path = start_url.path();
-        let base_path = if start_path.ends_with('/') {
-            start_path.to_string()
-        } else {
-            // Get parent directory by removing everything after the last '/'
-            match start_path.rfind('/') {
-                Some(idx) => start_path[..=idx].to_string(),
-                None => "/".to_string(), // Shouldn't happen for valid URLs
-            }
-        };
-
-        for link in links {
-            let parsed = url::Url::parse(&link)
-                .map_err(|e| CrawlError::InvalidUrl(format!("Invalid link {}: {}", link, e)))?;
-
-            // Check if origin matches (scheme + host + port) and path is under base_path
-            if parsed.origin() == start_url.origin() && parsed.path().starts_with(&base_path) {
-                filtered.push(link);
-            }
-        }
-
-        Ok(filtered)
-    }
 }
 
 #[cfg(test)]
@@ -285,7 +318,6 @@ mod tests {
 
     #[test]
     fn test_filter_same_origin_with_path() {
-        let engine = CrawlEngine::new(CrawlConfig::default());
         let start_url = url::Url::parse("https://example.com/docs/intro").unwrap();
 
         let links = vec![
@@ -296,7 +328,7 @@ mod tests {
             "http://example.com/docs/insecure".to_string(), // ✗ Different scheme
         ];
 
-        let filtered = engine.filter_same_origin(links, &start_url).unwrap();
+        let filtered = filter_same_origin_links(links, &start_url);
 
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains(&"https://example.com/docs/guide".to_string()));
@@ -305,7 +337,6 @@ mod tests {
 
     #[test]
     fn test_filter_same_origin_directory_url() {
-        let engine = CrawlEngine::new(CrawlConfig::default());
         // Start URL is a directory (ends with /)
         let start_url = url::Url::parse("https://example.com/docs/").unwrap();
 
@@ -315,7 +346,7 @@ mod tests {
             "https://example.com/api".to_string(),        // ✗ Not under /docs/
         ];
 
-        let filtered = engine.filter_same_origin(links, &start_url).unwrap();
+        let filtered = filter_same_origin_links(links, &start_url);
 
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains(&"https://example.com/docs/guide".to_string()));
@@ -324,7 +355,6 @@ mod tests {
 
     #[test]
     fn test_filter_same_origin_root_url() {
-        let engine = CrawlEngine::new(CrawlConfig::default());
         // Start URL is the root - should allow all same-origin links
         let start_url = url::Url::parse("https://example.com/").unwrap();
 
@@ -334,7 +364,7 @@ mod tests {
             "https://other.com/page".to_string(),   // ✗ Different origin
         ];
 
-        let filtered = engine.filter_same_origin(links, &start_url).unwrap();
+        let filtered = filter_same_origin_links(links, &start_url);
 
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains(&"https://example.com/docs".to_string()));

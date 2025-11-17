@@ -51,6 +51,12 @@ pub struct CrawlConfig {
 
     /// Politeness delay between requests (milliseconds).
     pub delay_ms: u64,
+
+    /// Number of pages to fetch in parallel.
+    ///
+    /// Higher values = faster crawling, but more load on target server.
+    /// Recommended values: 1 (sequential), 2, 4, 8, 16.
+    pub parallel_requests: usize,
 }
 
 impl Default for CrawlConfig {
@@ -60,7 +66,8 @@ impl Default for CrawlConfig {
             max_depth: 1,
             same_origin_only: true,
             max_pages: 100,
-            delay_ms: 1000, // 1 second between requests
+            delay_ms: 1000,       // 1 second between requests
+            parallel_requests: 2, // Default to 2 parallel requests
         }
     }
 }
@@ -87,8 +94,8 @@ pub struct CrawlResult {
 /// Progress update during crawling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlProgress {
-    /// Current URL being crawled.
-    pub current_url: Option<String>,
+    /// URLs currently being fetched in parallel.
+    pub current_urls: Vec<String>,
 
     /// URLs in queue waiting to be crawled.
     pub queue: Vec<String>,

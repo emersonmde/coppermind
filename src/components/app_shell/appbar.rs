@@ -117,13 +117,14 @@ pub fn AppBar(
                         }
                     }
                 } else {
+                    let doc_word = if doc_count == 1 { "doc" } else { "docs" };
                     rsx! {
                         button {
                             class: "cm-status-pill cm-status-pill--ok cm-status-pill--clickable",
                             onclick: move |_| on_metrics_toggle.call(()),
                             "aria-label": "Toggle metrics panel",
                             span { class: "cm-status-dot cm-status-dot--ok" }
-                            "Index: {doc_count} docs"
+                            "Index: {doc_count} {doc_word}"
                             span { class: "cm-status-chevron", "{chevron}" }
                         }
                     }

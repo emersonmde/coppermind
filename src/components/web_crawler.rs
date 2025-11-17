@@ -20,6 +20,7 @@ mod desktop {
     pub fn WebCrawlerCard() -> Element {
         let mut url = use_signal(String::new);
         let mut max_depth = use_signal(|| 999); // Default to All (unlimited)
+        let mut parallel_requests = use_signal(|| 2); // Default to 2 parallel requests
         let mut status = use_signal(|| CrawlStatus::Idle);
         let mut progress = use_signal(|| None::<CrawlProgress>);
         let mut cancel_flag = use_signal(|| Arc::new(AtomicBool::new(false)));
@@ -32,6 +33,7 @@ mod desktop {
             }
 
             let depth = max_depth();
+            let workers = parallel_requests();
 
             // Reset status and create new cancel flag
             status.set(CrawlStatus::Crawling);
@@ -49,6 +51,7 @@ mod desktop {
                     same_origin_only: true,
                     max_pages: 100,
                     delay_ms: 500,
+                    parallel_requests: workers,
                 };
 
                 let mut engine = CrawlEngine::new(config);
@@ -108,6 +111,29 @@ mod desktop {
 
         let is_crawling = matches!(status(), CrawlStatus::Crawling);
 
+        // Compute crawling status text with transparency about failures
+        // Note: "downloaded" = successfully fetched, not yet indexed (indexing happens after crawl completes)
+        let crawling_status_text = if matches!(status(), CrawlStatus::Crawling) {
+            if let Some(p) = progress() {
+                let failed = p.visited_count.saturating_sub(p.completed_count);
+                if failed > 0 {
+                    format!(
+                        "Crawling... {} downloaded, {} failed ({} total)",
+                        p.completed_count, failed, p.visited_count
+                    )
+                } else {
+                    format!(
+                        "Crawling... {} downloaded ({} crawled)",
+                        p.completed_count, p.visited_count
+                    )
+                }
+            } else {
+                "Initializing crawler...".to_string()
+            }
+        } else {
+            String::new()
+        };
+
         rsx! {
             section { class: "cm-upload-card",
                 div { class: "cm-upload-body",
@@ -148,6 +174,22 @@ mod desktop {
                                 option { value: "5", "Depth 5" }
                                 option { value: "999", "All (unlimited)" }
                             }
+
+                            select {
+                                class: "cm-crawler-depth-select",
+                                disabled: is_crawling,
+                                value: "{parallel_requests}",
+                                onchange: move |evt| {
+                                    if let Ok(workers) = evt.value().parse::<usize>() {
+                                        parallel_requests.set(workers);
+                                    }
+                                },
+                                option { value: "1", "1 request" }
+                                option { value: "2", selected: parallel_requests() == 2, "2 parallel" }
+                                option { value: "4", "4 parallel" }
+                                option { value: "8", "8 parallel" }
+                                option { value: "16", "16 parallel" }
+                            }
                         }
 
                         div { class: "cm-crawler-button-group",
@@ -171,13 +213,26 @@ mod desktop {
                     // Progress cards (show when crawling)
                     if let Some(p) = progress() {
                         div { class: "cm-crawler-progress",
-                            // Current target card
-                            if let Some(current) = &p.current_url {
+                            // Currently fetching cards (show all parallel requests)
+                            if !p.current_urls.is_empty() {
                                 div { class: "cm-crawler-progress-card",
-                                    div { class: "cm-crawler-progress-label", "Currently crawling:" }
-                                    div { class: "cm-crawler-progress-url", "{current}" }
+                                    div { class: "cm-crawler-progress-label",
+                                        if p.current_urls.len() == 1 {
+                                            "Currently fetching:"
+                                        } else {
+                                            "Currently fetching ({p.current_urls.len()} parallel):"
+                                        }
+                                    }
+                                    div { class: "cm-crawler-queue-list",
+                                        for (idx, current_url) in p.current_urls.iter().enumerate() {
+                                            div { class: "cm-crawler-queue-item",
+                                                key: "{idx}",
+                                                "{current_url}"
+                                            }
+                                        }
+                                    }
                                     div { class: "cm-crawler-progress-stats",
-                                        "{p.completed_count} completed · {p.visited_count} visited"
+                                        "{p.completed_count} downloaded · {p.visited_count} crawled"
                                     }
                                 }
                             }
@@ -215,11 +270,7 @@ mod desktop {
                         },
                         CrawlStatus::Crawling => rsx! {
                             div { class: "cm-crawler-status cm-crawler-status--crawling",
-                                if let Some(p) = progress() {
-                                    "Crawling... {p.completed_count} pages indexed"
-                                } else {
-                                    "Initializing crawler..."
-                                }
+                                "{crawling_status_text}"
                             }
                         },
                         CrawlStatus::Success { pages } => rsx! {
@@ -252,10 +303,32 @@ mod desktop {
 mod wasm {
     use dioxus::prelude::*;
 
-    /// Stub component for WASM (renders nothing due to CORS restrictions)
+    /// Stub component for WASM showing desktop download prompt
     #[component]
     pub fn WebCrawlerCard() -> Element {
-        rsx! {}
+        rsx! {
+            section { class: "cm-upload-card",
+                div { class: "cm-upload-body",
+                    p { class: "cm-crawler-subtitle",
+                        "Web crawling is not available in the browser due to CORS restrictions."
+                    }
+
+                    div { class: "cm-crawler-desktop-prompt",
+                        p { class: "cm-crawler-desktop-text",
+                            "Download the Desktop version to use the web crawler"
+                        }
+
+                        a {
+                            class: "cm-btn cm-btn--primary",
+                            href: "https://github.com/emersonmde/coppermind",
+                            target: "_blank",
+                            rel: "noopener noreferrer",
+                            "Download Desktop App"
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

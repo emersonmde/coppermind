@@ -112,6 +112,8 @@ pub struct DocumentRecord {
 ///
 /// Returned by the hybrid search engine, containing both the document
 /// and relevance scores from different ranking algorithms.
+///
+/// Represents a single chunk from the search index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     /// Document identifier
@@ -126,6 +128,29 @@ pub struct SearchResult {
     pub text: String,
     /// Document metadata
     pub metadata: DocumentMetadata,
+}
+
+/// File-level search result aggregating multiple chunks from the same source.
+///
+/// Used for displaying search results at the file level (like Google shows pages)
+/// rather than individual chunks (paragraphs). This provides a cleaner UX while
+/// preserving access to individual chunk scores and content.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileSearchResult {
+    /// Source file path or URL (from metadata.source)
+    pub file_path: String,
+    /// File display name (extracted from path)
+    pub file_name: String,
+    /// Best chunk's RRF score (represents file relevance)
+    pub score: f32,
+    /// Best chunk's vector score (if available)
+    pub vector_score: Option<f32>,
+    /// Best chunk's keyword score (if available)
+    pub keyword_score: Option<f32>,
+    /// All chunks from this file, sorted by score (descending)
+    pub chunks: Vec<SearchResult>,
+    /// Timestamp from first indexed chunk
+    pub created_at: u64,
 }
 
 /// Error types for search operations.
