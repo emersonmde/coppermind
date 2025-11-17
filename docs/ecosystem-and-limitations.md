@@ -180,7 +180,7 @@ fn matmul(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 ### WASM Limitations
 
-**1. No Native Threading (Yet)**
+**1. No Native Threading**
 ```rust
 // ❌ Doesn't work in WASM
 use std::thread;
@@ -190,10 +190,7 @@ thread::spawn(|| { /* ... */ });
 spawn_worker(worker_code).await?;
 ```
 
-**Status:** WebAssembly threads proposal exists, but requires:
-- COOP/COEP headers ✅ (we have this via Service Worker)
-- Browser support (Chrome/Firefox yes, Safari partial)
-- `wasm32-unknown-unknown` → `wasm32-wasi-threads` target change
+**Status:** WebAssembly threading with Rust investigated and abandoned - Rust WebAssembly atomics are fundamentally incomplete and unsuitable for production use (see [ADR 003](adrs/003-wasm-threading-workaround.md) for full investigation). Web Workers remain the recommended approach for parallel computation in browsers.
 
 **2. Memory Limit: 4GB (wasm32)**
 - Fixed by architecture (32-bit pointers)
@@ -440,10 +437,6 @@ const session = await ort.InferenceSession.create('model.onnx', {
 - Candle announcement and rationale
 - Why Rust for browser ML
 
-**5. "Cross-Origin Isolation Guide" (web.dev, 2021)**
-- URL: https://web.dev/coop-coep/
-- Explains COOP/COEP requirements
-
 ### Useful Documentation
 
 **Candle:**
@@ -547,18 +540,10 @@ let model = BertModel::new(vb, &config)?;
 
 **Expected:** 5-20x speedup for matrix operations.
 
-### 2. WASM Threads + SharedArrayBuffer
-```rust
-// Future: Multi-threaded WASM
-use rayon::prelude::*;
+### 2. ~~WASM Threads + SharedArrayBuffer~~
+**Status:** ❌ Investigated and abandoned - Rust WebAssembly atomics are fundamentally broken and production-unviable.
 
-// Will work in WASM with atomics
-chunks.par_iter().map(|chunk| {
-    embed(chunk)
-}).collect()
-```
-
-**Status:** Possible today with COOP/COEP ✅, but tooling immature.
+After extensive investigation (see [ADR 003](adrs/003-wasm-threading-workaround.md)), determined that Rust WebAssembly threading is unsuitable for production use due to incomplete atomics implementation, toolchain incompatibilities, and browser limitations. Web Workers remain the recommended approach for parallel computation.
 
 ### 3. Quantization Support
 ```rust
@@ -598,13 +583,7 @@ Chrome DevTools → Performance → Record
 Look for long "Evaluate Script" blocks (WASM execution)
 ```
 
-### 3. Check Cross-Origin Isolation
-```javascript
-console.log(crossOriginIsolated);  // Should be true
-console.log(SharedArrayBuffer);    // Should be defined
-```
-
-### 4. WebGPU Debugging
+### 3. WebGPU Debugging
 ```javascript
 // Enable WebGPU validation errors
 const adapter = await navigator.gpu.requestAdapter();

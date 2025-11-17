@@ -7,11 +7,10 @@ This document provides a comprehensive technical overview of Coppermind's archit
 1. [Architecture Overview](#architecture-overview)
 2. [Hybrid Search System](#hybrid-search-system)
 3. [Browser ML with Candle](#browser-ml-with-candle)
-4. [Cross-Origin Isolation - Lessons Learned](#cross-origin-isolation---lessons-learned)
-5. [Web Worker Architecture](#web-worker-architecture)
-6. [Cross-Platform Compilation](#cross-platform-compilation)
-7. [Storage & Persistence](#storage--persistence)
-8. [Technical Stack](#technical-stack)
+4. [Web Worker Architecture](#web-worker-architecture)
+5. [Cross-Platform Compilation](#cross-platform-compilation)
+6. [Storage & Persistence](#storage--persistence)
+7. [Technical Stack](#technical-stack)
 
 ---
 
@@ -90,7 +89,7 @@ pub struct VectorSearchEngine {
 Distance metric: **Cosine distance** = `1 - cosine_similarity`
 - Documents are represented as 512-dimensional embeddings from JinaBERT
 - Index rebuilds automatically when documents are added
-- instant-distance uses [rayon](https://github.com/rayon-rs/rayon) for parallel graph construction, benefiting from SharedArrayBuffer when available
+- instant-distance uses [rayon](https://github.com/rayon-rs/rayon) for parallel graph construction on native platforms
 
 ### Keyword Search - BM25 Algorithm
 
@@ -343,160 +342,6 @@ This design allows adding new models (e.g., sentence-transformers, OpenAI-style 
 - Different sequence lengths (512, 1024, 2048, 8192 tokens)
 - Different architectures (BERT, RoBERTa, T5, custom models)
 - Specialized models (code embeddings, multilingual, domain-specific)
-
----
-
-## Cross-Origin Isolation - Lessons Learned
-
-Cross-Origin Isolation (COI) is required to enable SharedArrayBuffer, which allows multi-threaded WASM execution. Implementing COI in a bundled WASM application comes with significant challenges. This section documents the hard-earned lessons from getting it working.
-
-### Why Cross-Origin Isolation is Needed
-
-SharedArrayBuffer was disabled in browsers in 2018 due to Spectre/Meltdown vulnerabilities. To re-enable it, browsers require proof that the site is isolated from cross-origin attacks via HTTP headers:
-
-- **`Cross-Origin-Opener-Policy: same-origin`** (COOP) - Prevents other windows from accessing your window object
-- **`Cross-Origin-Embedder-Policy: require-corp`** (COEP) - Requires all resources to opt-in via CORS or CORP headers
-
-**Verification:**
-```javascript
-if (window.crossOriginIsolated) {
-    // SharedArrayBuffer is available
-}
-```
-
-**Current benefit:** instant-distance uses rayon for parallel HNSW graph construction, which benefits from SharedArrayBuffer support.
-
-**Future benefit:** Enables wasm-bindgen-rayon for multi-threaded embedding inference across CPU cores.
-
-### The Service Worker Approach
-
-Since GitHub Pages (and most static hosts) don't allow setting custom HTTP headers, we use a Service Worker to inject them. The service worker intercepts all fetch requests and adds COOP/COEP headers to responses.
-
-**Why this works:** Service workers can modify HTTP response headers before they reach the page, effectively adding the required headers without server configuration.
-
-### The Bundler Problem
-
-Dioxus (and most modern build tools) hash asset filenames for cache busting:
-```
-coi-serviceworker.min.js → coi-serviceworker-dxh29a8f.js
-```
-
-**Problem:** Service workers must be registered from a **predictable path**. The browser expects to find the service worker at a fixed URL. If the filename changes on every build, registration breaks.
-
-### Solution: Special Asset Handling
-
-The service worker requires exceptional treatment to avoid bundler processing:
-
-**1. Location:** Must be in `/public/` directory, NOT `/assets/`
-```
-public/
-  └── coi-serviceworker.min.js  ← MUST be here
-```
-
-**Why:** Files in `public/` are copied verbatim to the output directory without hashing.
-
-**2. No Dioxus asset! macro:**
-```rust
-// ❌ WRONG - This will hash the filename
-const SW: Asset = asset!("/public/coi-serviceworker.min.js");
-
-// ✅ CORRECT - Reference by string literal
-if cfg!(target_arch = "wasm32") {
-    if cfg!(debug_assertions) {
-        document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
-    } else {
-        document::Script { src: "/coppermind/coi-serviceworker.min.js" }
-    }
-}
-```
-
-**Why different paths for dev vs release:**
-- **Dev mode:** `dx serve` maps `public/` to `/assets/` URL path
-- **Release mode:** `dx bundle --release` copies `public/` to root of output
-
-**3. Must load before everything else:**
-The script tag must be in the `<head>` and load synchronously (no `async` or `defer`) so the service worker installs before any other resources are fetched.
-
-```rust
-rsx! {
-    document::Link { rel: "icon", href: FAVICON }
-    if cfg!(target_arch = "wasm32") {
-        // COI service worker MUST load first
-        if cfg!(debug_assertions) {
-            document::Script { src: "/coppermind/assets/coi-serviceworker.min.js" }
-        } else {
-            document::Script { src: "/coppermind/coi-serviceworker.min.js" }
-        }
-    }
-    // ... rest of app
-}
-```
-
-**4. Service Worker Self-Registration:**
-The `coi-serviceworker.min.js` library (from [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker)) automatically:
-- Registers itself as a service worker
-- Intercepts all fetch requests
-- Adds COOP/COEP headers to responses
-- Reloads the page once the service worker is active
-
-**First load sequence:**
-```
-1. Browser loads page
-2. <script> tag loads coi-serviceworker.min.js
-3. Script registers itself as service worker
-4. Service worker installs (takes ~100ms)
-5. Script reloads the page
-6. Second load: All requests go through service worker
-7. Service worker adds COOP/COEP headers
-8. window.crossOriginIsolated === true
-9. SharedArrayBuffer available
-```
-
-### Common Pitfalls
-
-**1. Filename hashing:**
-If you use `asset!()` macro or move the file to `/assets/`, the filename gets hashed and service worker registration fails silently.
-
-**2. Wrong path in dev vs release:**
-Dev and release builds expect different paths. Must use conditional compilation to get the right path.
-
-**3. Loading too late:**
-If the service worker loads after other resources, those initial requests won't have COOP/COEP headers. Must load in `<head>` before anything else.
-
-**4. Async loading:**
-Using `async` or `defer` on the script tag allows other resources to load first, defeating the purpose.
-
-**5. Local development without HTTPS:**
-Service workers require HTTPS (except for localhost). `dx serve` works because it runs on `localhost:8080`.
-
-### Debugging Cross-Origin Isolation
-
-**Check if enabled:**
-```javascript
-console.log(window.crossOriginIsolated);  // Should be true
-```
-
-**Verify headers in DevTools:**
-- Open Network tab
-- Click on the document request
-- Check Response Headers for:
-  - `cross-origin-opener-policy: same-origin`
-  - `cross-origin-embedder-policy: require-corp`
-
-**Common issues:**
-- Headers present but `crossOriginIsolated` still false: Check for cross-origin resources without CORP headers
-- Service worker not installing: Check Console for registration errors
-- Page doesn't reload after service worker install: Library bug or script loaded too late
-
-### Summary: The Magic Incantation
-
-To make COI work in a bundled WASM app:
-
-1. Put `coi-serviceworker.min.js` in `/public/` directory
-2. Reference via string literal, **not** `asset!()` macro
-3. Use conditional paths for dev vs release
-4. Load in `<head>` synchronously before other resources
-5. **DO NOT TOUCH** this setup once it's working - it's fragile but necessary
 
 ---
 
@@ -904,12 +749,11 @@ let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
 
 ### Browser Integration
 - **Web Workers** - Background processing (ML inference off main thread, message passing with WASM binary)
-- **Service Worker** - Cross-origin isolation ([coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) for COEP/COIP headers, enables SharedArrayBuffer)
 
 ### Build & Tooling
 - **[Dioxus CLI](https://dioxuslabs.com/)** - Build tool (dx serve, dx bundle, platform targeting)
 - **[wasm-bindgen](https://github.com/rustwasm/wasm-bindgen)** - WASM/JS interop (zero-cost bindings)
-- **[rayon](https://github.com/rayon-rs/rayon)** - Data parallelism (used by instant-distance for parallel HNSW construction)
+- **[rayon](https://github.com/rayon-rs/rayon)** - Data parallelism (used by instant-distance for parallel HNSW construction on native platforms)
 
 ---
 
@@ -921,9 +765,7 @@ let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
 
 ### Web Standards & Specifications
 - [Origin Private File System](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) - MDN Web Docs
-- [Cross-Origin Isolation Guide](https://web.dev/articles/cross-origin-isolation-guide) - web.dev
-- [Making your website cross-origin isolated](https://web.dev/articles/coop-coep) - web.dev
-- [SharedArrayBuffer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) - MDN Web Docs
+- [Web Workers API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) - MDN Web Docs
 
 ### Rust Ecosystem
 - [Dioxus Documentation](https://dioxuslabs.com/learn/0.6/)

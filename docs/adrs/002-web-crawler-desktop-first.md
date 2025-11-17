@@ -92,12 +92,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 ### Phase 2: Future Web Support (Optional)
 
-**Option A: User-Provided CORS Proxy**
+**Option A: Browser Extension**
 
-- Desktop: Direct fetching (no proxy)
-- Web: Optional proxy URL setting
-- User runs their own proxy (e.g., `cors-anywhere` on localhost)
-- Preserves local-first architecture (user controls proxy)
+- Desktop: Direct fetching (no extension needed)
+- Web: Optional browser extension that operates in different security context
+- Extension can bypass CORS restrictions (background script has broader permissions)
+- Webpage includes "Install Extension" button for users who want web crawling
+- Preserves local-first architecture (extension runs locally, no external services)
 
 **Option B: Accept web platform limitations**
 
@@ -180,12 +181,22 @@ Minimal implementation to validate architecture:
 - `scraper` is purpose-built for this exact use case
 - Current codebase already limits tree-sitter to native-only (code chunking)
 
-### ❌ Web-Only with CORS Proxy by Default
+### ❌ User-Provided CORS Proxy (localhost)
+
+**Rejected because:**
+- Only works for local development (`dx serve`)
+- Deployed web apps cannot access user's localhost due to Private Network Access (PNA) restrictions
+- Browser security blocks `https://example.com` from fetching `http://localhost:9000`
+- Would work: `http://localhost:8080` (app) → `http://localhost:9000` (proxy)
+- Wouldn't work: `https://errorsignal.dev` (app) → `http://localhost:9000` (proxy)
+
+### ❌ Publicly Hosted CORS Proxy
 
 **Rejected because:**
 - Violates local-first architecture (requires external proxy service)
-- Adds complexity for minimal benefit (desktop works fine)
 - User privacy concerns (proxy sees all crawled URLs)
+- Introduces external dependency (proxy must be maintained, hosted, and available)
+- Defeats purpose of local-first design
 
 ### ❌ Implement Twice (Separate Web/Desktop Code)
 
@@ -215,4 +226,4 @@ Once basic crawler is working on desktop:
 5. **Rate limiting** (politeness delay between requests)
 6. **Error handling** (404s, timeouts, redirects)
 7. **Sitemap.xml parsing** (crawl seed from sitemap)
-8. **Web platform support** (via CORS proxy option)
+8. **Web platform support** (via optional browser extension with "Install Extension" button)

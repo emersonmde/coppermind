@@ -11,7 +11,6 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 - Architecture overview and module structure
 - Hybrid search system (HNSW vector search, BM25 keyword search, RRF fusion)
 - Browser ML with Candle (JinaBERT embeddings, model loading, inference)
-- **Cross-Origin Isolation - Lessons Learned** (detailed section on COI service worker deployment challenges)
 - Web Worker architecture for non-blocking ML inference
 - Cross-platform compilation (web vs desktop)
 - Storage & persistence (OPFS vs native filesystem)
@@ -60,5 +59,4 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 
 ### Web Standards
 - [OPFS (Origin Private File System)](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
-- [Cross-Origin Isolation](https://web.dev/articles/cross-origin-isolation-guide)
-- [SharedArrayBuffer](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer)
+- [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API)
