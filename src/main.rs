@@ -62,14 +62,6 @@ fn App() -> Element {
             style { {include_str!("../assets/coppermind.css")} }
         }
 
-        // COEP Service Worker only needed for web (SharedArrayBuffer support)
-        if cfg!(target_arch = "wasm32") {
-            document::Script {
-                r#"window.coi = {{ coepCredentialless: true, quiet: false }};"#
-            }
-            document::Script { src: "/coppermind/coi-serviceworker.min.js" }
-        }
-
         body { class: "cm-body",
             CoppermindApp {}
         }
