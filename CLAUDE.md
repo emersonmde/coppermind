@@ -54,12 +54,6 @@ cargo install dioxus-cli --locked
 cargo install cargo-audit --locked
 ```
 
-**Rust Toolchain:**
-- Nightly Rust required for WASM threading (Rayon parallelism)
-- Configured via `rust-toolchain.toml` (auto-installed on first build)
-- Web builds use SharedArrayBuffer + Rayon for 3x speedup
-- Desktop builds use stable Rust (native threading)
-
 ## Architecture
 
 ### Module Organization
@@ -114,38 +108,18 @@ cargo install cargo-audit --locked
   - Reason: Metal has compatibility issues in iOS simulator
   - Accelerate provides optimized CPU inference via Apple's BLAS/LAPACK
   - Future: Could enable Metal for real devices only, but CPU mode ensures universal compatibility
-- **Web (WASM)**: Multi-threaded CPU via Rayon + SharedArrayBuffer (3x speedup)
-  - No GPU acceleration (WebGPU backend in development by Candle team)
-  - Requires nightly Rust and COI (COOP/COEP headers)
+- **Web (WASM)**: CPU only (no GPU acceleration)
+  - WebGPU backend in development by Candle team
+  - **Note**: WASM threading with Rayon was investigated but abandoned due to Rust WebAssembly atomics being fundamentally broken (see `docs/adrs/003-wasm-threading-workaround.md`)
 - **Linux/Windows x86**: Intel MKL (CPU optimized)
-
-**Cross-Origin Isolation & WASM Threading**:
-- Service Worker (`public/coi-serviceworker.min.js`) injects COOP/COEP headers
-- Required for SharedArrayBuffer support (enables Rayon parallel processing)
-- **ACTIVE**: Rayon parallelism enabled via `wasm-bindgen-rayon` (3x speedup for Candle inference)
-- Conditionally loaded only on web: `if cfg!(target_arch = "wasm32")`
-- Requires nightly Rust (WASM atomics not stable yet)
-- **CRITICAL: Special Asset Handling Required**
-  - Must be in `public/` directory (NOT `assets/`)
-  - Must NOT have hash in filename (must remain `coi-serviceworker.min.js`)
-  - Must NOT be processed by Dioxus `asset!()` macro
-  - Referenced directly in `main.rs` via conditional path:
-    - Dev mode: `/coppermind/assets/coi-serviceworker.min.js` (public/ → /assets/)
-    - Release mode: `/coppermind/coi-serviceworker.min.js` (public/ → root)
-  - **DO NOT TOUCH** this file's location or loading mechanism - it's fragile but necessary
-  - Reason: Service worker must be at predictable path for browser registration
 
 **Web Worker Architecture**:
 - **JinaBERT Embedding Worker** (`assets/workers/embedding-worker.js`)
   - Runs embedding inference on separate thread to prevent UI freezing
   - Module worker (uses ES6 imports) loads WASM at `/coppermind/wasm/coppermind.js`
   - Downloads and initializes 65MB model in worker context (takes 30-60s)
-  - **Rayon Thread Pool**: Initializes multi-threaded execution with `init_thread_pool(navigator.hardwareConcurrency)`
-    - Uses SharedArrayBuffer for inter-thread communication
-    - Enables parallel processing within Candle (gemm operations, etc.)
-    - 3x speedup proven in Hugging Face Candle PR #3063
   - Communicates via postMessage with serialized Rust types (serde-wasm-bindgen)
-- Desktop uses `tokio::spawn_blocking` + native Rayon (no special setup needed)
+- Desktop uses `tokio::spawn_blocking` instead (no worker needed)
 
 **Hybrid Search Architecture**:
 - **Vector Search**: instant-distance HNSW for semantic similarity (cosine distance)
@@ -380,9 +354,7 @@ When writing documentation (README, docs/, etc.), follow these principles:
 **Technical Depth:**
 - Assume the reader has general engineering knowledge
 - Explain newer/niche concepts that even experienced engineers may not know:
-  - Cross-Origin Isolation (COI), COEP/COIP headers
-  - Web Workers, Service Workers
-  - WASM threading, SharedArrayBuffer
+  - Web Workers
   - OPFS (Origin Private File System)
   - Specific algorithms (HNSW, RRF, ALiBi)
 - Don't explain basic concepts like "embeddings" or "BM25" unless necessary
@@ -404,7 +376,7 @@ When writing documentation (README, docs/, etc.), follow these principles:
   - ❌ "Candle is for embedded and WASM environments"
   - ✅ "Candle, a minimalist Rust ML framework from Hugging Face"
   - ❌ "100% Rust"
-  - ✅ "Rust-First" (acknowledge necessary JavaScript: COI service worker, web worker bootstrap)
+  - ✅ "Rust-First" (acknowledge necessary JavaScript: web worker bootstrap)
 
 **RRF Example:**
 - Claim: "without requiring score normalization"
@@ -470,5 +442,5 @@ Before publishing documentation:
 - [ ] No file sizes quoted (or consistent if needed)
 - [ ] External links point to authoritative sources
 - [ ] Tone is professional and humble
-- [ ] Newer concepts (COI, OPFS, etc.) are explained
+- [ ] Newer concepts (OPFS, HNSW, etc.) are explained
 - [ ] Tech stack formatted like senior engineer presentation
