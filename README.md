@@ -64,6 +64,21 @@ dx bundle --release
 dx bundle --release --platform desktop
 ```
 
+### Installing macOS Desktop App
+
+**Download:** The latest macOS DMG is available as an artifact in the [GitHub Actions workflow](https://github.com/emersonmde/coppermind/actions/workflows/ci.yml). Click on the latest successful run, scroll to **Artifacts**, and download **coppermind-macos**.
+
+**Installation:**
+
+1. Open the DMG and drag **Coppermind** to your Applications folder
+2. Open Terminal and run:
+   ```bash
+   sudo xattr -rd com.apple.quarantine /Applications/Coppermind.app
+   ```
+3. Launch Coppermind from Applications
+
+**Why is this needed?** The app is not code-signed with an Apple Developer ID, so macOS Gatekeeper blocks it by default. The `xattr` command removes the quarantine flag that macOS applies to downloaded files.
+
 ## Platform Comparison
 
 | Feature | Web | Desktop                    | iOS                        |
