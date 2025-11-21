@@ -1,14 +1,24 @@
 # Coppermind
 
+<div align="center">
+
 [![CI](https://github.com/emersonmde/coppermind/actions/workflows/ci.yml/badge.svg)](https://github.com/emersonmde/coppermind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
-[![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-1f425f.svg)](https://www.rust-lang.org/)
-[![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?logo=webassembly&logoColor=white)](https://webassembly.org/)
+[![WASM](https://img.shields.io/badge/WASM-Ready-654FF0?logo=webassembly&logoColor=white)](https://webassembly.org/)
 
-A cross-platform hybrid search engine with local embedding, indexing, and retrieval - written in Rust.
+**Client-Side Hybrid Search Engine.**  
+*Built with Rust. Runs everywhere.*
 
-**Try it here:** https://errorsignal.dev/coppermind/
+[Live Demo](https://errorsignal.dev/coppermind/)
+
+</div>
+
+---
+
+**Coppermind** is a client-side hybrid search engine that runs entirely on your device. It combines the semantic understanding of **Vector Search** with the precision of **Keyword Search** (BM25), fused using **Reciprocal Rank Fusion**.
+
+Unlike traditional search engines that rely on heavy server-side infrastructure, Coppermind compiles to a single, high-performance binary that runs in your browser (WASM), on your desktop, or on your phone. It brings transformer-based embeddings (JinaBERT) to the edge, ensuring your data never leaves your machine.
 
 ## Features
 
