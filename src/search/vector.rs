@@ -6,15 +6,25 @@ use space::{Metric, Neighbor};
 
 /// Cosine distance metric for embedding vectors
 /// Computes 1 - cosine_similarity, scaled to u32
+///
+/// Accepts Box<[f32]> for owned, stable heap allocations that avoid lifetime issues.
 struct CosineDistance;
 
-impl Metric<&[f32]> for CosineDistance {
+impl Metric<Box<[f32]>> for CosineDistance {
     type Unit = u32;
 
-    fn distance(&self, a: &&[f32], b: &&[f32]) -> u32 {
-        let dot: f32 = a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum();
-        let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let mag_b: f32 = b.iter().map(|y| y * y).sum::<f32>().sqrt();
+    fn distance(&self, a: &Box<[f32]>, b: &Box<[f32]>) -> u32 {
+        // Deref Box to &[f32] - zero cost abstraction
+        let a_slice: &[f32] = a;
+        let b_slice: &[f32] = b;
+
+        let dot: f32 = a_slice
+            .iter()
+            .zip(b_slice.iter())
+            .map(|(&x, &y)| x * y)
+            .sum();
+        let mag_a: f32 = a_slice.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let mag_b: f32 = b_slice.iter().map(|y| y * y).sum::<f32>().sqrt();
 
         if mag_a == 0.0 || mag_b == 0.0 {
             return u32::MAX; // Maximum distance for zero vectors
@@ -33,15 +43,22 @@ impl Metric<&[f32]> for CosineDistance {
 ///
 /// This implementation uses rust-cv/hnsw which supports incremental updates
 /// and is WASM-compatible (no native dependencies).
+///
+/// Memory layout: Index owns Box<[f32]> embeddings on the heap. Box provides
+/// stable heap allocations that won't move when the index grows, avoiding
+/// lifetime issues entirely without requiring unsafe code.
 pub struct VectorSearchEngine {
     /// HNSW index for semantic similarity search using cosine distance
-    /// Type parameters: Metric, Data, RNG, M (connections), M0 (layer 0 connections)
-    index: Hnsw<CosineDistance, &'static [f32], rand::rngs::StdRng, 16, 32>,
-    /// Searcher for performing queries
+    /// Type parameters: <Metric, Data, RNG, M, M0>
+    /// - Metric: CosineDistance implementation
+    /// - Data: Box<[f32]> - owned heap-allocated embeddings
+    /// - RNG: StdRng for WASM compatibility
+    /// - M: 16 - bidirectional links per node
+    /// - M0: 32 - layer 0 connections (2*M)
+    index: Hnsw<CosineDistance, Box<[f32]>, rand::rngs::StdRng, 16, 32>,
+    /// Searcher for performing queries (mutated during search)
     searcher: Searcher<u32>,
-    /// Storage for embeddings (needed because index stores references)
-    embeddings: Vec<Vec<f32>>,
-    /// Map from storage index to DocId
+    /// Map from HNSW index position to DocId
     doc_ids: Vec<DocId>,
     /// Dimensionality of embeddings (e.g., 512 for JinaBERT)
     dimension: usize,
@@ -58,6 +75,7 @@ impl VectorSearchEngine {
     ///   - Higher M = better recall, more memory
     ///   - Default is 12, we use 16 for better accuracy
     /// - `M0`: 32 - Number of links for layer 0 (2*M per standard practice)
+    /// - `ef_construction`: 200 (implicit in Hnsw::new)
     pub fn new(dimension: usize) -> Self {
         let index = Hnsw::new(CosineDistance);
         let searcher = Searcher::default();
@@ -65,7 +83,6 @@ impl VectorSearchEngine {
         Self {
             index,
             searcher,
-            embeddings: Vec::new(),
             doc_ids: Vec::new(),
             dimension,
         }
@@ -75,6 +92,10 @@ impl VectorSearchEngine {
     ///
     /// This method supports incremental insertion without rebuilding the entire index.
     /// The HNSW algorithm allows efficient online insertion while maintaining search quality.
+    ///
+    /// # Memory Safety
+    /// Embeddings are converted to Box<[f32]> (stable heap allocation) and owned by the
+    /// HNSW index. This avoids lifetime issues without requiring unsafe code.
     pub fn add_document(&mut self, doc_id: DocId, embedding: Vec<f32>) {
         assert_eq!(
             embedding.len(),
@@ -82,17 +103,14 @@ impl VectorSearchEngine {
             "Embedding dimension mismatch"
         );
 
-        // Store embedding and doc_id
-        self.embeddings.push(embedding);
+        // Convert Vec<f32> to Box<[f32]> for stable heap allocation
+        // This is a zero-copy conversion - just changes the container type
+        let boxed_embedding = embedding.into_boxed_slice();
+
         self.doc_ids.push(doc_id);
 
-        // Insert into HNSW index
-        // SAFETY: We're leaking the embedding reference to make it 'static
-        // The embeddings vec is never modified after insertion, only appended to
-        let embedding_ref: &'static [f32] =
-            unsafe { std::mem::transmute(self.embeddings.last().unwrap().as_slice()) };
-
-        self.index.insert(embedding_ref, &mut self.searcher);
+        // Insert into HNSW index - index takes ownership of the Box
+        self.index.insert(boxed_embedding, &mut self.searcher);
     }
 
     /// Add a document embedding without rebuilding the index
@@ -135,13 +153,13 @@ impl VectorSearchEngine {
             "Query embedding dimension mismatch"
         );
 
-        if self.embeddings.is_empty() {
+        if self.doc_ids.is_empty() {
             return vec![]; // No documents indexed
         }
 
         // Allocate neighbor buffer for min(k, index_size) results
         // If index has fewer items than k, we can only return what's available
-        let actual_k = std::cmp::min(k, self.embeddings.len());
+        let actual_k = std::cmp::min(k, self.doc_ids.len());
         let mut neighbors = vec![
             Neighbor {
                 index: !0,
@@ -154,12 +172,12 @@ impl VectorSearchEngine {
         // ef_search controls search quality (higher = better but slower)
         // We use max(k * 2, 50) for good quality
         let ef_search = std::cmp::max(k * 2, 50);
-        self.index.nearest(
-            &query_embedding,
-            ef_search,
-            &mut self.searcher,
-            &mut neighbors,
-        );
+
+        // Convert query to Box<[f32]> to match the index's data type
+        let query_box = query_embedding.to_vec().into_boxed_slice();
+
+        self.index
+            .nearest(&query_box, ef_search, &mut self.searcher, &mut neighbors);
 
         // Convert results to (DocId, score) pairs
         neighbors
@@ -183,13 +201,13 @@ impl VectorSearchEngine {
     /// Get number of indexed documents
     #[allow(dead_code)] // Public API
     pub fn len(&self) -> usize {
-        self.embeddings.len()
+        self.doc_ids.len()
     }
 
     /// Check if index is empty
     #[allow(dead_code)] // Public API
     pub fn is_empty(&self) -> bool {
-        self.embeddings.is_empty()
+        self.doc_ids.is_empty()
     }
 }
 

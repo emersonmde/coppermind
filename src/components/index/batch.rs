@@ -66,9 +66,9 @@ impl Batch {
                     .filter(|f| matches!(f.status, FileStatus::Completed))
                     .count();
 
-                // If all files are completed, we're in the index rebuild phase
+                // If all files are completed, we're finalizing
                 if completed == self.files.len() {
-                    format!("Rebuilding index ({} files)...", self.files.len())
+                    format!("Finalizing ({} files)...", self.files.len())
                 } else {
                     format!("Processing file {}/{}", completed + 1, self.files.len())
                 }

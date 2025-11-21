@@ -30,6 +30,9 @@
 //! let results = engine.search("semantic query", 10).await?;
 //! ```
 
+// Enforce memory safety: forbid all unsafe code
+#![forbid(unsafe_code)]
+
 pub mod components;
 pub mod embedding;
 pub mod error;

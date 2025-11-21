@@ -122,29 +122,26 @@ pub async fn process_batch<S: StorageBackend>(
         }
     }
 
-    // Rebuild vector index once after all files
+    // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
         let doc_count = {
             let search_engine = engine_lock.lock().await;
             search_engine.len()
         };
 
-        info!(
-            "🔨 Rebuilding HNSW index for {} documents... (may take a few minutes for large batches)",
-            doc_count
-        );
-
         {
             let mut search_engine = engine_lock.lock().await;
+            // rebuild_vector_index() is a no-op with rust-cv/hnsw (supports incremental updates)
+            // Index is already up-to-date from incremental insertions
             if let Err(e) = search_engine.rebuild_vector_index().await {
-                error!("❌ Failed to rebuild vector index: {}", e);
-                return Err(format!("Index rebuild failed: {}", e));
+                error!("❌ Failed to finalize vector index: {}", e);
+                return Err(format!("Index finalization failed: {}", e));
             }
         }
 
         // Update search engine status
         engine_status.set(super::SearchEngineStatus::Ready { doc_count });
-        info!("✅ Search index rebuilt with {} documents", doc_count);
+        info!("✅ Search index ready with {} documents", doc_count);
     }
 
     // Calculate final batch metrics
