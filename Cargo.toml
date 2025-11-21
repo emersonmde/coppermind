@@ -41,7 +41,9 @@ web-sys = { version = "0.3", features = [
 # Hybrid Search dependencies
 async-trait = "0.1"
 bm25 = "2.3"
-instant-distance = "0.6"
+hnsw = "0.11"
+space = "0.17"  # Distance metrics for hnsw
+rand = "0.8"    # RNG for hnsw index initialization
 
 # Text chunking (semantic splitting)
 # Note: We implement our own ChunkSizer instead of using the tokenizers feature

@@ -144,7 +144,7 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                             let engine_arc = { engine.read().clone() };
                             if let Some(engine) = engine_arc {
                                 // Acquire lock and run search
-                                let search_engine = engine.lock().await;
+                                let mut search_engine = engine.lock().await;
                                 match search_engine.search(&embedding, &query, 20).await {
                                     Ok(chunk_results) => {
                                         info!(

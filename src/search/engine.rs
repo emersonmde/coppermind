@@ -6,7 +6,6 @@ use super::keyword::KeywordSearchEngine;
 use super::types::DocumentMetadata;
 use super::types::{DocId, Document, DocumentRecord, SearchError, SearchResult};
 use super::vector::VectorSearchEngine;
-use crate::platform::run_blocking;
 use crate::storage::StorageBackend;
 use dioxus::logger::tracing::info;
 use std::collections::HashMap;
@@ -121,21 +120,15 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     }
 
     /// Rebuild the vector search index after batch operations
-    /// This is CPU-intensive and should be called after all documents are added
+    ///
+    /// NOTE: With hnsw_rs, this is a no-op since the index supports incremental updates.
+    /// This method is kept for API compatibility but does nothing.
+    ///
+    /// Unlike the previous instant-distance implementation which required expensive
+    /// rebuilds, hnsw_rs maintains the index structure during insertions.
     pub async fn rebuild_vector_index(&mut self) -> Result<(), SearchError> {
-        // Extract the vector engine, rebuild it, then put it back
-        let mut vector_engine = std::mem::replace(
-            &mut self.vector_engine,
-            VectorSearchEngine::new(self.embedding_dim),
-        );
-
-        let rebuilt = run_blocking(move || -> Result<VectorSearchEngine, SearchError> {
-            vector_engine.rebuild_index();
-            Ok(vector_engine)
-        })
-        .await?;
-
-        self.vector_engine = rebuilt;
+        // No-op: hnsw_rs supports incremental insertion
+        // The index is already up-to-date
         Ok(())
     }
 
@@ -147,9 +140,11 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// * `k` - Number of results to return
     ///
     /// Returns ranked search results that should be used or errors handled
+    ///
+    /// Note: Takes `&mut self` because the vector search requires mutable access
     #[must_use = "Search results should be used or errors handled"]
     pub async fn search(
-        &self,
+        &mut self,
         query_embedding: &[f32],
         query_text: &str,
         k: usize,
@@ -403,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_empty_index() {
         let storage = MockStorage;
-        let engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
 
         // Search empty index
         let results = engine.search(&[1.0, 0.0, 0.0], "query", 10).await.unwrap();
