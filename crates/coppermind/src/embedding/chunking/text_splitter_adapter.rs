@@ -17,31 +17,10 @@
 //! text-splitter's built-in tokenizers feature, which would pull in onig (C library)
 //! and break WASM builds.
 
-use super::{ChunkingStrategy, TextChunk};
+use super::{calculate_chunk_boundaries, ChunkingStrategy, TextChunk, TokenizerSizer};
 use crate::error::EmbeddingError;
-use text_splitter::{ChunkConfig, ChunkSizer};
+use text_splitter::ChunkConfig;
 use tokenizers::Tokenizer;
-
-/// ChunkSizer implementation for HuggingFace Tokenizer.
-///
-/// Wraps our tokenizer to implement text-splitter's ChunkSizer trait,
-/// allowing token-based chunk sizing without the onig dependency.
-struct TokenizerSizer {
-    tokenizer: &'static Tokenizer,
-}
-
-impl ChunkSizer for TokenizerSizer {
-    /// Returns the token count for the given text chunk.
-    ///
-    /// Uses the HuggingFace tokenizer to encode the text and count tokens.
-    /// This is used by text-splitter to determine chunk boundaries.
-    fn size(&self, chunk: &str) -> usize {
-        self.tokenizer
-            .encode(chunk, false)
-            .map(|encoding| encoding.len())
-            .unwrap_or(0)
-    }
-}
 
 /// Text splitter adapter using the `text-splitter` crate.
 ///
@@ -112,30 +91,8 @@ impl ChunkingStrategy for TextSplitterAdapter {
         // Use text-splitter's semantic chunking
         let splitter = text_splitter::TextSplitter::new(chunk_config);
 
-        let chunks: Vec<_> = splitter
-            .chunks(text)
-            .enumerate()
-            .map(|(index, chunk)| {
-                // Calculate character positions
-                // Note: text-splitter gives us the chunk text, we need to find positions
-                let start_char = if index == 0 {
-                    0
-                } else {
-                    // This is approximate - text-splitter doesn't provide exact byte offsets
-                    // For now, we'll calculate based on accumulated text length
-                    // This is a limitation but acceptable for our use case
-                    text.find(chunk).unwrap_or(0)
-                };
-                let end_char = start_char + chunk.len();
-
-                TextChunk {
-                    index,
-                    text: chunk.to_string(),
-                    start_char,
-                    end_char,
-                }
-            })
-            .collect();
+        // Use shared helper to calculate boundaries correctly for duplicate text
+        let chunks = calculate_chunk_boundaries(text, splitter.chunks(text));
 
         Ok(chunks)
     }

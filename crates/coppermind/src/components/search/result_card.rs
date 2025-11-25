@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::search::types::{FileSearchResult, SearchResult};
+use crate::utils::formatting::format_timestamp;
 
 /// File-level search result card with expandable chunk list and fusion details.
 ///
@@ -188,71 +189,6 @@ pub fn ResultCard(
                     div { "Indexed: {indexed_at}" }
                 }
             }
-        }
-    }
-}
-
-/// Format Unix timestamp to human-readable relative time
-fn format_timestamp(timestamp: u64) -> String {
-    if timestamp == 0 {
-        return "Unknown".to_string();
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let now = instant::SystemTime::now()
-            .duration_since(instant::SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let elapsed = now.saturating_sub(timestamp);
-        format_duration(elapsed)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let elapsed = now.saturating_sub(timestamp);
-        format_duration(elapsed)
-    }
-}
-
-/// Format duration in seconds to human-readable string
-fn format_duration(seconds: u64) -> String {
-    match seconds {
-        0..=59 => "Just now".to_string(),
-        60..=3599 => {
-            let mins = seconds / 60;
-            if mins == 1 {
-                "1 min ago".to_string()
-            } else {
-                format!("{} mins ago", mins)
-            }
-        }
-        3600..=86399 => {
-            let hours = seconds / 3600;
-            if hours == 1 {
-                "1 hour ago".to_string()
-            } else {
-                format!("{} hours ago", hours)
-            }
-        }
-        86400..=2591999 => {
-            let days = seconds / 86400;
-            if days == 1 {
-                "1 day ago".to_string()
-            } else {
-                format!("{} days ago", days)
-            }
-        }
-        _ => {
-            let days = seconds / 86400;
-            format!("{} days ago", days)
         }
     }
 }

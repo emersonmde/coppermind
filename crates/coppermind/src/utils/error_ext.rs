@@ -231,6 +231,10 @@ impl<T> ResultExt<T, SearchError> for Result<T, SearchError> {
                 SearchError::IndexError(format!("{}: {}", context, msg))
             }
             SearchError::NotFound => SearchError::NotFound,
+            // DimensionMismatch has structured fields, pass through unchanged
+            SearchError::DimensionMismatch { expected, actual } => {
+                SearchError::DimensionMismatch { expected, actual }
+            }
         })
     }
 
@@ -251,6 +255,10 @@ impl<T> ResultExt<T, SearchError> for Result<T, SearchError> {
                     SearchError::IndexError(format!("{}: {}", context, msg))
                 }
                 SearchError::NotFound => SearchError::NotFound,
+                // DimensionMismatch has structured fields, pass through unchanged
+                SearchError::DimensionMismatch { expected, actual } => {
+                    SearchError::DimensionMismatch { expected, actual }
+                }
             }
         })
     }

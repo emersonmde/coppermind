@@ -35,6 +35,66 @@ pub mod code_splitter_adapter;
 
 use crate::error::EmbeddingError;
 use std::path::Path;
+use text_splitter::ChunkSizer;
+use tokenizers::Tokenizer;
+
+/// ChunkSizer implementation for HuggingFace Tokenizer.
+///
+/// Wraps our tokenizer to implement text-splitter's ChunkSizer trait,
+/// allowing token-based chunk sizing without the onig dependency.
+///
+/// This is shared across all chunking adapters (text, markdown, code).
+pub(crate) struct TokenizerSizer {
+    pub tokenizer: &'static Tokenizer,
+}
+
+impl ChunkSizer for TokenizerSizer {
+    /// Returns the token count for the given text chunk.
+    ///
+    /// Uses the HuggingFace tokenizer to encode the text and count tokens.
+    /// This is used by text-splitter to determine chunk boundaries.
+    fn size(&self, chunk: &str) -> usize {
+        self.tokenizer
+            .encode(chunk, false)
+            .map(|encoding| encoding.len())
+            .unwrap_or(0)
+    }
+}
+
+/// Helper to calculate chunk boundaries by tracking cumulative position.
+///
+/// Unlike `text.find(chunk)` which fails with duplicate text, this tracks
+/// position cumulatively as we iterate through chunks.
+pub(crate) fn calculate_chunk_boundaries<'a, I>(text: &str, chunks_iter: I) -> Vec<TextChunk>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let mut result = Vec::new();
+    let mut search_start = 0;
+
+    for (index, chunk) in chunks_iter.enumerate() {
+        // Search for chunk starting from where we left off
+        let start_char = if let Some(pos) = text[search_start..].find(chunk) {
+            search_start + pos
+        } else {
+            // Fallback: search from beginning (shouldn't happen with well-behaved splitters)
+            text.find(chunk).unwrap_or(0)
+        };
+        let end_char = start_char + chunk.len();
+
+        result.push(TextChunk {
+            index,
+            text: chunk.to_string(),
+            start_char,
+            end_char,
+        });
+
+        // Move search position past this chunk for next iteration
+        search_start = end_char;
+    }
+
+    result
+}
 
 /// A chunk of text with metadata about its position in the source document.
 #[derive(Debug, Clone)]
@@ -104,6 +164,49 @@ pub enum FileType {
     Code(code_splitter_adapter::CodeLanguage),
     /// Plain text files (everything else, or code files on WASM)
     Text,
+}
+
+/// Creates a chunker appropriate for the given file type.
+///
+/// This factory function encapsulates the platform-specific logic for selecting
+/// the right chunking strategy based on file type.
+///
+/// # Arguments
+///
+/// * `file_type` - Detected file type (use `detect_file_type` to get this)
+/// * `max_tokens` - Maximum tokens per chunk
+/// * `tokenizer` - Reference to HuggingFace tokenizer (must be static lifetime)
+///
+/// # Returns
+///
+/// A boxed `ChunkingStrategy` implementation appropriate for the file type.
+///
+/// # Examples
+///
+/// ```ignore
+/// use coppermind::embedding::chunking::{create_chunker, detect_file_type, FileType};
+///
+/// let file_type = detect_file_type("README.md");
+/// let chunker = create_chunker(file_type, 512, tokenizer);
+/// let chunks = chunker.chunk("# Heading\n\nContent...")?;
+/// ```
+pub fn create_chunker(
+    file_type: FileType,
+    max_tokens: usize,
+    tokenizer: &'static Tokenizer,
+) -> Box<dyn ChunkingStrategy> {
+    match file_type {
+        FileType::Markdown => Box::new(markdown_splitter_adapter::MarkdownSplitterAdapter::new(
+            max_tokens, tokenizer,
+        )),
+        #[cfg(not(target_arch = "wasm32"))]
+        FileType::Code(language) => Box::new(code_splitter_adapter::CodeSplitterAdapter::new(
+            max_tokens, language, tokenizer,
+        )),
+        FileType::Text => Box::new(text_splitter_adapter::TextSplitterAdapter::new(
+            max_tokens, tokenizer,
+        )),
+    }
 }
 
 /// Detects file type from filename or path.

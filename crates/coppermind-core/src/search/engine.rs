@@ -4,11 +4,16 @@ use super::fusion::{reciprocal_rank_fusion, RRF_K};
 use super::keyword::KeywordSearchEngine;
 #[cfg(test)]
 use super::types::DocumentMetadata;
-use super::types::{DocId, Document, DocumentRecord, SearchError, SearchResult};
+use super::types::{
+    validate_dimension, DocId, Document, DocumentRecord, SearchError, SearchResult,
+};
 use super::vector::VectorSearchEngine;
 use crate::storage::StorageBackend;
 use std::collections::HashMap;
 use tracing::info;
+
+/// Maximum characters to show in debug dump text preview.
+const DEBUG_TEXT_PREVIEW_LEN: usize = 100;
 
 /// Hybrid search engine combining vector (semantic) and keyword (BM25) search
 pub struct HybridSearchEngine<S: StorageBackend> {
@@ -18,7 +23,11 @@ pub struct HybridSearchEngine<S: StorageBackend> {
     keyword_engine: KeywordSearchEngine,
     /// Document storage (metadata + text)
     documents: HashMap<DocId, DocumentRecord>,
-    /// Storage backend for persistence
+    /// Storage backend for persistence (reserved for future use).
+    ///
+    /// Currently unused but kept in the API for future persistence features.
+    /// The underscore prefix suppresses "unused field" warnings while signaling
+    /// that this is intentional, not accidental.
     _storage: S,
     /// Embedding dimension (e.g., 512 for JinaBERT)
     embedding_dim: usize,
@@ -54,19 +63,13 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         embedding: Vec<f32>,
     ) -> Result<DocId, SearchError> {
         // Validate embedding dimension
-        if embedding.len() != self.embedding_dim {
-            return Err(SearchError::EmbeddingError(format!(
-                "Embedding dimension mismatch: expected {}, got {}",
-                self.embedding_dim,
-                embedding.len()
-            )));
-        }
+        validate_dimension(self.embedding_dim, embedding.len())?;
 
         // Generate unique ID
         let doc_id = DocId::new();
 
         // Add to vector index
-        self.vector_engine.add_document(doc_id, embedding);
+        self.vector_engine.add_document(doc_id, embedding)?;
 
         // Add to keyword index
         self.keyword_engine.add_document(doc_id, doc.text.clone());
@@ -91,19 +94,14 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         embedding: Vec<f32>,
     ) -> Result<DocId, SearchError> {
         // Validate embedding dimension
-        if embedding.len() != self.embedding_dim {
-            return Err(SearchError::EmbeddingError(format!(
-                "Embedding dimension mismatch: expected {}, got {}",
-                self.embedding_dim,
-                embedding.len()
-            )));
-        }
+        validate_dimension(self.embedding_dim, embedding.len())?;
 
         // Generate unique ID
         let doc_id = DocId::new();
 
         // Add to vector index (deferred rebuild)
-        self.vector_engine.add_document_deferred(doc_id, embedding);
+        self.vector_engine
+            .add_document_deferred(doc_id, embedding)?;
 
         // Add to keyword index
         self.keyword_engine.add_document(doc_id, doc.text.clone());
@@ -150,16 +148,10 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         k: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
         // Validate query embedding dimension
-        if query_embedding.len() != self.embedding_dim {
-            return Err(SearchError::EmbeddingError(format!(
-                "Query embedding dimension mismatch: expected {}, got {}",
-                self.embedding_dim,
-                query_embedding.len()
-            )));
-        }
+        validate_dimension(self.embedding_dim, query_embedding.len())?;
 
         // Get vector search results (semantic similarity)
-        let vector_results = self.vector_engine.search(query_embedding, k * 2);
+        let vector_results = self.vector_engine.search(query_embedding, k * 2)?;
         info!("📊 Vector search found {} results", vector_results.len());
 
         // Get keyword search results (BM25)
@@ -275,8 +267,11 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
                 output.push_str(&format!("\n[{}] DocId: {}\n", idx + 1, doc_id.as_u64()));
                 output.push_str(&format!("  Filename: {:?}\n", doc.metadata.filename));
                 output.push_str(&format!("  Source: {:?}\n", doc.metadata.source));
-                if doc.text.len() > 100 {
-                    output.push_str(&format!("  Text: {}...\n", &doc.text[..100]));
+                if doc.text.len() > DEBUG_TEXT_PREVIEW_LEN {
+                    output.push_str(&format!(
+                        "  Text: {}...\n",
+                        &doc.text[..DEBUG_TEXT_PREVIEW_LEN]
+                    ));
                 } else {
                     output.push_str(&format!("  Text: {}\n", &doc.text));
                 }
@@ -385,14 +380,13 @@ mod tests {
         let result = engine.add_document(doc, vec![1.0, 0.0]).await; // 2D instead of 3D
 
         assert!(result.is_err());
-        match result {
-            Err(SearchError::EmbeddingError(msg)) => {
-                assert!(msg.contains("dimension mismatch"));
-                assert!(msg.contains("expected 3"));
-                assert!(msg.contains("got 2"));
-            }
-            _ => panic!("Expected EmbeddingError with dimension mismatch"),
-        }
+        assert!(matches!(
+            result,
+            Err(SearchError::DimensionMismatch {
+                expected: 3,
+                actual: 2
+            })
+        ));
     }
 
     #[tokio::test]
@@ -422,14 +416,13 @@ mod tests {
         let result = engine.search(&[1.0, 0.0], "query", 10).await; // 2D instead of 3D
 
         assert!(result.is_err());
-        match result {
-            Err(SearchError::EmbeddingError(msg)) => {
-                assert!(msg.contains("dimension mismatch"));
-                assert!(msg.contains("expected 3"));
-                assert!(msg.contains("got 2"));
-            }
-            _ => panic!("Expected EmbeddingError with dimension mismatch"),
-        }
+        assert!(matches!(
+            result,
+            Err(SearchError::DimensionMismatch {
+                expected: 3,
+                actual: 2
+            })
+        ));
     }
 
     #[tokio::test]

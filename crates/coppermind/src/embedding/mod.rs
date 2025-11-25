@@ -297,31 +297,8 @@ pub async fn embed_text_chunks_auto(
         .map(chunking::detect_file_type)
         .unwrap_or(chunking::FileType::Text);
 
-    let text_chunks = match file_type {
-        chunking::FileType::Markdown => {
-            let chunker = chunking::markdown_splitter_adapter::MarkdownSplitterAdapter::new(
-                effective_chunk,
-                tokenizer,
-            );
-            chunker.chunk(text)?
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        chunking::FileType::Code(language) => {
-            let chunker = chunking::code_splitter_adapter::CodeSplitterAdapter::new(
-                effective_chunk,
-                language,
-                tokenizer,
-            );
-            chunker.chunk(text)?
-        }
-        chunking::FileType::Text => {
-            let chunker = chunking::text_splitter_adapter::TextSplitterAdapter::new(
-                effective_chunk,
-                tokenizer,
-            );
-            chunker.chunk(text)?
-        }
-    };
+    let chunker = chunking::create_chunker(file_type, effective_chunk, tokenizer);
+    let text_chunks = chunker.chunk(text)?;
 
     if text_chunks.is_empty() {
         return Ok(vec![]);

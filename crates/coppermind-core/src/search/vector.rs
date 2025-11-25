@@ -1,8 +1,21 @@
 // rust-cv/hnsw vector search integration with incremental updates
 
-use super::types::DocId;
+use super::types::{validate_dimension, DocId, SearchError};
 use hnsw::{Hnsw, Searcher};
 use space::{Metric, Neighbor};
+
+/// Minimum ef_search parameter for HNSW queries.
+///
+/// ef_search controls recall vs speed tradeoff in HNSW search:
+/// - Higher values = better recall but slower
+/// - Lower values = faster but may miss relevant results
+///
+/// We use max(k * 2, MIN_EF_SEARCH) to scale with result count
+/// while ensuring a minimum quality floor.
+///
+/// A value of 50 provides good recall for most use cases.
+/// Reference: HNSW paper recommends ef_search >= k for good results.
+const MIN_EF_SEARCH: usize = 50;
 
 /// Cosine distance metric for embedding vectors
 /// Computes 1 - cosine_similarity, scaled to u32
@@ -93,15 +106,16 @@ impl VectorSearchEngine {
     /// This method supports incremental insertion without rebuilding the entire index.
     /// The HNSW algorithm allows efficient online insertion while maintaining search quality.
     ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::DimensionMismatch` if embedding dimension doesn't match
+    /// the engine's configured dimension.
+    ///
     /// # Memory Safety
     /// Embeddings are converted to Box<[f32]> (stable heap allocation) and owned by the
     /// HNSW index. This avoids lifetime issues without requiring unsafe code.
-    pub fn add_document(&mut self, doc_id: DocId, embedding: Vec<f32>) {
-        assert_eq!(
-            embedding.len(),
-            self.dimension,
-            "Embedding dimension mismatch"
-        );
+    pub fn add_document(&mut self, doc_id: DocId, embedding: Vec<f32>) -> Result<(), SearchError> {
+        validate_dimension(self.dimension, embedding.len())?;
 
         // Convert Vec<f32> to Box<[f32]> for stable heap allocation
         // This is a zero-copy conversion - just changes the container type
@@ -111,15 +125,25 @@ impl VectorSearchEngine {
 
         // Insert into HNSW index - index takes ownership of the Box
         self.index.insert(boxed_embedding, &mut self.searcher);
+        Ok(())
     }
 
     /// Add a document embedding without rebuilding the index
     ///
     /// With rust-cv/hnsw, this is identical to add_document() since incremental
     /// insertion is supported natively. This method is kept for API compatibility.
-    pub fn add_document_deferred(&mut self, doc_id: DocId, embedding: Vec<f32>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::DimensionMismatch` if embedding dimension doesn't match
+    /// the engine's configured dimension.
+    pub fn add_document_deferred(
+        &mut self,
+        doc_id: DocId,
+        embedding: Vec<f32>,
+    ) -> Result<(), SearchError> {
         // rust-cv/hnsw supports incremental insertion, so this is the same as add_document
-        self.add_document(doc_id, embedding);
+        self.add_document(doc_id, embedding)
     }
 
     /// Rebuild the HNSW index from all stored embeddings
@@ -145,16 +169,21 @@ impl VectorSearchEngine {
     /// Vector of (DocId, similarity_score) pairs, sorted by similarity (descending)
     /// Similarity scores are in [0, 1] range where 1.0 is most similar
     ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::DimensionMismatch` if query embedding dimension doesn't match
+    /// the engine's configured dimension.
+    ///
     /// Note: Takes `&mut self` because the internal searcher state is mutated during search
-    pub fn search(&mut self, query_embedding: &[f32], k: usize) -> Vec<(DocId, f32)> {
-        assert_eq!(
-            query_embedding.len(),
-            self.dimension,
-            "Query embedding dimension mismatch"
-        );
+    pub fn search(
+        &mut self,
+        query_embedding: &[f32],
+        k: usize,
+    ) -> Result<Vec<(DocId, f32)>, SearchError> {
+        validate_dimension(self.dimension, query_embedding.len())?;
 
         if self.doc_ids.is_empty() {
-            return vec![]; // No documents indexed
+            return Ok(vec![]); // No documents indexed
         }
 
         // Allocate neighbor buffer for min(k, index_size) results
@@ -170,8 +199,8 @@ impl VectorSearchEngine {
 
         // Search HNSW index
         // ef_search controls search quality (higher = better but slower)
-        // We use max(k * 2, 50) for good quality
-        let ef_search = std::cmp::max(k * 2, 50);
+        // We use max(k * 2, MIN_EF_SEARCH) for good quality
+        let ef_search = std::cmp::max(k * 2, MIN_EF_SEARCH);
 
         // Convert query to Box<[f32]> to match the index's data type
         let query_box = query_embedding.to_vec().into_boxed_slice();
@@ -180,7 +209,7 @@ impl VectorSearchEngine {
             .nearest(&query_box, ef_search, &mut self.searcher, &mut neighbors);
 
         // Convert results to (DocId, score) pairs
-        neighbors
+        let results = neighbors
             .into_iter()
             .filter(|n| n.index != !0) // Filter out unfilled entries
             .map(|neighbor| {
@@ -195,7 +224,8 @@ impl VectorSearchEngine {
                 let doc_id = self.doc_ids[neighbor.index];
                 (doc_id, similarity)
             })
-            .collect()
+            .collect();
+        Ok(results)
     }
 
     /// Get number of indexed documents
@@ -224,12 +254,12 @@ mod tests {
         let doc2 = DocId::from_u64(2);
         let doc3 = DocId::from_u64(3);
 
-        engine.add_document(doc1, vec![1.0, 0.0, 0.0]);
-        engine.add_document(doc2, vec![0.0, 1.0, 0.0]);
-        engine.add_document(doc3, vec![1.0, 0.1, 0.0]);
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
+        engine.add_document(doc2, vec![0.0, 1.0, 0.0]).unwrap();
+        engine.add_document(doc3, vec![1.0, 0.1, 0.0]).unwrap();
 
         // Search for something close to doc1 and doc3
-        let results = engine.search(&[1.0, 0.0, 0.0], 2);
+        let results = engine.search(&[1.0, 0.0, 0.0], 2).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, doc1); // Exact match should be first
@@ -244,13 +274,13 @@ mod tests {
         assert!(engine.is_empty());
 
         let doc1 = DocId::from_u64(1);
-        engine.add_document(doc1, vec![1.0, 0.0, 0.0]);
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
 
         assert_eq!(engine.len(), 1);
         assert!(!engine.is_empty());
 
         let doc2 = DocId::from_u64(2);
-        engine.add_document(doc2, vec![0.0, 1.0, 0.0]);
+        engine.add_document(doc2, vec![0.0, 1.0, 0.0]).unwrap();
 
         assert_eq!(engine.len(), 2);
     }
@@ -259,7 +289,7 @@ mod tests {
     fn test_search_empty_index() {
         let mut engine = VectorSearchEngine::new(3);
 
-        let results = engine.search(&[1.0, 0.0, 0.0], 10);
+        let results = engine.search(&[1.0, 0.0, 0.0], 10).unwrap();
 
         assert!(results.is_empty());
     }
@@ -271,14 +301,16 @@ mod tests {
         // Add documents incrementally (no rebuild needed with rust-cv/hnsw)
         for i in 0..5 {
             let doc_id = DocId::from_u64(i);
-            engine.add_document(doc_id, vec![i as f32, 0.0, 0.0]);
+            engine
+                .add_document(doc_id, vec![i as f32, 0.0, 0.0])
+                .unwrap();
         }
 
         // Index should have all documents
         assert_eq!(engine.len(), 5);
 
         // Search should work immediately (no rebuild needed)
-        let results = engine.search(&[2.0, 0.0, 0.0], 3);
+        let results = engine.search(&[2.0, 0.0, 0.0], 3).unwrap();
         assert!(!results.is_empty());
         assert!(results.len() <= 3);
     }
@@ -290,12 +322,14 @@ mod tests {
         // With rust-cv/hnsw, deferred add is the same as regular add
         for i in 0..5 {
             let doc_id = DocId::from_u64(i);
-            engine.add_document_deferred(doc_id, vec![i as f32, 0.0, 0.0]);
+            engine
+                .add_document_deferred(doc_id, vec![i as f32, 0.0, 0.0])
+                .unwrap();
         }
 
         // Documents should be searchable immediately
         assert_eq!(engine.len(), 5);
-        let results = engine.search(&[2.0, 0.0, 0.0], 3);
+        let results = engine.search(&[2.0, 0.0, 0.0], 3).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -306,7 +340,9 @@ mod tests {
         // Add documents
         for i in 0..5 {
             let doc_id = DocId::from_u64(i);
-            engine.add_document_deferred(doc_id, vec![i as f32, 0.0, 0.0]);
+            engine
+                .add_document_deferred(doc_id, vec![i as f32, 0.0, 0.0])
+                .unwrap();
         }
 
         // rebuild_index should do nothing (no-op)
@@ -314,7 +350,7 @@ mod tests {
 
         // Index should still work
         assert_eq!(engine.len(), 5);
-        let results = engine.search(&[2.0, 0.0, 0.0], 3);
+        let results = engine.search(&[2.0, 0.0, 0.0], 3).unwrap();
         assert!(!results.is_empty());
     }
 
@@ -325,10 +361,10 @@ mod tests {
         let doc1 = DocId::from_u64(1);
         let embedding = vec![0.5, 0.3, 0.2];
 
-        engine.add_document(doc1, embedding.clone());
+        engine.add_document(doc1, embedding.clone()).unwrap();
 
         // Search with exact same embedding
-        let results = engine.search(&embedding, 1);
+        let results = engine.search(&embedding, 1).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, doc1);
@@ -351,14 +387,14 @@ mod tests {
             let doc_id = DocId::from_u64(i);
             let angle = (i as f32) * 0.01; // Spread vectors around
             let embedding = vec![angle.cos(), angle.sin(), 0.0];
-            engine.add_document(doc_id, embedding);
+            engine.add_document(doc_id, embedding).unwrap();
         }
 
         assert_eq!(engine.len(), 100);
 
         // Search for something in the middle
         let query = vec![0.5, 0.5, 0.0];
-        let results = engine.search(&query, 10);
+        let results = engine.search(&query, 10).unwrap();
 
         // Should return 10 results
         assert_eq!(results.len(), 10);
@@ -378,24 +414,36 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Embedding dimension mismatch")]
     fn test_add_document_dimension_mismatch() {
         let mut engine = VectorSearchEngine::new(3);
         let doc_id = DocId::from_u64(1);
 
         // Try to add 2D embedding to 3D engine
-        engine.add_document(doc_id, vec![1.0, 0.0]); // Should panic
+        let result = engine.add_document(doc_id, vec![1.0, 0.0]);
+        assert!(matches!(
+            result,
+            Err(SearchError::DimensionMismatch {
+                expected: 3,
+                actual: 2
+            })
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "Query embedding dimension mismatch")]
     fn test_search_dimension_mismatch() {
         let mut engine = VectorSearchEngine::new(3);
         let doc_id = DocId::from_u64(1);
-        engine.add_document(doc_id, vec![1.0, 0.0, 0.0]);
+        engine.add_document(doc_id, vec![1.0, 0.0, 0.0]).unwrap();
 
         // Try to search with 2D query
-        engine.search(&[1.0, 0.0], 1); // Should panic
+        let result = engine.search(&[1.0, 0.0], 1);
+        assert!(matches!(
+            result,
+            Err(SearchError::DimensionMismatch {
+                expected: 3,
+                actual: 2
+            })
+        ));
     }
 
     #[test]
@@ -405,11 +453,13 @@ mod tests {
         // Add 20 documents
         for i in 0..20 {
             let doc_id = DocId::from_u64(i);
-            engine.add_document(doc_id, vec![i as f32, 0.0, 0.0]);
+            engine
+                .add_document(doc_id, vec![i as f32, 0.0, 0.0])
+                .unwrap();
         }
 
         // Request top 5
-        let results = engine.search(&[10.0, 0.0, 0.0], 5);
+        let results = engine.search(&[10.0, 0.0, 0.0], 5).unwrap();
 
         // Should return exactly 5 results
         assert_eq!(results.len(), 5);
@@ -422,10 +472,10 @@ mod tests {
         let doc1 = DocId::from_u64(1);
         let doc2 = DocId::from_u64(2);
 
-        engine.add_document(doc1, vec![1.0, 0.0, 0.0]);
-        engine.add_document(doc2, vec![0.0, 1.0, 0.0]);
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
+        engine.add_document(doc2, vec![0.0, 1.0, 0.0]).unwrap();
 
-        let results = engine.search(&[1.0, 0.0, 0.0], 2);
+        let results = engine.search(&[1.0, 0.0, 0.0], 2).unwrap();
 
         // All similarity scores should be in [0, 1] range
         for (_, score) in &results {

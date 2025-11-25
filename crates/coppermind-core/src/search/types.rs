@@ -168,6 +168,35 @@ pub enum SearchError {
     /// Document not found in index
     #[error("Not found")]
     NotFound,
+    /// Vector dimension mismatch (expected vs actual)
+    #[error("Dimension mismatch: expected {expected}, got {actual}")]
+    DimensionMismatch {
+        /// Expected embedding dimension
+        expected: usize,
+        /// Actual embedding dimension received
+        actual: usize,
+    },
+}
+
+/// Validates that an embedding has the expected dimension.
+///
+/// Returns `Ok(())` if dimensions match, or `Err(SearchError::DimensionMismatch)` otherwise.
+///
+/// # Examples
+///
+/// ```ignore
+/// use coppermind_core::search::types::validate_dimension;
+///
+/// let embedding = vec![1.0, 2.0, 3.0];
+/// validate_dimension(3, embedding.len())?; // Ok
+/// validate_dimension(5, embedding.len())?; // Err(DimensionMismatch)
+/// ```
+pub fn validate_dimension(expected: usize, actual: usize) -> Result<(), SearchError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(SearchError::DimensionMismatch { expected, actual })
+    }
 }
 
 // Note: From<EmbeddingError> and From<FileProcessingError> impls are in the app crate
