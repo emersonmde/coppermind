@@ -4,8 +4,32 @@
 //! reqwest works on both native and WASM platforms:
 //! - Native: Uses hyper with rustls-tls for HTTPS
 //! - WASM: Uses browser fetch() API internally
+//!
+//! The HTTP client is pooled for connection reuse, improving performance significantly
+//! when crawling multiple pages from the same domain.
 
 use super::CrawlError;
+use once_cell::sync::Lazy;
+
+/// Global HTTP client for connection pooling.
+///
+/// reqwest::Client handles connection pooling internally, so reusing a single
+/// client across requests is much more efficient than creating one per request.
+/// This is especially important for crawling where we make many requests to
+/// the same domain.
+///
+/// Configured with:
+/// - 30 second timeout per request
+/// - Custom user agent identifying Coppermind
+/// - Up to 10 idle connections per host for connection reuse
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("Coppermind/0.1.0 (local-first semantic search engine)")
+        .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .build()
+        .expect("Failed to build HTTP client")
+});
 
 /// Fetches HTML content from a URL.
 ///
@@ -33,12 +57,8 @@ pub async fn fetch_html(url: &str) -> Result<(String, u16), CrawlError> {
         )));
     }
 
-    // Build reqwest client
-    let client = reqwest::Client::builder()
-        .user_agent("Coppermind/0.1.0 (local-first semantic search engine)")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| CrawlError::RequestFailed(format!("Failed to build HTTP client: {}", e)))?;
+    // Get pooled HTTP client (reuses connections)
+    let client = &*HTTP_CLIENT;
 
     // Fetch the page
     let response = client

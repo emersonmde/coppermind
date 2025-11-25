@@ -156,3 +156,91 @@ pub use web::WebEmbedder;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use desktop::DesktopEmbedder;
+
+// ============================================================================
+// Convenience Hook
+// ============================================================================
+
+/// Returns a platform-appropriate embedder.
+///
+/// # Platform Behavior
+///
+/// - **Web**: Returns `WebEmbedder` that delegates to worker
+/// - **Desktop**: Returns `DesktopEmbedder` that calls `compute_embedding()` directly
+///
+/// # Note
+///
+/// On WASM, this uses `use_worker_state()` hook and must be called from a
+/// component context (not inside a coroutine).
+///
+/// # Example
+///
+/// ```ignore
+/// let embedder = get_platform_embedder();
+/// if embedder.is_ready() {
+///     let result = embedder.embed("Hello, world!").await?;
+///     println!("Embedding dimension: {}", result.embedding.len());
+/// }
+/// ```
+#[cfg(target_arch = "wasm32")]
+pub fn get_platform_embedder() -> WebEmbedder {
+    WebEmbedder::from_context()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_platform_embedder() -> DesktopEmbedder {
+    DesktopEmbedder::new()
+}
+
+// ============================================================================
+// Async Embedding Helper
+// ============================================================================
+
+/// Computes an embedding for the given text using the platform-appropriate method.
+///
+/// # Platform Behavior
+///
+/// - **Web**: Uses the worker via the provided `worker_state` signal
+/// - **Desktop**: Uses direct `compute_embedding()` call
+///
+/// # Arguments
+///
+/// * `text` - The text to embed
+/// * `worker_state` (WASM only) - Signal containing the worker status
+///
+/// # Returns
+///
+/// The embedding computation result, or an error message.
+///
+/// # Example
+///
+/// ```ignore
+/// // In a coroutine where you have access to worker_state signal:
+/// #[cfg(target_arch = "wasm32")]
+/// let result = embed_text(&query, worker_state).await;
+///
+/// #[cfg(not(target_arch = "wasm32"))]
+/// let result = embed_text(&query).await;
+/// ```
+#[cfg(target_arch = "wasm32")]
+pub async fn embed_text(
+    text: &str,
+    worker_state: dioxus::prelude::Signal<crate::components::worker::WorkerStatus>,
+) -> Result<crate::embedding::EmbeddingComputation, String> {
+    let embedder = WebEmbedder::from_worker_state(worker_state);
+    if !embedder.is_ready() {
+        return Err(embedder.status_message());
+    }
+    embedder
+        .embed(text)
+        .await
+        .map_err(|e| format!("Embedding failed: {}", e))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn embed_text(text: &str) -> Result<crate::embedding::EmbeddingComputation, String> {
+    DesktopEmbedder::new()
+        .embed(text)
+        .await
+        .map_err(|e| format!("Embedding failed: {}", e))
+}

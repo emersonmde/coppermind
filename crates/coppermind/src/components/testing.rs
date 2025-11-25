@@ -1,3 +1,5 @@
+use crate::embedding::format_embedding_summary;
+use crate::processing::embed_text;
 use crate::search::types::{Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageError;
@@ -6,14 +8,8 @@ use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::embedding::run_embedding;
-
 #[cfg(target_arch = "wasm32")]
-use crate::embedding::format_embedding_summary;
-
-#[cfg(target_arch = "wasm32")]
-use super::worker::{use_worker_state, WorkerStatus};
+use super::worker::use_worker_state;
 
 use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
 
@@ -69,41 +65,24 @@ pub fn DeveloperTesting() -> Element {
             while let Some(msg) = rx.next().await {
                 match msg {
                     EmbeddingMessage::RunTest(text) => {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            // Desktop: Direct async call
-                            match run_embedding(&text).await {
-                                Ok(res) => result.set(res),
-                                Err(e) => result.set(format!("Error: {}", e)),
-                            }
-                        }
-
+                        // Use platform-appropriate embedding method
                         #[cfg(target_arch = "wasm32")]
-                        {
-                            let worker_snapshot = worker_state.read().clone();
-                            match worker_snapshot {
-                                WorkerStatus::Pending => {
-                                    result
-                                        .set("Embedding worker is starting… please retry.".into());
-                                }
-                                WorkerStatus::Failed(err) => {
-                                    result.set(format!("Embedding worker unavailable: {}", err));
-                                }
-                                WorkerStatus::Ready(client) => {
-                                    match client.embed(text.clone()).await {
-                                        Ok(computation) => {
-                                            let formatted = format_embedding_summary(
-                                                &text,
-                                                computation.token_count,
-                                                &computation.embedding,
-                                            );
-                                            result.set(formatted);
-                                        }
-                                        Err(e) => {
-                                            result.set(format!("Worker embedding failed: {}", e));
-                                        }
-                                    }
-                                }
+                        let embed_result = embed_text(&text, worker_state).await;
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let embed_result = embed_text(&text).await;
+
+                        match embed_result {
+                            Ok(computation) => {
+                                let formatted = format_embedding_summary(
+                                    &text,
+                                    computation.token_count,
+                                    &computation.embedding,
+                                );
+                                result.set(formatted);
+                            }
+                            Err(e) => {
+                                result.set(format!("Error: {}", e));
                             }
                         }
                     }

@@ -19,5 +19,5 @@ pub mod embedder;
 pub mod processor;
 
 // Re-export key types
-pub use embedder::PlatformEmbedder;
+pub use embedder::{embed_text, get_platform_embedder, PlatformEmbedder};
 pub use processor::{process_file_chunks, ChunkProcessingResult};

@@ -6,6 +6,8 @@
 // Desktop implementation (full crawler functionality)
 #[cfg(not(target_arch = "wasm32"))]
 mod desktop {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -14,6 +16,14 @@ mod desktop {
 
     use crate::components::{use_processing_sender, ProcessingMessage};
     use crate::crawler::{CrawlConfig, CrawlEngine, CrawlProgress, CrawlResult};
+
+    /// Number of pages to accumulate before sending for embedding.
+    ///
+    /// Smaller batches = more responsive progress, slightly more overhead.
+    /// Larger batches = more efficient embedding, but longer waits between updates.
+    ///
+    /// TODO: Make this configurable via preferences (see docs/config-options.md)
+    const EMBEDDING_BATCH_SIZE: usize = 10;
 
     /// Web crawler card for entering URLs and crawling pages
     #[component]
@@ -61,31 +71,64 @@ mod desktop {
                     progress.set(Some(p));
                 };
 
-                // Collect all pages (no callback, batch at the end)
+                // Batch buffer for streaming page processing
+                // Using Rc<RefCell> for interior mutability in single-threaded async context
+                let batch_buffer: Rc<RefCell<Vec<(String, String)>>> =
+                    Rc::new(RefCell::new(Vec::new()));
+                let pages_sent = Rc::new(RefCell::new(0usize));
+
+                // Page callback that accumulates pages and sends batches for embedding
+                // This provides incremental indexing during crawl:
+                // - Pages are indexed as they're crawled (not after)
+                // - If crawl fails, already-sent batches are preserved
+                // - Memory usage stays bounded
+                let batch_for_callback = batch_buffer.clone();
+                let pages_sent_for_callback = pages_sent.clone();
+                let page_callback = move |result: &CrawlResult| {
+                    if result.success && !result.text.is_empty() {
+                        let mut buffer = batch_for_callback.borrow_mut();
+                        buffer.push((result.url.clone(), result.text.clone()));
+
+                        // Send batch when threshold reached
+                        if buffer.len() >= EMBEDDING_BATCH_SIZE {
+                            let batch: Vec<_> = buffer.drain(..).collect();
+                            let batch_len = batch.len();
+                            drop(buffer); // Release borrow before send
+
+                            info!(
+                                "Sending batch of {} pages for embedding (streaming)",
+                                batch_len
+                            );
+                            processing_task.send(ProcessingMessage::ProcessFiles(batch));
+                            *pages_sent_for_callback.borrow_mut() += batch_len;
+                        }
+                    }
+                };
+
+                // Crawl with streaming page callback
                 match engine
-                    .crawl_with_progress(
-                        Some(progress_callback),
-                        None::<fn(&CrawlResult)>,
-                        Some(flag),
-                    )
+                    .crawl_with_progress(Some(progress_callback), Some(page_callback), Some(flag))
                     .await
                 {
                     Ok(results) => {
-                        info!("Crawl complete: {} pages", results.len());
+                        let total_crawled = results.len();
+                        info!("Crawl complete: {} pages crawled", total_crawled);
 
-                        // Collect all successful pages into one batch
-                        let file_contents: Vec<(String, String)> = results
-                            .iter()
-                            .filter(|r| r.success && !r.text.is_empty())
-                            .map(|r| (r.url.clone(), r.text.clone()))
-                            .collect();
+                        // Send any remaining pages in the buffer
+                        let remaining: Vec<_> = batch_buffer.borrow_mut().drain(..).collect();
+                        if !remaining.is_empty() {
+                            let remaining_len = remaining.len();
+                            info!(
+                                "Sending final batch of {} pages for embedding",
+                                remaining_len
+                            );
+                            processing_task.send(ProcessingMessage::ProcessFiles(remaining));
+                            *pages_sent.borrow_mut() += remaining_len;
+                        }
 
-                        if !file_contents.is_empty() {
-                            let count = file_contents.len();
-                            // Send all pages as ONE batch - they'll be processed one by one
-                            processing_task.send(ProcessingMessage::ProcessFiles(file_contents));
-
-                            status.set(CrawlStatus::Success { pages: count });
+                        let total_sent = *pages_sent.borrow();
+                        if total_sent > 0 {
+                            status.set(CrawlStatus::Success { pages: total_sent });
                         } else {
                             status.set(CrawlStatus::Error {
                                 message: "No content extracted from pages".to_string(),
@@ -95,9 +138,32 @@ mod desktop {
                     }
                     Err(e) => {
                         error!("Crawl failed: {}", e);
-                        status.set(CrawlStatus::Error {
-                            message: e.to_string(),
-                        });
+
+                        // Even on failure, send any buffered pages so work isn't lost
+                        let remaining: Vec<_> = batch_buffer.borrow_mut().drain(..).collect();
+                        if !remaining.is_empty() {
+                            let remaining_len = remaining.len();
+                            info!(
+                                "Crawl failed but sending {} buffered pages for embedding",
+                                remaining_len
+                            );
+                            processing_task.send(ProcessingMessage::ProcessFiles(remaining));
+                        }
+
+                        let total_sent = *pages_sent.borrow();
+                        if total_sent > 0 {
+                            // Partial success - some pages were indexed before failure
+                            status.set(CrawlStatus::Error {
+                                message: format!(
+                                    "{} ({} pages indexed before failure)",
+                                    e, total_sent
+                                ),
+                            });
+                        } else {
+                            status.set(CrawlStatus::Error {
+                                message: e.to_string(),
+                            });
+                        }
                         progress.set(None);
                     }
                 }

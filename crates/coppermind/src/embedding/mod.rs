@@ -67,6 +67,38 @@ use dioxus::logger::tracing::{debug, info};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
 use std::sync::Arc;
 
+// Desktop-only: Semaphore to serialize GPU access
+// Workaround for Candle Metal backend bug (not an inherent Metal limitation).
+// See: https://github.com/huggingface/candle/issues/2637
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::Semaphore;
+
+/// Maximum concurrent embedding operations.
+///
+/// Currently set to 1 as a workaround for Candle's Metal backend bug where
+/// command buffers aren't properly isolated between threads. This causes:
+/// "A command encoder is already encoding to this command buffer"
+///
+/// Note: This is NOT an inherent Metal/CUDA limitation - Metal command queues
+/// are designed to be thread-safe. The issue is Candle's implementation.
+/// See: https://github.com/huggingface/candle/issues/2637
+///
+/// Future: May be removable when upgrading to a Candle version with the fix
+/// from PR #3079/3090 (thread-isolated command buffers).
+///
+/// TODO: Make this configurable via preferences (see docs/config-options.md)
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_CONCURRENT_EMBEDDINGS: usize = 1;
+
+/// Global semaphore to serialize embedding operations on desktop.
+///
+/// Workaround for Candle Metal backend bug - prevents concurrent command buffer
+/// access that triggers assertion failures. The fix (PR #3079) introduces
+/// thread-isolated command buffers, which may allow removing this semaphore.
+#[cfg(not(target_arch = "wasm32"))]
+static EMBEDDING_SEMAPHORE: once_cell::sync::Lazy<Semaphore> =
+    once_cell::sync::Lazy::new(|| Semaphore::new(MAX_CONCURRENT_EMBEDDINGS));
+
 // Asset declarations - loaded via Dioxus asset system
 const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
 const TOKENIZER_FILE: Asset = asset!("/assets/models/jina-bert-tokenizer.json");
@@ -202,10 +234,28 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
     debug!("🧾 Tokenized into {} tokens", token_count);
     debug!("Generating embedding vector...");
 
-    // On desktop: Use spawn_blocking to prevent UI freezing
-    // On WASM: Run directly (web worker handles parallelism)
-    let model_clone = model.clone();
-    let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
+    // On desktop: Acquire semaphore to serialize GPU access, then spawn_blocking
+    // This prevents Metal race conditions when multiple batches embed concurrently
+    #[cfg(not(target_arch = "wasm32"))]
+    let embedding = {
+        // Acquire permit (waits if another embedding is in progress)
+        let _permit = EMBEDDING_SEMAPHORE
+            .acquire()
+            .await
+            .map_err(|e| EmbeddingError::InferenceFailed(format!("Semaphore error: {}", e)))?;
+
+        // Now safe to run embedding on blocking thread
+        let model_clone = model.clone();
+        run_blocking(move || model_clone.embed_tokens(token_ids)).await?
+        // _permit dropped here, releasing semaphore for next embedding
+    };
+
+    // On WASM: Run directly (web worker handles parallelism, no GPU race)
+    #[cfg(target_arch = "wasm32")]
+    let embedding = {
+        let model_clone = model.clone();
+        run_blocking(move || model_clone.embed_tokens(token_ids)).await?
+    };
 
     debug!("✓ Generated {}-dimensional embedding", embedding.len());
 

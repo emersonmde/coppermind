@@ -1,3 +1,4 @@
+use crate::processing::embed_text;
 use crate::search::types::{DocId, DocumentMetadata, SearchResult};
 use crate::search::{aggregate_chunks_by_file, types::FileSearchResult};
 use dioxus::logger::tracing::{error, info};
@@ -6,7 +7,7 @@ use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
 
 #[cfg(target_arch = "wasm32")]
-use crate::components::worker::{use_worker_state, WorkerStatus};
+use crate::components::worker::use_worker_state;
 
 use crate::components::{use_search_engine, use_search_engine_status, SearchEngineStatus, View};
 
@@ -87,52 +88,20 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                         info!("🔍 Searching for: '{}'", query);
                         status.set(format!("Embedding query '{}'...", query));
 
-                        // Embed the query
-                        let query_embedding = {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                // Desktop: Use direct embedding
-                                match crate::embedding::compute_embedding(&query).await {
-                                    Ok(computation) => Some(computation.embedding),
-                                    Err(e) => {
-                                        error!("❌ Failed to embed query: {}", e);
-                                        status.set(format!("Failed to embed query: {}", e));
-                                        is_searching.set(false);
-                                        None
-                                    }
-                                }
-                            }
+                        // Embed the query using platform-appropriate method
+                        #[cfg(target_arch = "wasm32")]
+                        let embed_result = embed_text(&query, worker_state).await;
 
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                // Web: Use embedding worker
-                                let worker_snapshot = worker_state.read().clone();
-                                match worker_snapshot {
-                                    WorkerStatus::Pending => {
-                                        status.set(
-                                            "Embedding worker is starting… please retry.".into(),
-                                        );
-                                        is_searching.set(false);
-                                        None
-                                    }
-                                    WorkerStatus::Failed(err) => {
-                                        status
-                                            .set(format!("Embedding worker unavailable: {}", err));
-                                        is_searching.set(false);
-                                        None
-                                    }
-                                    WorkerStatus::Ready(client) => {
-                                        match client.embed(query.clone()).await {
-                                            Ok(computation) => Some(computation.embedding),
-                                            Err(e) => {
-                                                error!("❌ Failed to embed query: {}", e);
-                                                status.set(format!("Failed to embed query: {}", e));
-                                                is_searching.set(false);
-                                                None
-                                            }
-                                        }
-                                    }
-                                }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let embed_result = embed_text(&query).await;
+
+                        let query_embedding = match embed_result {
+                            Ok(computation) => Some(computation.embedding),
+                            Err(e) => {
+                                error!("❌ Failed to embed query: {}", e);
+                                status.set(format!("Failed to embed query: {}", e));
+                                is_searching.set(false);
+                                None
                             }
                         };
 

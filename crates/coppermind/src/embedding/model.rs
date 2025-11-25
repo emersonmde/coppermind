@@ -423,18 +423,15 @@ pub fn get_or_load_model(
     vocab_size: usize,
     config: JinaBertConfig,
 ) -> Result<Arc<dyn Embedder>, EmbeddingError> {
-    if let Some(existing) = MODEL_CACHE.get() {
-        return Ok(existing.clone());
-    }
-
-    let model = JinaBertEmbedder::from_bytes(model_bytes, vocab_size, config)?;
-    let model: Arc<dyn Embedder> = Arc::new(model);
-
-    // Try to set in cache (may fail if another thread beat us)
-    let _ = MODEL_CACHE.set(model.clone());
-
-    // Return cached version (in case another thread won the race)
-    Ok(MODEL_CACHE.get().unwrap().clone())
+    // Use get_or_try_init to ensure only one thread creates the model.
+    // This prevents the race condition where multiple threads could each
+    // create an expensive model, with all but one being discarded.
+    MODEL_CACHE
+        .get_or_try_init(|| {
+            let model = JinaBertEmbedder::from_bytes(model_bytes, vocab_size, config)?;
+            Ok(Arc::new(model) as Arc<dyn Embedder>)
+        })
+        .cloned()
 }
 
 #[cfg(test)]
