@@ -50,7 +50,7 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 ### Official Documentation
 - [Dioxus](https://dioxuslabs.com/learn/0.6/) - UI framework docs
 - [Candle](https://github.com/huggingface/candle) - ML framework repository
-- [instant-distance](https://github.com/instant-labs/instant-distance) - HNSW vector search
+- [hnsw](https://github.com/rust-cv/hnsw) - HNSW vector search (incremental indexing)
 - [tokenizers-rs](https://github.com/huggingface/tokenizers) - Tokenization library
 
 ### Academic Papers

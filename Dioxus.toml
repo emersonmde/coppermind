@@ -1,7 +1,6 @@
 [application]
-# Asset directory: public/assets/ contains CSS, icons, etc.
-# Source assets are in assets/, copied to public/assets/ for builds
-asset_dir = "public"
+# Asset directory for the app crate
+asset_dir = "crates/coppermind/public"
 
 [bundle]
 identifier = "dev.errorsignal"
@@ -11,7 +10,7 @@ publisher = "Matthew Emerson"
 # When watcher is triggered, regenerate the `index.html`
 reload_html = true
 # Which files or dirs will be monitored
-watch_path = ["src", "public"]
+watch_path = ["crates/coppermind/src", "crates/coppermind/public", "crates/coppermind-core/src"]
 
 [web.app]
 base_path = "/coppermind"

@@ -824,30 +824,27 @@ name = "coppermind"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bm25",
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "console_error_panic_hook",
  "content_inspector",
+ "coppermind-core",
  "dioxus",
  "futures",
  "futures-channel",
  "futures-util",
  "getrandom 0.3.4",
  "gloo-timers",
- "hnsw",
  "instant",
  "js-sys",
  "once_cell",
- "rand 0.8.5",
  "regex",
  "reqwest",
  "safetensors",
  "scraper",
  "serde",
  "serde-wasm-bindgen",
- "space",
  "text-splitter",
  "thiserror 2.0.17",
  "tokenizers",
@@ -865,6 +862,34 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "coppermind-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bm25",
+ "hnsw",
+ "instant",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "space",
+ "text-splitter",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "url",
 ]
 
 [[package]]

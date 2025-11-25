@@ -72,7 +72,7 @@ Coppermind implements a hybrid search architecture that combines vector similari
 
 ### Vector Search - HNSW Algorithm
 
-Vector search uses the [instant-distance](https://github.com/instant-labs/instant-distance) crate, which implements the HNSW (Hierarchical Navigable Small World) algorithm from [Malkov & Yashunin (2018)](https://arxiv.org/abs/1603.09320).
+Vector search uses the [hnsw](https://github.com/rust-cv/hnsw) crate, which implements the HNSW (Hierarchical Navigable Small World) algorithm from [Malkov & Yashunin (2018)](https://arxiv.org/abs/1603.09320). This crate was chosen for its support of incremental indexing - documents can be added one at a time without rebuilding the entire index.
 
 **How HNSW Works:**
 HNSW builds a multi-layer graph structure where each layer contains a subset of the data points. Navigation starts at the top layer (sparse) and progressively moves to denser layers, using greedy search to find approximate nearest neighbors. This hierarchical approach achieves logarithmic search complexity - O(log n) average case - making it practical for large-scale vector search.
@@ -88,8 +88,8 @@ pub struct VectorSearchEngine {
 
 Distance metric: **Cosine distance** = `1 - cosine_similarity`
 - Documents are represented as 512-dimensional embeddings from JinaBERT
-- Index rebuilds automatically when documents are added
-- instant-distance uses [rayon](https://github.com/rayon-rs/rayon) for parallel graph construction on native platforms
+- HNSW parameters: M=16 (bidirectional links per node), M0=32 (links at layer 0)
+- Incremental indexing: documents added one at a time without full rebuild
 
 ### Keyword Search - BM25 Algorithm
 
@@ -738,7 +738,8 @@ let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
 - **[tokenizers-rs 0.20](https://github.com/huggingface/tokenizers)** - Tokenization (Hugging Face Transformers tokenizer in Rust)
 
 ### Search Infrastructure
-- **[instant-distance 0.6](https://github.com/instant-labs/instant-distance)** - Vector search (HNSW approximate nearest neighbor from Malkov & Yashunin 2018, rayon parallel indexing)
+- **[hnsw 0.11](https://github.com/rust-cv/hnsw)** - Vector search (HNSW approximate nearest neighbor from Malkov & Yashunin 2018, incremental indexing)
+- **[space 0.17](https://github.com/rust-cv/space)** - Distance metrics (cosine distance for HNSW)
 - **[bm25 2.3](https://github.com/Michael-JB/bm25)** - Keyword search (Okapi BM25 ranking with TF-IDF)
 - **Reciprocal Rank Fusion** - Result fusion (rank-based merging from Cormack et al. SIGIR 2009)
 
@@ -753,7 +754,6 @@ let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
 ### Build & Tooling
 - **[Dioxus CLI](https://dioxuslabs.com/)** - Build tool (dx serve, dx bundle, platform targeting)
 - **[wasm-bindgen](https://github.com/rustwasm/wasm-bindgen)** - WASM/JS interop (zero-cost bindings)
-- **[rayon](https://github.com/rayon-rs/rayon)** - Data parallelism (used by instant-distance for parallel HNSW construction on native platforms)
 
 ---
 

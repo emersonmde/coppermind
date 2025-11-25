@@ -57,42 +57,69 @@ cargo install cargo-audit --locked
 ## Architecture
 
 ### Module Organization
-- **main.rs**: Entry point, platform-specific launch configuration (desktop/mobile/web), logging, and CSS loading
-- **error.rs**: Error types (`EmbeddingError`, `FileProcessingError`) with proper Display/Error implementations
-- **components/**: UI components and file processing utilities
-  - **mod.rs**: App component, search engine context providers
-  - **file_upload.rs**: File upload UI with progress tracking and metrics
-  - **file_processing.rs**: File utilities (binary detection, chunk indexing, directory traversal)
-  - **hero.rs**: Hero section with worker state management
-  - **search.rs**: Search UI component
-  - **testing.rs**: Developer testing utilities
+
+- **main.rs**: Entry point with platform-specific launch (desktop/mobile/web), logging, CSS loading
+- **lib.rs**: Public API surface, module exports, crate-level `#![forbid(unsafe_code)]`
+- **error.rs**: Error types (`EmbeddingError`, `FileProcessingError`) with `thiserror` derive
+
 - **embedding/**: ML model inference and text processing
-  - **mod.rs**: Public API, high-level embedding functions with automatic file-type-based chunking
-  - **config.rs**: Model configuration (`JinaBertConfig` with `ModelConfig` trait for multi-model support)
-  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` implementation
-  - **tokenizer.rs**: Tokenization utilities
-  - **assets.rs**: Platform-agnostic asset loading (HTTP fetch on web, filesystem on desktop)
-  - **chunking/**: Text chunking strategies for semantic document splitting
-    - **mod.rs**: `ChunkingStrategy` trait, `FileType` enum, file type detection
-    - **text_splitter_adapter.rs**: Generic text chunking using ICU4X sentence segmentation
-    - **markdown_splitter_adapter.rs**: Markdown-aware chunking respecting document structure
-    - **code_splitter_adapter.rs**: Syntax-aware code chunking with tree-sitter (native only)
-- **workers/**: Web Worker for offloading CPU-intensive embedding to separate thread (WASM only)
-  - **mod.rs**: Module exports, conditional compilation for WASM target
-  - **embedding_worker.rs**: `EmbeddingWorker` with wasm-bindgen bindings for JS interop
-- **cpu.rs**: Web Worker spawning for parallel CPU computation (legacy/experimental)
-- **wgpu.rs**: WebGPU compute shader setup and execution
+  - **mod.rs**: High-level API (`compute_embedding`, `embed_text_chunks_auto`, `get_or_load_model`), WASM bindings
+  - **config.rs**: `ModelConfig` trait and `JinaBertConfig` implementation (512-dim, 4 layers, 8 heads)
+  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` (Candle-based, mean pooling, L2 normalization)
+  - **tokenizer.rs**: Singleton tokenizer initialization with truncation config
+  - **assets.rs**: Platform-agnostic asset loading (Fetch API on web, tokio::fs on desktop)
+  - **chunking/**: Text chunking strategies
+    - **mod.rs**: `ChunkingStrategy` trait, `FileType` enum, `detect_file_type()`
+    - **text_splitter_adapter.rs**: ICU4X sentence-based chunking with custom `TokenizerSizer`
+    - **markdown_splitter_adapter.rs**: Markdown-aware chunking (pulldown-cmark)
+    - **code_splitter_adapter.rs**: Syntax-aware chunking with tree-sitter (native only)
+
 - **search/**: Hybrid search system (vector + keyword + RRF fusion)
-  - **mod.rs**: Public exports, `HybridSearchEngine` re-exported
-  - **engine.rs**: `HybridSearchEngine` orchestrating vector and keyword search
-  - **vector.rs**: HNSW semantic search using instant-distance (cosine similarity)
-  - **keyword.rs**: BM25 full-text search for exact keyword matching
+  - **mod.rs**: Public exports
+  - **types.rs**: `DocId`, `Document`, `DocumentMetadata`, `DocumentRecord`, `SearchResult`, `FileSearchResult`, `SearchError`
+  - **engine.rs**: `HybridSearchEngine` orchestrating vector + keyword search
+  - **vector.rs**: HNSW semantic search using `hnsw` crate (cosine distance)
+  - **keyword.rs**: BM25 full-text search using `bm25` crate
   - **fusion.rs**: Reciprocal Rank Fusion (RRF) algorithm for merging rankings
-  - **types.rs**: Shared types (`DocId`, `Document`, `SearchResult`, `SearchError`)
+  - **aggregation.rs**: `aggregate_chunks_by_file()` for file-level result grouping
+
 - **storage/**: Cross-platform persistence layer
-  - **mod.rs**: `StorageBackend` trait for key-value storage abstraction
-  - **opfs.rs**: OPFS (Origin Private File System) for web platform
-  - **native.rs**: tokio::fs-based storage for desktop platform
+  - **mod.rs**: `StorageBackend` trait (save/load/exists/delete/list_keys/clear)
+  - **opfs.rs**: OPFS (Origin Private File System) for web (WASM only)
+  - **native.rs**: tokio::fs-based storage for desktop
+
+- **workers/**: Web Worker for CPU-intensive embedding (WASM only)
+  - **mod.rs**: `EmbeddingWorkerClient` (spawns worker, manages request/response), `start_embedding_worker()` WASM export
+
+- **processing/**: File processing pipeline
+  - **mod.rs**: Exports, `ChunkProcessingResult`
+  - **embedder.rs**: `PlatformEmbedder` enum (worker on web, direct calls on desktop)
+  - **processor.rs**: High-level `process_file_chunks()` pipeline
+
+- **crawler/**: Web page crawling (native only, CORS blocks web)
+  - **mod.rs**: `CrawlConfig`, `CrawlResult`, `CrawlProgress`, `CrawlError`
+  - **fetcher.rs**: HTTP fetching with reqwest
+  - **parser.rs**: HTML parsing and text extraction (scraper crate)
+  - **engine.rs**: Recursive crawl logic with depth/page limits
+
+- **platform/**: Platform abstraction utilities
+  - **mod.rs**: `run_blocking()` and `run_async()` - abstracts tokio::spawn_blocking on desktop, direct execution on web
+
+- **utils/**: General utilities
+  - **mod.rs**: Re-exports
+  - **error_ext.rs**: `ResultExt` trait for `.context()` error handling
+  - **signal_ext.rs**: Dioxus signal utilities
+
+- **components/**: Dioxus UI components
+  - **mod.rs**: `App` component, context providers (SearchEngine, StorageBackend)
+  - **app_shell/**: Layout (appbar, footer, metrics_pane)
+  - **search/**: Search UI (search_view, search_card, result_card, empty_state, source_preview)
+  - **index/**: Index management (index_view, upload_card, file_row, batch, batch_list)
+  - **worker.rs**: Platform-specific embedding coordination
+  - **batch_processor.rs**: Queue management for file processing
+  - **web_crawler.rs**: Crawler UI (desktop only)
+  - **file_processing.rs**: File utilities (binary detection, directory traversal)
+  - **testing.rs**: Developer testing utilities
 
 ### Critical Technical Details
 
@@ -122,8 +149,9 @@ cargo install cargo-audit --locked
 - Desktop uses `tokio::spawn_blocking` instead (no worker needed)
 
 **Hybrid Search Architecture**:
-- **Vector Search**: instant-distance HNSW for semantic similarity (cosine distance)
+- **Vector Search**: `hnsw` crate for semantic similarity (cosine distance)
   - Builds index from document embeddings (512D from JinaBERT)
+  - HNSW parameters: M=16 (bidirectional links), M0=32 (layer 0 links)
   - Returns nearest neighbors sorted by similarity score
 - **Keyword Search**: BM25 for exact keyword matching
   - Term frequency-inverse document frequency scoring
@@ -156,6 +184,22 @@ cargo install cargo-audit --locked
 Never hold these across `.await` points (causes deadlocks):
 - `generational_box::GenerationalRef` / `GenerationalRefMut`
 - `dioxus_signals::Write`
+
+### Extension Points (Traits)
+
+The codebase uses traits for extensibility and testing:
+
+| Trait | Location | Purpose | Implementations |
+|-------|----------|---------|-----------------|
+| `Embedder` | `embedding/model.rs` | Abstract ML inference | `JinaBertEmbedder` |
+| `ModelConfig` | `embedding/config.rs` | Model parameters | `JinaBertConfig` |
+| `ChunkingStrategy` | `embedding/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
+| `StorageBackend` | `storage/mod.rs` | Persistence | `OpfsStorage`, `NativeStorage`, `InMemoryStorage` |
+
+These traits define clean boundaries for:
+- Swapping implementations (e.g., different embedding models)
+- Testing with mocks
+- Platform-specific behavior behind a common interface
 
 ### Deployment
 

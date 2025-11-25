@@ -23,7 +23,7 @@ Coppermind is a local-first cross-platform hybrid search engine built with Rust 
 
 #### ✅ Hybrid Search System
 Successfully implemented hybrid search combining:
-- **Vector Search**: HNSW semantic similarity via instant-distance (512D embeddings)
+- **Vector Search**: HNSW semantic similarity via `hnsw` crate (512D embeddings, incremental indexing)
 - **Keyword Search**: BM25 full-text search for exact keyword matching
 - **RRF Fusion**: Reciprocal Rank Fusion merging both rankings without score normalization
 
