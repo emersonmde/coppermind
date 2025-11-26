@@ -1,13 +1,33 @@
-//! Cross-platform storage backend trait for persisting search indexes.
+//! Cross-platform storage backend traits for persisting search indexes.
 //!
-//! This module provides a platform-agnostic storage abstraction that allows
+//! This module provides platform-agnostic storage abstractions that allow
 //! the search engine to persist and load data across different platforms.
+//!
+//! # Storage Abstractions
+//!
+//! ## [`StorageBackend`] (Legacy)
+//! Simple key-value blob storage. Being replaced by DocumentStore for better
+//! scalability.
+//!
+//! ## [`DocumentStore`] (New)
+//! Efficient KV store with O(log n) lookups for documents, embeddings, and sources.
+//! Designed to scale to millions of chunks without full-corpus serialization.
 //!
 //! # Implementations
 //!
-//! - [`InMemoryStorage`] - No-op storage for testing (included in core)
-//! - `NativeStorage` - Native filesystem via tokio::fs (in app crate)
-//! - `OpfsStorage` - OPFS for web browsers (in app crate, WASM only)
+//! - [`InMemoryStorage`] / [`InMemoryDocumentStore`] - No-op storage for testing
+//! - `NativeStorage` / `RedbDocumentStore` - Native filesystem (in app crate, desktop)
+//! - `OpfsStorage` / `IndexedDbDocumentStore` - Browser storage (in app crate, WASM)
+
+mod document_store;
+
+#[cfg(feature = "redb-store")]
+mod redb_store;
+
+pub use document_store::{DocumentStore, InMemoryDocumentStore, StoreError};
+
+#[cfg(feature = "redb-store")]
+pub use redb_store::RedbDocumentStore;
 
 use thiserror::Error;
 

@@ -10,7 +10,7 @@ use super::{Batch, BatchMetrics, BatchStatus, FileMetrics, FileStatus};
 use crate::components::file_processing::{index_chunks, is_likely_binary};
 use crate::processing::processor::process_file_chunks;
 use crate::search::HybridSearchEngine;
-use crate::storage::StorageBackend;
+use crate::storage::DocumentStore;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures::lock::Mutex;
@@ -39,7 +39,7 @@ use tracing::instrument;
 // Desktop requires Send + Sync for threading; web is single-threaded so doesn't need them
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "profile", instrument(skip_all, fields(batch_idx, file_count = file_list.len())))]
-pub async fn process_batch<S: StorageBackend + Send + Sync + 'static>(
+pub async fn process_batch<S: DocumentStore + Send + Sync + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     batches_signal: Signal<Vec<Batch>>,
@@ -50,7 +50,7 @@ pub async fn process_batch<S: StorageBackend + Send + Sync + 'static>(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn process_batch<S: StorageBackend + 'static>(
+pub async fn process_batch<S: DocumentStore + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     batches_signal: Signal<Vec<Batch>>,
@@ -63,7 +63,7 @@ pub async fn process_batch<S: StorageBackend + 'static>(
 /// Desktop implementation - requires Send + Sync for threading
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "profile", instrument(skip_all, fields(batch_idx, file_count = file_list.len())))]
-async fn process_batch_impl<S: StorageBackend + Send + Sync + 'static>(
+async fn process_batch_impl<S: DocumentStore + Send + Sync + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     batches_signal: Signal<Vec<Batch>>,
@@ -75,7 +75,7 @@ async fn process_batch_impl<S: StorageBackend + Send + Sync + 'static>(
 
 /// Web implementation - single-threaded, no Send + Sync required
 #[cfg(target_arch = "wasm32")]
-async fn process_batch_impl<S: StorageBackend + 'static>(
+async fn process_batch_impl<S: DocumentStore + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     batches_signal: Signal<Vec<Batch>>,
@@ -89,7 +89,7 @@ async fn process_batch_impl<S: StorageBackend + 'static>(
 /// This macro-like approach allows us to share the implementation while having
 /// different trait bounds on different platforms.
 #[cfg(not(target_arch = "wasm32"))]
-async fn process_batch_inner<S: StorageBackend + Send + Sync + 'static>(
+async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     mut batches_signal: Signal<Vec<Batch>>,
@@ -235,7 +235,7 @@ async fn process_batch_inner<S: StorageBackend + Send + Sync + 'static>(
 
 /// Web version of batch processing - no Send + Sync required
 #[cfg(target_arch = "wasm32")]
-async fn process_batch_inner<S: StorageBackend + 'static>(
+async fn process_batch_inner<S: DocumentStore + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     mut batches_signal: Signal<Vec<Batch>>,

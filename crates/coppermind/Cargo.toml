@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Core library (will gain more functionality as migration progresses)
+# Note: redb-store feature is enabled via desktop feature below
 coppermind-core = { path = "../coppermind-core" }
 
 # Cross-platform dependencies
@@ -69,6 +70,9 @@ content_inspector = "0.2"  # Binary vs text detection (NULL byte + BOM checking)
 # WASM-only dependencies
 getrandom = { version = "0.3", features = ["wasm_js"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
+
+# IndexedDB wrapper for DocumentStore implementation
+rexie = "0.6"
 
 # OPFS storage features (web-only)
 web-sys = { version = "0.3", features = [
@@ -140,8 +144,8 @@ candle-transformers = { version = "0.9.1", features = ["mkl"] }
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-desktop = ["dioxus/desktop"]
-mobile = ["dioxus/mobile"]
+desktop = ["dioxus/desktop", "coppermind-core/redb-store"]
+mobile = ["dioxus/mobile", "coppermind-core/redb-store"]
 # Performance profiling - generates trace.json for chrome://tracing
 # Usage: dx serve --platform desktop --features profile
 profile = ["tracing", "tracing-subscriber", "tracing-chrome"]

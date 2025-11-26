@@ -3,6 +3,7 @@
 use super::types::{validate_dimension, DocId, SearchError};
 use hnsw::{Hnsw, Searcher};
 use space::{Metric, Neighbor};
+use std::collections::HashSet;
 use tracing::instrument;
 
 /// Minimum ef_search parameter for HNSW queries.
@@ -89,6 +90,13 @@ pub struct VectorSearchEngine {
     doc_ids: Vec<DocId>,
     /// Dimensionality of embeddings (e.g., 512 for JinaBERT)
     dimension: usize,
+    /// Set of tombstoned indices (soft-deleted, excluded from search)
+    ///
+    /// HNSW doesn't support true deletion, so we use tombstones to mark
+    /// entries that should be filtered from search results. The indices
+    /// are preserved in the HNSW graph but excluded during result filtering.
+    /// Background compaction can rebuild the index to reclaim space.
+    tombstones: HashSet<usize>,
 }
 
 impl VectorSearchEngine {
@@ -112,6 +120,7 @@ impl VectorSearchEngine {
             searcher,
             doc_ids: Vec::new(),
             dimension,
+            tombstones: HashSet::new(),
         }
     }
 
@@ -223,10 +232,11 @@ impl VectorSearchEngine {
         self.index
             .nearest(&query_box, ef_search, &mut self.searcher, &mut neighbors);
 
-        // Convert results to (DocId, score) pairs
+        // Convert results to (DocId, score) pairs, filtering out tombstoned entries
         let results = neighbors
             .into_iter()
             .filter(|n| n.index != !0) // Filter out unfilled entries
+            .filter(|n| !self.tombstones.contains(&n.index)) // Filter out tombstoned entries
             .map(|neighbor| {
                 // neighbor.distance is u32 cosine distance
                 // Convert back to similarity score
@@ -253,6 +263,60 @@ impl VectorSearchEngine {
     #[allow(dead_code)] // Public API
     pub fn is_empty(&self) -> bool {
         self.doc_ids.is_empty()
+    }
+
+    /// Mark an index position as tombstoned (soft-deleted).
+    ///
+    /// Tombstoned entries remain in the HNSW graph but are filtered from
+    /// search results. This provides O(1) "deletion" without expensive
+    /// index rebuilding.
+    ///
+    /// # Arguments
+    /// * `idx` - The index position to tombstone (HNSW internal index)
+    ///
+    /// # Note
+    /// This is the internal index position, not the DocId. The caller
+    /// (HybridSearchEngine) tracks the mapping from DocId to index.
+    pub fn mark_tombstone(&mut self, idx: usize) {
+        self.tombstones.insert(idx);
+    }
+
+    /// Get all tombstoned indices.
+    ///
+    /// Returns a copy of the tombstone set for persistence.
+    pub fn get_tombstones(&self) -> HashSet<usize> {
+        self.tombstones.clone()
+    }
+
+    /// Set tombstones from a previously persisted set.
+    ///
+    /// Used when loading an index from storage to restore tombstone state.
+    #[allow(dead_code)] // Will be used in Phase 3 for tombstone persistence
+    pub fn set_tombstones(&mut self, tombstones: HashSet<usize>) {
+        self.tombstones = tombstones;
+    }
+
+    /// Get the number of tombstoned entries.
+    #[allow(dead_code)] // Public API
+    pub fn tombstone_count(&self) -> usize {
+        self.tombstones.len()
+    }
+
+    /// Get the DocId at a given index position.
+    ///
+    /// Returns None if the index is out of bounds.
+    #[allow(dead_code)] // Public API
+    pub fn get_doc_id_at(&self, idx: usize) -> Option<DocId> {
+        self.doc_ids.get(idx).copied()
+    }
+
+    /// Find the index position for a DocId.
+    ///
+    /// Returns None if the DocId is not in the index.
+    /// Note: This is O(n) linear search - use sparingly.
+    #[allow(dead_code)] // Will be used in Phase 3 for tombstone persistence
+    pub fn find_index(&self, doc_id: DocId) -> Option<usize> {
+        self.doc_ids.iter().position(|&id| id == doc_id)
     }
 }
 
@@ -500,5 +564,111 @@ mod tests {
                 score
             );
         }
+    }
+
+    #[test]
+    fn test_tombstone_filters_results() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        let doc1 = DocId::from_u64(1);
+        let doc2 = DocId::from_u64(2);
+        let doc3 = DocId::from_u64(3);
+
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
+        engine.add_document(doc2, vec![0.9, 0.1, 0.0]).unwrap();
+        engine.add_document(doc3, vec![0.0, 1.0, 0.0]).unwrap();
+
+        // Search should return all 3 documents
+        let results = engine.search(&[1.0, 0.0, 0.0], 10).unwrap();
+        assert_eq!(results.len(), 3);
+
+        // Tombstone doc1 (index 0)
+        engine.mark_tombstone(0);
+
+        // Search should now exclude doc1
+        let results = engine.search(&[1.0, 0.0, 0.0], 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(!results.iter().any(|(id, _)| *id == doc1));
+    }
+
+    #[test]
+    fn test_tombstone_persistence() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        engine
+            .add_document(DocId::from_u64(1), vec![1.0, 0.0, 0.0])
+            .unwrap();
+        engine
+            .add_document(DocId::from_u64(2), vec![0.0, 1.0, 0.0])
+            .unwrap();
+
+        // Mark some tombstones
+        engine.mark_tombstone(0);
+        engine.mark_tombstone(1);
+
+        // Get tombstones for persistence
+        let tombstones = engine.get_tombstones();
+        assert_eq!(tombstones.len(), 2);
+        assert!(tombstones.contains(&0));
+        assert!(tombstones.contains(&1));
+
+        // Create new engine and restore tombstones
+        let mut engine2 = VectorSearchEngine::new(3);
+        engine2
+            .add_document(DocId::from_u64(1), vec![1.0, 0.0, 0.0])
+            .unwrap();
+        engine2
+            .add_document(DocId::from_u64(2), vec![0.0, 1.0, 0.0])
+            .unwrap();
+        engine2.set_tombstones(tombstones);
+
+        // Search should return no results (all tombstoned)
+        let results = engine2.search(&[1.0, 0.0, 0.0], 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_index() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        let doc1 = DocId::from_u64(100);
+        let doc2 = DocId::from_u64(200);
+        let doc3 = DocId::from_u64(300);
+
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
+        engine.add_document(doc2, vec![0.0, 1.0, 0.0]).unwrap();
+        engine.add_document(doc3, vec![0.0, 0.0, 1.0]).unwrap();
+
+        // Find indices
+        assert_eq!(engine.find_index(doc1), Some(0));
+        assert_eq!(engine.find_index(doc2), Some(1));
+        assert_eq!(engine.find_index(doc3), Some(2));
+
+        // Non-existent doc
+        assert_eq!(engine.find_index(DocId::from_u64(999)), None);
+    }
+
+    #[test]
+    fn test_tombstone_count() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        engine
+            .add_document(DocId::from_u64(1), vec![1.0, 0.0, 0.0])
+            .unwrap();
+        engine
+            .add_document(DocId::from_u64(2), vec![0.0, 1.0, 0.0])
+            .unwrap();
+
+        assert_eq!(engine.tombstone_count(), 0);
+
+        engine.mark_tombstone(0);
+        assert_eq!(engine.tombstone_count(), 1);
+
+        engine.mark_tombstone(1);
+        assert_eq!(engine.tombstone_count(), 2);
+
+        // Marking same index again doesn't increase count
+        engine.mark_tombstone(0);
+        assert_eq!(engine.tombstone_count(), 2);
     }
 }

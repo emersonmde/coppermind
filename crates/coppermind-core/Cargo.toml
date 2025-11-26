@@ -26,6 +26,8 @@ tree-sitter = [
 ]
 # Web crawler (native only - CORS blocks web platform)
 crawler = ["dep:reqwest", "dep:url"]
+# Redb-backed document store (native only - for desktop persistence)
+redb-store = ["dep:redb"]
 
 [dependencies]
 # Storage and search dependencies
@@ -62,5 +64,9 @@ text-splitter = { version = "0.18", default-features = false, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 url = { version = "2.5", optional = true }
 
+# Optional: redb document store (native only)
+redb = { version = "2.4", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+tempfile = "3.15"

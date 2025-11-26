@@ -79,8 +79,8 @@ mod vector;
 // Re-export main types (public API)
 #[allow(unused_imports)]
 pub use types::{
-    validate_dimension, DocId, Document, DocumentMetadata, DocumentRecord, FileSearchResult,
-    SearchError, SearchResult,
+    validate_dimension, ChunkMetadata, CompactionStats, DocId, Document, DocumentMetadata,
+    DocumentRecord, FileSearchResult, SearchError, SearchResult, SourceRecord,
 };
 
 // Re-export search engine and aggregation

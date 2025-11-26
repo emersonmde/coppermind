@@ -346,3 +346,108 @@ pub enum LoadResult {
         reason: String,
     },
 }
+
+// ============================================================================
+// Source Tracking Types (for re-upload detection)
+// ============================================================================
+
+/// Record tracking a source file/URL and its indexed chunks.
+///
+/// Used for detecting when documents are re-uploaded and need updating.
+/// Stored in the "sources" table of the DocumentStore.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceRecord {
+    /// Schema version for future evolution
+    pub version: u32,
+    /// SHA-256 hash of the source content
+    pub content_hash: String,
+    /// DocIds of all chunks from this source
+    pub doc_ids: Vec<DocId>,
+    /// Whether all chunks have been indexed (false during indexing, true when complete)
+    pub complete: bool,
+}
+
+impl SourceRecord {
+    /// Current schema version for SourceRecord
+    pub const CURRENT_VERSION: u32 = 1;
+
+    /// Creates a new incomplete source record (before indexing starts)
+    pub fn new_incomplete(content_hash: String) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            content_hash,
+            doc_ids: Vec::new(),
+            complete: false,
+        }
+    }
+
+    /// Creates a complete source record with all chunk IDs
+    pub fn new_complete(content_hash: String, doc_ids: Vec<DocId>) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            content_hash,
+            doc_ids,
+            complete: true,
+        }
+    }
+
+    /// Marks the source as complete
+    pub fn mark_complete(&mut self) {
+        self.complete = true;
+    }
+
+    /// Adds a chunk DocId to this source
+    pub fn add_chunk(&mut self, doc_id: DocId) {
+        self.doc_ids.push(doc_id);
+    }
+}
+
+/// Lightweight metadata for a chunk, kept in memory.
+///
+/// Full text is stored on disk and loaded on-demand.
+/// This structure minimizes memory footprint while enabling
+/// fast lookups and file-level result grouping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkMetadata {
+    /// Unique identifier for the source (path, URL, or web:{filename})
+    pub source_id: String,
+    /// Display name for UI (filename or page title)
+    pub display_name: String,
+    /// Which chunk this is within the source (0-indexed)
+    pub chunk_index: usize,
+    /// Total number of chunks from this source
+    pub chunk_count: usize,
+    /// Unix timestamp when indexed
+    pub created_at: u64,
+}
+
+impl ChunkMetadata {
+    /// Creates new chunk metadata
+    pub fn new(
+        source_id: String,
+        display_name: String,
+        chunk_index: usize,
+        chunk_count: usize,
+    ) -> Self {
+        Self {
+            source_id,
+            display_name,
+            chunk_index,
+            chunk_count,
+            created_at: get_current_timestamp(),
+        }
+    }
+}
+
+/// Statistics from a compaction operation.
+#[derive(Debug, Clone)]
+pub struct CompactionStats {
+    /// Time taken to compact in milliseconds
+    pub duration_ms: u64,
+    /// Number of chunks removed during compaction
+    pub chunks_removed: usize,
+    /// Tombstone ratio before compaction (0.0 - 1.0)
+    pub tombstone_ratio_before: f64,
+    /// Tombstone ratio after compaction (should be 0.0)
+    pub tombstone_ratio_after: f64,
+}

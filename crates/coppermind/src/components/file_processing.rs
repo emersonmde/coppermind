@@ -13,7 +13,7 @@ use crate::metrics::global_metrics;
 use crate::platform::run_blocking;
 use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
-use crate::storage::StorageBackend;
+use crate::storage::DocumentStore;
 #[cfg(not(target_arch = "wasm32"))]
 use dioxus::logger::tracing::error;
 use dioxus::logger::tracing::info;
@@ -62,7 +62,7 @@ pub fn is_likely_binary(content: &str) -> bool {
 ///
 /// # Type Parameters
 ///
-/// * `S` - Storage backend type implementing `StorageBackend`
+/// * `S` - Storage backend type implementing `DocumentStore`
 ///
 /// # Arguments
 ///
@@ -92,7 +92,7 @@ pub fn is_likely_binary(content: &str) -> bool {
 // Desktop: Uses blocking thread pool for CPU-intensive work, requires Send + Sync
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "profile", instrument(skip_all, fields(chunks = embedding_results.len())))]
-pub async fn index_chunks<S: StorageBackend + Send + Sync + 'static>(
+pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
     embedding_results: &[ChunkEmbeddingResult],
     file_label: &str,
@@ -173,7 +173,7 @@ pub async fn index_chunks<S: StorageBackend + Send + Sync + 'static>(
 
 // Web: Single-threaded, no blocking thread pool needed, no Send + Sync required
 #[cfg(target_arch = "wasm32")]
-pub async fn index_chunks<S: StorageBackend + 'static>(
+pub async fn index_chunks<S: DocumentStore + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
     embedding_results: &[ChunkEmbeddingResult],
     file_label: &str,

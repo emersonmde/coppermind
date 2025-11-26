@@ -2,7 +2,7 @@ use crate::embedding::format_embedding_summary;
 use crate::processing::embed_text;
 use crate::search::types::{Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
-use crate::storage::StorageError;
+use crate::storage::InMemoryDocumentStore;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
@@ -12,31 +12,6 @@ use futures_util::StreamExt;
 use super::worker::use_worker_state;
 
 use super::{use_search_engine, use_search_engine_status, SearchEngineStatus};
-
-// Mock storage for testing
-struct MockStorage;
-
-#[async_trait::async_trait(?Send)]
-impl crate::storage::StorageBackend for MockStorage {
-    async fn save(&self, _key: &str, _data: &[u8]) -> Result<(), StorageError> {
-        Ok(())
-    }
-    async fn load(&self, _key: &str) -> Result<Vec<u8>, StorageError> {
-        Err(StorageError::NotFound("test".to_string()))
-    }
-    async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
-        Ok(false)
-    }
-    async fn delete(&self, _key: &str) -> Result<(), StorageError> {
-        Ok(())
-    }
-    async fn list_keys(&self) -> Result<Vec<String>, StorageError> {
-        Ok(vec![])
-    }
-    async fn clear(&self) -> Result<(), StorageError> {
-        Ok(())
-    }
-}
 
 // Messages for embedding test coroutine
 enum EmbeddingMessage {
@@ -140,8 +115,8 @@ pub fn DeveloperTesting() -> Element {
                                 // Clear previous results
                                 results_signal.set(Vec::new());
 
-                                let storage = MockStorage;
-                                let mut engine = match HybridSearchEngine::new(storage, 512).await {
+                                let store = InMemoryDocumentStore::new();
+                                let mut engine = match HybridSearchEngine::new(store, 512).await {
                                     Ok(e) => {
                                         info!("✓ HybridSearchEngine created (embedding_dim=512)");
                                         e
@@ -283,10 +258,14 @@ pub fn DeveloperTesting() -> Element {
                                 let engine_arc = engine.read().clone();
                                 if let Some(engine_lock) = engine_arc {
                                     let mut search_engine = engine_lock.lock().await;
-                                    search_engine.clear();
-                                    info!("✅ Search index cleared");
-                                    status.set("✓ Search index cleared successfully".into());
-                                    engine_status.set(SearchEngineStatus::Ready { doc_count: 0 });
+                                    if let Err(e) = search_engine.clear_all().await {
+                                        error!("❌ Failed to clear index: {}", e);
+                                        status.set(format!("Failed to clear index: {}", e));
+                                    } else {
+                                        info!("✅ Search index cleared");
+                                        status.set("✓ Search index cleared successfully".into());
+                                        engine_status.set(SearchEngineStatus::Ready { doc_count: 0 });
+                                    }
                                 } else {
                                     error!("❌ Search engine not initialized");
                                     status.set("Search engine not initialized".into());

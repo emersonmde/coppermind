@@ -77,21 +77,21 @@ use std::sync::Arc;
 // Platform-specific imports and types
 // ============================================================================
 
-// Storage backends
-#[cfg(not(target_arch = "wasm32"))]
-use crate::storage::NativeStorage;
+// Document stores (new architecture - replaces legacy StorageBackend)
 #[cfg(target_arch = "wasm32")]
-use crate::storage::OpfsStorage;
+use crate::storage::IndexedDbDocumentStore;
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+use crate::storage::RedbDocumentStore;
 
-// Web platform (WASM) - uses OPFS for persistent storage
+// Web platform (WASM) - uses IndexedDB for document storage
 #[cfg(target_arch = "wasm32")]
 use worker::provide_worker_state;
 #[cfg(target_arch = "wasm32")]
-type PlatformStorage = OpfsStorage;
+type PlatformDocumentStore = IndexedDbDocumentStore;
 
-// Desktop platform (Native) - uses persistent NativeStorage
-#[cfg(not(target_arch = "wasm32"))]
-type PlatformStorage = NativeStorage;
+// Desktop platform (Native) - uses redb for document storage
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+type PlatformDocumentStore = RedbDocumentStore;
 
 // ============================================================================
 // File processing for indexing
@@ -110,7 +110,20 @@ pub enum ProcessingMessage {
 ///
 /// This complex generic type appears in multiple function signatures and provides
 /// shared mutable access to the search engine across the component tree.
-type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<PlatformStorage>>>>>;
+#[cfg(target_arch = "wasm32")]
+type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<IndexedDbDocumentStore>>>>>;
+
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<RedbDocumentStore>>>>>;
+
+// Fallback for doc builds without platform features (never used at runtime)
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "desktop"),
+    not(feature = "mobile")
+))]
+type SearchEngineSignal =
+    Signal<Option<Arc<Mutex<HybridSearchEngine<crate::storage::InMemoryDocumentStore>>>>>;
 
 // Search engine status for UI display
 #[derive(Clone)]
@@ -304,39 +317,49 @@ pub fn calculate_live_metrics(batches: &[Batch]) -> Option<LiveIndexingMetrics> 
 // Platform-specific initialization helpers
 // ============================================================================
 
-/// Initialize storage backend.
+/// Initialize document store.
 ///
-/// - Desktop: Uses NativeStorage with platform-idiomatic paths
+/// - Desktop: Uses RedbDocumentStore with platform-idiomatic paths
 ///   (e.g., ~/Library/Application Support/dev.errorsignal.Coppermind/ on macOS)
-/// - Web: Uses OPFS (Origin Private File System) for persistent browser storage
-async fn create_platform_storage() -> Result<PlatformStorage, String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        // Web: Use OPFS for persistent storage across page refreshes
-        OpfsStorage::new()
-            .await
-            .map_err(|e| format!("OPFS storage error: {:?}", e))
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        // Desktop: Use native filesystem storage with platform-idiomatic paths
-        NativeStorage::new().map_err(|e| format!("Storage error: {:?}", e))
-    }
+/// - Web: Uses IndexedDbDocumentStore for persistent browser storage
+#[cfg(target_arch = "wasm32")]
+async fn create_platform_document_store() -> Result<PlatformDocumentStore, String> {
+    // Web: Use IndexedDB for persistent storage across page refreshes
+    IndexedDbDocumentStore::open()
+        .await
+        .map_err(|e| format!("IndexedDB store error: {:?}", e))
 }
 
-/// Setup search engine with initialized storage.
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+async fn create_platform_document_store() -> Result<PlatformDocumentStore, String> {
+    // Desktop: Use redb for document storage with platform-idiomatic paths
+    // Get the platform-specific data directory
+    use directories::ProjectDirs;
+
+    let project_dirs = ProjectDirs::from("", "", "Coppermind")
+        .ok_or_else(|| "Failed to determine data directory".to_string())?;
+
+    let data_dir = project_dirs.data_dir();
+    std::fs::create_dir_all(data_dir)
+        .map_err(|e| format!("Failed to create data directory: {}", e))?;
+
+    let db_path = data_dir.join("documents.redb");
+    RedbDocumentStore::open(&db_path).map_err(|e| format!("Redb store error: {:?}", e))
+}
+
+/// Setup search engine with initialized document store.
 ///
 /// Attempts to load existing index data from storage. If no index exists
 /// or the index is incompatible, creates a fresh empty engine.
+#[cfg(any(target_arch = "wasm32", feature = "desktop", feature = "mobile"))]
 async fn initialize_search_engine(
-    storage: PlatformStorage,
-) -> Result<HybridSearchEngine<PlatformStorage>, String> {
+    store: PlatformDocumentStore,
+) -> Result<HybridSearchEngine<PlatformDocumentStore>, String> {
     // JinaBERT embedding dimension
     const EMBEDDING_DIM: usize = 512;
 
     // Try to load existing index or create new
-    let engine = HybridSearchEngine::try_load_or_new(storage, EMBEDDING_DIM)
+    let engine = HybridSearchEngine::try_load_or_new(store, EMBEDDING_DIM)
         .await
         .map_err(|e| format!("{:?}", e))?;
 
@@ -368,8 +391,8 @@ pub fn App() -> Element {
     use_effect(move || {
         if engine_signal.read().is_none() {
             spawn(async move {
-                match create_platform_storage().await {
-                    Ok(storage) => match initialize_search_engine(storage).await {
+                match create_platform_document_store().await {
+                    Ok(store) => match initialize_search_engine(store).await {
                         Ok(engine) => {
                             let doc_count = engine.len();
                             // Arc is single-threaded on WASM (no Send/Sync needed)

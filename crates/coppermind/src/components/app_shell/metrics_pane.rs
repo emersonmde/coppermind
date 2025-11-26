@@ -29,8 +29,8 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         if let Some(engine_lock) = &search_engine_arc {
             // Try to get lock without blocking (UI thread)
             if let Some(engine) = engine_lock.try_lock() {
-                let (chunks, tokens, avg) = engine.get_index_metrics();
-                (chunks, tokens, avg)
+                // Use sync version for UI - can't await in component render
+                engine.get_index_metrics_sync()
             } else {
                 // Lock held, show zeros temporarily
                 (0, 0, 0.0)

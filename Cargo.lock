@@ -977,6 +977,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest",
+ "rexie",
  "rfd",
  "safetensors",
  "scraper",
@@ -1015,10 +1016,12 @@ dependencies = [
  "hnsw",
  "instant",
  "rand 0.8.5",
+ "redb",
  "reqwest",
  "serde",
  "serde_json",
  "space",
+ "tempfile",
  "text-splitter",
  "thiserror 2.0.17",
  "tokio",
@@ -3413,6 +3416,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "idb"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3afe8830d5802f769dc0be20a87f9f116798c896650cb6266eb5c19a3c109eed"
+dependencies = [
+ "js-sys",
+ "num-traits",
+ "thiserror 1.0.69",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5233,6 +5250,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
 
 [[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5334,6 +5360,17 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots 1.0.4",
+]
+
+[[package]]
+name = "rexie"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "887466cfa8a12c08ee4b174998135cea8ff0fd84858627cd793e56535a045bc9"
+dependencies = [
+ "idb",
+ "thiserror 1.0.69",
+ "wasm-bindgen",
 ]
 
 [[package]]

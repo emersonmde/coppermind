@@ -73,11 +73,16 @@
 //! - `OpfsUnavailable` - OPFS not available in this browser
 
 // Re-export trait and types from core
-pub use coppermind_core::storage::{InMemoryStorage, StorageBackend, StorageError};
+pub use coppermind_core::storage::{
+    DocumentStore, InMemoryDocumentStore, InMemoryStorage, StorageBackend, StorageError, StoreError,
+};
 
 // Platform-specific implementations (app-only, not in core)
 #[cfg(target_arch = "wasm32")]
 pub mod opfs;
+
+#[cfg(target_arch = "wasm32")]
+pub mod indexeddb_store;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
@@ -87,6 +92,15 @@ pub mod native;
 #[allow(unused_imports)]
 pub use opfs::OpfsStorage;
 
+#[cfg(target_arch = "wasm32")]
+#[allow(unused_imports)]
+pub use indexeddb_store::IndexedDbDocumentStore;
+
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(unused_imports)]
 pub use native::NativeStorage;
+
+// Re-export RedbDocumentStore when available (desktop/mobile platforms)
+// The redb-store feature is enabled automatically via desktop/mobile features
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+pub use coppermind_core::storage::RedbDocumentStore;
