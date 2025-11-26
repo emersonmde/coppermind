@@ -39,6 +39,10 @@ jobs:
       - name: Clippy (core)
         run: cargo clippy -p coppermind-core --all-targets -- -D warnings
 
+      # Models needed for asset! macro validation at compile time
+      - name: Download model assets
+        run: ./download-models.sh
+
       - name: Clippy (app - web)
         run: cargo clippy -p coppermind --target wasm32-unknown-unknown --features web -- -D warnings
 
@@ -76,8 +80,9 @@ jobs:
         run: cargo test -p coppermind --features desktop --verbose
 
   # Clippy for desktop target (needs macOS for Metal deps)
-  clippy-desktop:
-    name: Clippy Desktop (macOS)
+  # Note: Web/core clippy runs in 'check' job on Linux; this handles desktop-specific code
+  clippy-macos:
+    name: Clippy (macOS)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +94,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-clippy
+
+      # Models needed for asset! macro validation at compile time
+      - name: Download model assets
+        run: ./download-models.sh
 
       - name: Clippy (app - desktop)
         run: cargo clippy -p coppermind --features desktop --all-targets -- -D warnings
@@ -107,7 +116,7 @@ jobs:
   build-web:
     name: Build Web
     runs-on: ubuntu-latest
-    needs: [check, test-core]
+    needs: [check, test-core, clippy-macos]
     steps:
       - uses: actions/checkout@v4
 
@@ -136,7 +145,7 @@ jobs:
   # macOS desktop build - primary desktop target
   build-desktop-macos:
     name: Build Desktop (macOS)
-    needs: [check, test-core, test-app, clippy-desktop]
+    needs: [check, test-core, test-app, clippy-macos]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,7 +179,7 @@ jobs:
   # Windows desktop build - optional, doesn't block CI
   build-desktop-windows:
     name: Build Desktop (Windows)
-    needs: [check, test-core]
+    needs: [check, test-core, clippy-macos]
     runs-on: windows-latest
     continue-on-error: true
     steps:
@@ -184,6 +193,7 @@ jobs:
         with:
           key: windows
 
+      # Models needed for asset! macro validation at compile time
       - name: Download model assets
         shell: bash
         run: ./download-models.sh
@@ -194,7 +204,7 @@ jobs:
   # iOS build - optional, doesn't block CI
   build-ios:
     name: Build iOS
-    needs: [check, test-core]
+    needs: [check, test-core, clippy-macos]
     runs-on: macos-latest
     continue-on-error: true
     steps:
@@ -208,6 +218,7 @@ jobs:
         with:
           key: ios
 
+      # Models needed for asset! macro validation at compile time
       - name: Download model assets
         run: ./download-models.sh
 
