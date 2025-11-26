@@ -85,6 +85,9 @@ web-sys = { version = "0.3", features = [
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
+# Native file dialogs for desktop (folder + file selection)
+rfd = "0.15"
+
 # Profiling (optional, enabled with --features profile)
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }

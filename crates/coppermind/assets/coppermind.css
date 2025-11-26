@@ -1715,3 +1715,63 @@ body.cm-body {
         flex-shrink: 0;
     }
 }
+
+/* ============================================
+   Upload Card (unified for web and desktop)
+   ============================================ */
+
+.cm-hidden-input {
+    display: none;
+}
+
+.cm-upload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.cm-upload-buttons {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.cm-upload-button {
+    padding: 0.65rem 1.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--cm-accent-copper-soft);
+    background: linear-gradient(135deg, var(--cm-accent-copper), var(--cm-accent-copper-soft));
+    color: #05070d;
+    font-size: var(--cm-font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms ease;
+    font-family: var(--cm-font-sans);
+}
+
+.cm-upload-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 154, 74, 0.3);
+}
+
+.cm-upload-button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.cm-upload-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.cm-upload-button--secondary {
+    background: transparent;
+    color: var(--cm-accent-copper-soft);
+}
+
+.cm-upload-button--secondary:hover:not(:disabled) {
+    background: rgba(255, 154, 74, 0.1);
+    box-shadow: none;
+}
