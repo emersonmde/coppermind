@@ -1,19 +1,63 @@
 use dioxus::prelude::*;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 use crate::components::file_processing::collect_files_from_dir;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 use tokio::fs;
 
 /// Upload card with two buttons: Select Files and Select Folder
-/// Uses native rfd dialogs on desktop, hidden file inputs on web
+/// Uses native rfd dialogs on desktop, hidden file inputs on web,
+/// and a placeholder on mobile (file dialogs not yet supported).
+///
+/// Platform selection uses cfg_if to ensure only one implementation is compiled.
 #[component]
 pub fn UploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
-    if cfg!(target_arch = "wasm32") {
-        rsx! { WebUploadCard { on_files_selected } }
-    } else {
-        rsx! { DesktopUploadCard { on_files_selected } }
+    // Platform features are mutually exclusive - use cfg_if pattern
+    // Priority: web > desktop > mobile (default features include web)
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    {
+        return rsx! { WebUploadCard { on_files_selected } };
+    }
+
+    #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+    {
+        return rsx! { DesktopUploadCard { on_files_selected } };
+    }
+
+    #[cfg(all(
+        feature = "mobile",
+        not(target_arch = "wasm32"),
+        not(feature = "desktop")
+    ))]
+    {
+        return rsx! { MobileUploadCard { on_files_selected } };
+    }
+
+    // Fallback for any other configuration (shouldn't happen in practice)
+    #[cfg(not(any(
+        all(feature = "web", target_arch = "wasm32"),
+        all(feature = "desktop", not(target_arch = "wasm32")),
+        all(
+            feature = "mobile",
+            not(target_arch = "wasm32"),
+            not(feature = "desktop")
+        )
+    )))]
+    {
+        rsx! {
+            section { class: "cm-upload-card",
+                div { class: "cm-upload-body",
+                    div { class: "cm-upload-content",
+                        div { class: "cm-dropzone-icon", "⚠️" }
+                        div { class: "cm-dropzone-title", "Platform not supported" }
+                        div { class: "cm-dropzone-subtitle",
+                            "File upload is not available for this platform configuration."
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -21,7 +65,7 @@ pub fn UploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Ele
 // Desktop Implementation (using rfd native dialogs)
 // =============================================================================
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 #[component]
 fn DesktopUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
     let mut is_loading = use_signal(|| false);
@@ -150,19 +194,40 @@ fn DesktopUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> 
     }
 }
 
-// Stub for WASM compilation (never actually called)
-#[cfg(target_arch = "wasm32")]
+// =============================================================================
+// Mobile Implementation (placeholder - file dialogs not yet supported on iOS/Android)
+// =============================================================================
+
+#[cfg(all(
+    feature = "mobile",
+    not(target_arch = "wasm32"),
+    not(feature = "desktop")
+))]
 #[component]
-fn DesktopUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
+fn MobileUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
     let _ = on_files_selected;
-    rsx! {}
+
+    rsx! {
+        section { class: "cm-upload-card",
+            div { class: "cm-upload-body",
+                div { class: "cm-upload-content",
+                    div { class: "cm-dropzone-icon", "📱" }
+                    div { class: "cm-dropzone-title", "File upload coming soon" }
+                    div { class: "cm-dropzone-subtitle",
+                        "File selection is not yet available on mobile. "
+                        "Use the web or desktop version to add files to your index."
+                    }
+                }
+            }
+        }
+    }
 }
 
 // =============================================================================
 // Web Implementation (using hidden file inputs triggered by buttons)
 // =============================================================================
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
 #[component]
 fn WebUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
     use wasm_bindgen::JsCast;
@@ -289,12 +354,4 @@ fn WebUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Elem
             }
         }
     }
-}
-
-// Stub for non-WASM compilation
-#[cfg(not(target_arch = "wasm32"))]
-#[component]
-fn WebUploadCard(on_files_selected: EventHandler<Vec<(String, String)>>) -> Element {
-    let _ = on_files_selected;
-    rsx! {}
 }

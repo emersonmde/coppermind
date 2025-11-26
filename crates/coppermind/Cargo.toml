@@ -76,14 +76,15 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 rexie = "0.6"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Native filesystem for desktop
+# Native filesystem for desktop/mobile
 tokio = { version = "1", features = ["fs", "rt", "macros", "time"] }
 
 # Platform-specific data directories (Application Support on macOS, AppData on Windows, etc.)
 directories = "5.0"
 
-# Native file dialogs for desktop (folder + file selection)
-rfd = "0.15"
+# Native file dialogs - desktop only (rfd doesn't support iOS/Android)
+# This is feature-gated to the desktop feature
+rfd = { version = "0.15", optional = true }
 
 # Profiling (optional, enabled with --features profile)
 tracing = { version = "0.1", optional = true }
@@ -132,7 +133,7 @@ candle-transformers = { version = "0.9.1", features = ["mkl"] }
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-desktop = ["dioxus/desktop", "coppermind-core/redb-store"]
+desktop = ["dioxus/desktop", "coppermind-core/redb-store", "rfd"]
 mobile = ["dioxus/mobile", "coppermind-core/redb-store"]
 # Performance profiling - generates trace.json for chrome://tracing
 # Usage: dx serve --platform desktop --features profile

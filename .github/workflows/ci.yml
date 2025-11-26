@@ -223,7 +223,8 @@ jobs:
         run: ./download-models.sh
 
       - name: Build iOS
-        run: cargo build -p coppermind --features mobile --release --target aarch64-apple-ios
+        # --no-default-features to avoid including web feature (default)
+        run: cargo build -p coppermind --no-default-features --features mobile --release --target aarch64-apple-ios
 
   deploy:
     name: Deploy to GitHub Pages

@@ -15,7 +15,7 @@ use crate::platform::run_blocking;
 use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::DocumentStore;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 use dioxus::logger::tracing::error;
 use dioxus::logger::tracing::info;
 use futures::lock::Mutex;
@@ -26,7 +26,7 @@ use std::sync::Arc;
 #[cfg(feature = "profile")]
 use tracing::instrument;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 /// Detects if file contents appear to be binary (not text).
@@ -451,10 +451,10 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
 /// # Notes
 ///
 /// This function is recursive and must be boxed to work with async recursion.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 pub type BoxedFileCollector = Pin<Box<dyn Future<Output = Vec<(String, PathBuf)>> + Send>>;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "desktop")]
 pub fn collect_files_from_dir(path: PathBuf, base_name: String) -> BoxedFileCollector {
     Box::pin(async move {
         use tokio::fs;
