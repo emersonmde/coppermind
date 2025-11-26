@@ -27,8 +27,8 @@ Unlike traditional search engines that rely on heavy server-side infrastructure,
 - **Browser ML**: Runs [JinaBERT](https://huggingface.co/jinaai/jina-embeddings-v2-small-en) embeddings client-side with [Candle](https://github.com/huggingface/candle)
 - **Cross-Platform**: Single Rust codebase targets web (WASM), desktop (macOS/Linux/Windows), and iOS
 - **Platform-Specific Features**:
-  - **Web**: Background embedding via Web Workers, OPFS storage
-  - **Desktop**: Web crawler with parallel requests, native GPU acceleration (Metal/CUDA)
+  - **Web**: Background embedding via Web Workers, IndexedDB storage
+  - **Desktop**: Web crawler with parallel requests, native GPU acceleration (Metal/CUDA), redb storage
 - **Fully Local**: All processing happens on your device - no cloud APIs, works offline
 
 ## Getting Started
@@ -95,7 +95,7 @@ dx bundle -p coppermind --release --platform desktop
 | **Web Worker** (background ML) | ✅ | N/A                        | N/A                        |
 | **Web Crawler** | ❌ (CORS) | ✅                          | ❌                          |
 | **GPU Acceleration** | ❌ | ✅ (Metal/CUDA)             | ⚠️ (CPU via Accelerate)    |
-| **Storage** | OPFS | Native FS                  | Native FS                  |
+| **Storage** | IndexedDB | redb                       | redb                       |
 | **Text Chunking** | Markdown + Sentence | Markdown + Code + Sentence | Markdown + Code + Sentence |
 
 ## Tech Stack
@@ -123,10 +123,9 @@ dx bundle -p coppermind --release --platform desktop
 - **[pulldown-cmark 0.12](https://github.com/pulldown-cmark/pulldown-cmark)** - Markdown parsing (structure-aware chunking)
 - **[tree-sitter](https://tree-sitter.github.io/)** - Code parsing (syntax-aware chunking, desktop/iOS only)
 
-### Storage & Serialization
-- **OPFS** - Web storage (Origin Private File System for binary data)
-- **tokio::fs** - Desktop/iOS storage (async filesystem operations)
-- **[bincode 1.3](https://github.com/bincode-org/bincode)** - Binary serialization (compact index persistence)
+### Storage & Persistence
+- **[IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)** - Web storage (browser-native key-value store, zero bundle cost)
+- **[redb 2.4](https://github.com/cberner/redb)** - Desktop/iOS storage (pure Rust B-tree database, ACID transactions)
 
 ## How It Works
 
@@ -164,11 +163,13 @@ Platform-specific features are handled with conditional compilation (`#[cfg(targ
 - **Desktop**: Native executables, full GPU acceleration (Metal on macOS, CUDA on Linux/Windows), web crawler support
 - **iOS**: Native app, CPU-only inference (Accelerate framework), no web crawler (could be added but requires handling app sandboxing)
 
-Storage, asset loading, and threading are also platform-specific: OPFS/HTTP fetch/Web Workers on web vs. native filesystem/direct file access/native threads on desktop/iOS.
+Storage, asset loading, and threading are also platform-specific: IndexedDB/HTTP fetch/Web Workers on web vs. redb/direct file access/native threads on desktop/iOS.
 
-### Storage & Persistence (WIP)
+### Storage & Persistence
 
-Documents and search indexes are persisted locally using platform-appropriate backends: [OPFS (Origin Private File System)](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) on web, native filesystem on desktop/iOS. OPFS is a modern browser API designed for high-performance binary data storage, offering 3-4x faster read/write than IndexedDB and supported by all modern browsers (Chrome, Firefox, Safari, Edge) in standard browsing mode. The vector index (HNSW graph), keyword index (BM25 term frequencies), and document metadata are serialized with [bincode](https://github.com/bincode-org/bincode) for efficient binary storage, enabling the search engine to persist across sessions without rebuilding indexes.
+Documents and search indexes are persisted locally using platform-appropriate backends via the `DocumentStore` trait. **Web** uses [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API), the browser-native key-value store with zero bundle cost and excellent performance for structured data. **Desktop/iOS** uses [redb](https://github.com/cberner/redb), a pure Rust B-tree database providing ACID transactions and fast O(log n) lookups without external dependencies.
+
+The storage layer tracks document sources with content hashes (SHA-256), enabling intelligent re-upload handling - unchanged files are skipped, modified files are updated in-place, and removed files are cleaned up. Vector index deletions use tombstone marking with automatic compaction when the ratio exceeds 30%, maintaining index efficiency across document updates.
 
 ## License
 

@@ -15,7 +15,7 @@ Coppermind is a browser-based semantic search engine using Rust and WASM. It use
   - Dioxus (instead of React/Vue/Svelte)
   - Candle (instead of transformers.js/ONNX Runtime)
   - tokenizers-rs (instead of @xenova/transformers tokenizer)
-  - Future: rexie/rusqlite for storage
+  - redb/IndexedDB for storage (see `DocumentStore` trait)
 
 **2. Local-First Architecture**
 - All processing happens on the user's device
@@ -346,9 +346,9 @@ The `docs/` directory contains detailed technical documentation:
 Cross-platform development roadmap with completed features and future plans.
 
 **Key Topics:**
-- Completed features (hybrid search, crawler, GPU scheduler)
+- Completed features (hybrid search, crawler, GPU scheduler, persistence)
 - Platform strategy (Web → Desktop → Mobile)
-- Planned improvements (persistence, WebGPU)
+- Backlog (WebGPU, quantization, multi-model support)
 
 **When to Read:** Before starting new features, to understand project direction.
 
@@ -360,7 +360,7 @@ Comprehensive technical design document covering the entire system.
 - Browser ML with Candle (JinaBERT embeddings)
 - Web Worker architecture for non-blocking inference
 - Cross-platform compilation (web vs desktop)
-- Storage & persistence (OPFS vs native filesystem)
+- Storage & persistence (IndexedDB for web, redb for desktop)
 
 **When to Read:** To understand how the system works and implementation details.
 
@@ -404,8 +404,8 @@ When writing documentation (README, docs/, etc.), follow these principles:
 - Assume the reader has general engineering knowledge
 - Explain newer/niche concepts that even experienced engineers may not know:
   - Web Workers
-  - OPFS (Origin Private File System)
   - Specific algorithms (HNSW, RRF, ALiBi)
+  - Tombstone-based deletion and compaction
 - Don't explain basic concepts like "embeddings" or "BM25" unless necessary
 - Technical details are the coolest part—be detailed but concise
 
@@ -491,5 +491,5 @@ Before publishing documentation:
 - [ ] No file sizes quoted (or consistent if needed)
 - [ ] External links point to authoritative sources
 - [ ] Tone is professional and humble
-- [ ] Newer concepts (OPFS, HNSW, etc.) are explained
+- [ ] Newer concepts (HNSW, tombstone deletion, etc.) are explained
 - [ ] Tech stack formatted like senior engineer presentation

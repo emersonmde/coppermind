@@ -89,9 +89,12 @@ async fn process_batch_impl<S: DocumentStore + 'static>(
     process_batch_inner(batch_idx, file_list, batches_signal, engine, engine_status).await
 }
 
-/// Shared batch processing logic.
-/// This macro-like approach allows us to share the implementation while having
-/// different trait bounds on different platforms.
+/// Shared batch processing logic - Desktop version.
+///
+/// NOTE: This implementation is duplicated for web (see below) due to different
+/// trait bounds required by each platform (Send + Sync for desktop threading).
+/// When modifying this function, ensure you update BOTH versions.
+/// The only intentional difference is the save() comment on line ~313 vs ~574.
 #[cfg(not(target_arch = "wasm32"))]
 async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
     batch_idx: usize,
@@ -234,6 +237,15 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
                         }
                         Err(e) => {
                             error!("❌ Failed to index chunks: {}", e);
+                            // Clean up incomplete source record to avoid orphaned data
+                            let mut search_engine = engine_lock.lock().await;
+                            if let Err(cleanup_err) = search_engine.delete_source(&source_id).await
+                            {
+                                warn!(
+                                    "⚠️ Failed to cleanup source '{}' after indexing error: {:?}",
+                                    source_id, cleanup_err
+                                );
+                            }
                             batches_signal.write()[batch_idx].files[file_idx].status =
                                 FileStatus::Failed(format!("Indexing failed: {}", e));
                         }
@@ -250,14 +262,12 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
     }
 
     // Log summary of update detection
-    if skipped_count > 0 || updated_count > 0 {
-        info!(
-            "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
-            processed_count - updated_count,
-            updated_count,
-            skipped_count
-        );
-    }
+    info!(
+        "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
+        processed_count - updated_count,
+        updated_count,
+        skipped_count
+    );
 
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
@@ -310,7 +320,7 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
                 }
             }
 
-            // Save index to persistent storage (desktop only, web is in-memory)
+            // Save index to persistent storage
             if let Err(e) = search_engine.save().await {
                 error!("❌ Failed to save index: {}", e);
                 // Don't fail the batch - data is in memory, just not persisted
@@ -352,7 +362,12 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
     Ok(metrics)
 }
 
-/// Web version of batch processing - no Send + Sync required
+/// Shared batch processing logic - Web version.
+///
+/// NOTE: This implementation is duplicated for desktop (see above) due to different
+/// trait bounds required by each platform (Send + Sync for desktop threading).
+/// When modifying this function, ensure you update BOTH versions.
+/// The only intentional difference is the save() comment on line ~313 vs ~574.
 #[cfg(target_arch = "wasm32")]
 async fn process_batch_inner<S: DocumentStore + 'static>(
     batch_idx: usize,
@@ -495,6 +510,15 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
                         }
                         Err(e) => {
                             error!("❌ Failed to index chunks: {}", e);
+                            // Clean up incomplete source record to avoid orphaned data
+                            let mut search_engine = engine_lock.lock().await;
+                            if let Err(cleanup_err) = search_engine.delete_source(&source_id).await
+                            {
+                                warn!(
+                                    "⚠️ Failed to cleanup source '{}' after indexing error: {:?}",
+                                    source_id, cleanup_err
+                                );
+                            }
                             batches_signal.write()[batch_idx].files[file_idx].status =
                                 FileStatus::Failed(format!("Indexing failed: {}", e));
                         }
@@ -511,14 +535,12 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
     }
 
     // Log summary of update detection
-    if skipped_count > 0 || updated_count > 0 {
-        info!(
-            "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
-            processed_count - updated_count,
-            updated_count,
-            skipped_count
-        );
-    }
+    info!(
+        "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
+        processed_count - updated_count,
+        updated_count,
+        skipped_count
+    );
 
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {

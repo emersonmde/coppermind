@@ -87,8 +87,8 @@ GPU access is serialized via `SerialScheduler` to work around Candle's Metal thr
 
 ### Storage Strategy
 
-1. **Web (WASM)**: Use `localStorage` or OPFS for JSON config
-2. **Desktop**: Use platform config directory (`~/.config/coppermind/` on Linux, `~/Library/Application Support/` on macOS)
+1. **Web (WASM)**: IndexedDB via `IndexedDbDocumentStore` (already implemented for document storage)
+2. **Desktop**: redb database in platform config directory (`~/Library/Application Support/` on macOS, `~/.local/share/coppermind/` on Linux)
 
 ### Suggested Implementation
 

@@ -157,6 +157,34 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .put_tombstones(&std::collections::HashSet::new())
             .await;
 
+        // Clean up incomplete sources from previous session crashes
+        // If a source has complete=false, it means the app crashed while indexing it.
+        // Delete these partial sources so they can be re-indexed cleanly.
+        let sources = engine
+            .store
+            .list_sources()
+            .await
+            .unwrap_or_else(|_| Vec::new());
+
+        for source_id in sources {
+            if let Ok(Some(record)) = engine.store.get_source(&source_id).await {
+                if !record.complete {
+                    warn!(
+                        "Cleaning up incomplete source '{}' from previous session ({} partial chunks)",
+                        source_id,
+                        record.doc_ids.len()
+                    );
+                    // Delete the partial documents and embeddings
+                    for doc_id in &record.doc_ids {
+                        let _ = engine.store.delete_document(*doc_id).await;
+                        let _ = engine.store.delete_embedding(*doc_id).await;
+                    }
+                    // Delete the source record
+                    let _ = engine.store.delete_source(&source_id).await;
+                }
+            }
+        }
+
         // Initialize DocId counter to continue after the highest loaded ID
         DocId::init_counter(max_id);
 
@@ -477,7 +505,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
     /// source_id is platform-specific:
     /// - Desktop: full file path (e.g., "/Users/matt/docs/README.md")
     /// - Web: "web:{filename}" (e.g., "web:README.md")
-    /// - Crawler: full URL (e.g., "https://example.com/docs/intro")
+    /// - Crawler: full URL (e.g., `https://example.com/docs/intro`)
     ///
     /// Returns `Ok(None)` if the source doesn't exist.
     pub async fn get_source(

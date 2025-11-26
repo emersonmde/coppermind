@@ -48,7 +48,9 @@ Coppermind uses a Cargo workspace with two crates:
   - `fusion.rs` - Reciprocal Rank Fusion algorithm
   - `aggregation.rs` - `aggregate_chunks_by_file()` for file-level grouping
   - `types.rs` - `DocId`, `Document`, `SearchResult`, `SearchError`
-- **src/storage/** - `StorageBackend` trait definition
+- **src/storage/** - `DocumentStore` trait and implementations
+  - `document_store.rs` - `DocumentStore` trait, `InMemoryDocumentStore`
+  - `redb_store.rs` - `RedbDocumentStore` for desktop (feature-gated)
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs** - Entry point with platform-specific launch (desktop/mobile/web)
@@ -77,9 +79,8 @@ Coppermind uses a Cargo workspace with two crates:
   - `fetcher.rs` - HTTP fetching with reqwest
   - `parser.rs` - HTML parsing and text extraction (scraper crate)
 
-- **src/storage/** - Cross-platform persistence implementations
-  - `opfs.rs` - OPFS (Origin Private File System) for web
-  - `native.rs` - tokio::fs for desktop
+- **src/storage/** - Platform-specific `DocumentStore` implementations
+  - `indexeddb_store.rs` - `IndexedDbDocumentStore` for web (WASM only)
 
 - **src/workers/** - Web Worker for CPU-intensive embedding (WASM only)
   - `mod.rs` - `EmbeddingWorkerClient`, `start_embedding_worker()` export
@@ -590,14 +591,14 @@ use tokio::fs;
 // Conditional logic
 #[cfg(target_arch = "wasm32")]
 {
-    // Web: Use OPFS storage
-    let storage = OpfsStorage::new().await?;
+    // Web: Use IndexedDB storage
+    let store = IndexedDbDocumentStore::new("coppermind").await?;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 {
-    // Desktop: Use native filesystem
-    let storage = NativeStorage::new(PathBuf::from("./coppermind-storage"))?;
+    // Desktop: Use redb storage
+    let store = RedbDocumentStore::new(data_dir.join("coppermind.redb"))?;
 }
 ```
 
@@ -606,7 +607,7 @@ use tokio::fs;
 | Feature | Web | Desktop |
 |---------|-----|---------|
 | UI Rendering | DOM manipulation | Native window (webview) |
-| Storage | OPFS | tokio::fs |
+| Storage | IndexedDB | redb |
 | Threading | Web Workers | Native threads |
 | Asset Loading | HTTP fetch | Filesystem read |
 | Model Inference | CPU (WASM) | CPU/GPU (CUDA/Metal) |
@@ -663,118 +664,87 @@ dx bundle --platform android
 
 Documents and search indexes are persisted using platform-appropriate storage backends via a common trait.
 
-### StorageBackend Trait
+**ADR:** [007-document-storage-reupload-handling.md](adrs/007-document-storage-reupload-handling.md)
+
+### DocumentStore Trait
+
+The `DocumentStore` trait provides a unified interface for document and embedding storage across platforms:
 
 ```rust
 #[async_trait(?Send)]
-pub trait StorageBackend {
-    async fn save(&self, key: &str, data: &[u8]) -> Result<(), StorageError>;
-    async fn load(&self, key: &str) -> Result<Vec<u8>, StorageError>;
-    async fn exists(&self, key: &str) -> Result<bool, StorageError>;
-    async fn delete(&self, key: &str) -> Result<(), StorageError>;
-    async fn list_keys(&self) -> Result<Vec<String>, StorageError>;
-    async fn clear(&self) -> Result<(), StorageError>;
+pub trait DocumentStore: Send + Sync {
+    // Document operations
+    async fn store_document(&self, doc_id: DocId, record: &DocumentRecord) -> Result<(), StoreError>;
+    async fn get_document(&self, doc_id: DocId) -> Result<Option<DocumentRecord>, StoreError>;
+    async fn delete_document(&self, doc_id: DocId) -> Result<(), StoreError>;
+    async fn list_documents(&self) -> Result<Vec<(DocId, DocumentRecord)>, StoreError>;
+
+    // Embedding operations
+    async fn store_embedding(&self, doc_id: DocId, embedding: &[f32]) -> Result<(), StoreError>;
+    async fn get_embedding(&self, doc_id: DocId) -> Result<Option<Vec<f32>>, StoreError>;
+    async fn delete_embedding(&self, doc_id: DocId) -> Result<(), StoreError>;
+    async fn list_embeddings(&self) -> Result<Vec<(DocId, Vec<f32>)>, StoreError>;
+
+    // Source tracking (for re-upload detection)
+    async fn store_source(&self, source_id: &str, record: &SourceRecord) -> Result<(), StoreError>;
+    async fn get_source(&self, source_id: &str) -> Result<Option<SourceRecord>, StoreError>;
+    async fn delete_source(&self, source_id: &str) -> Result<(), StoreError>;
+    async fn list_sources(&self) -> Result<Vec<String>, StoreError>;
+
+    // Bulk operations
+    async fn clear(&self) -> Result<(), StoreError>;
 }
 ```
 
-### Web: OPFS (Origin Private File System)
+### Platform Implementations
 
-OPFS is a modern browser API designed for high-performance binary data storage. According to [recent benchmarks](https://rxdb.info/articles/localstorage-indexeddb-cookies-opfs-sqlite-wasm.html), OPFS is 2-7x faster than IndexedDB for large binary data.
+| Platform | Store | Lookup | Characteristics |
+|----------|-------|--------|-----------------|
+| Desktop/Mobile | [redb](https://github.com/cberner/redb) | O(log n) | Pure Rust B-tree, ACID transactions, no external deps |
+| Web | [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) | O(1) | Browser-native, zero bundle cost |
+| Testing | `InMemoryDocumentStore` | O(1) | In-memory HashMap for unit tests |
 
-**Why OPFS is faster:**
-- Direct byte-level access (no object/key-value abstraction overhead)
-- Synchronous access in workers via FileSystemSyncAccessHandle
-- Optimized for binary data (no JSON serialization)
+### Web: IndexedDB
 
-**Browser support:** All modern browsers (Chrome, Firefox, Safari, Edge) since early 2023.
+IndexedDB is the browser-native key-value store, providing excellent performance for structured data with zero bundle cost.
 
-**Implementation:**
-```rust
-pub struct OpfsStorage {
-    root: FileSystemDirectoryHandle,
-}
+**Implementation:** `crates/coppermind/src/storage/indexeddb_store.rs`
 
-impl OpfsStorage {
-    pub async fn new() -> Result<Self, StorageError> {
-        let navigator = web_sys::window()
-            .ok_or(StorageError::BrowserApiUnavailable)?
-            .navigator();
+### Desktop: redb
 
-        let storage = navigator.storage();
-        let root_promise = storage.get_directory();
-        let root = JsFuture::from(root_promise).await?;
+[redb](https://github.com/cberner/redb) is a pure Rust embedded database providing ACID transactions and efficient B-tree lookups.
 
-        Ok(Self {
-            root: FileSystemDirectoryHandle::from(root)
-        })
-    }
+**Implementation:** `crates/coppermind-core/src/storage/redb_store.rs`
 
-    async fn write_file(&self, key: &str, data: &[u8]) -> Result<(), StorageError> {
-        let file_opts = FileSystemGetFileOptions::new();
-        file_opts.set_create(true);
+**Storage location:** Platform-specific app data directory (e.g., `~/Library/Application Support/com.coppermind.app/` on macOS).
 
-        let file_handle_promise = self.root.get_file_handle_with_options(key, &file_opts);
-        let file_handle = JsFuture::from(file_handle_promise).await?;
+### Source Tracking and Re-Upload Detection
 
-        let writable_promise = FileSystemFileHandle::from(file_handle).create_writable();
-        let writable = JsFuture::from(writable_promise).await?;
-
-        let stream = FileSystemWritableFileStream::from(writable);
-        let uint8_array = js_sys::Uint8Array::from(data);
-
-        JsFuture::from(stream.write_with_buffer_source(&uint8_array)).await?;
-        JsFuture::from(stream.close()).await?;
-
-        Ok(())
-    }
-}
-```
-
-### Desktop: tokio::fs
-
-Desktop uses tokio's async filesystem operations:
+The storage layer tracks document sources with SHA-256 content hashes to enable intelligent re-upload handling:
 
 ```rust
-pub struct NativeStorage {
-    base_path: PathBuf,
-}
-
-#[async_trait(?Send)]
-impl StorageBackend for NativeStorage {
-    async fn save(&self, key: &str, data: &[u8]) -> Result<(), StorageError> {
-        let path = self.base_path.join(key);
-        tokio::fs::write(path, data).await?;
-        Ok(())
-    }
-
-    async fn load(&self, key: &str) -> Result<Vec<u8>, StorageError> {
-        let path = self.base_path.join(key);
-        tokio::fs::read(&path).await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                StorageError::NotFound(key.to_string())
-            } else {
-                StorageError::IoError(format!("Failed to read: {}", e))
-            }
-        })
-    }
+pub struct SourceRecord {
+    pub content_hash: String,     // SHA-256 of file contents
+    pub doc_ids: Vec<DocId>,      // Chunks belonging to this source
+    pub complete: bool,           // Indexing completed successfully
+    pub indexed_at: u64,          // Unix timestamp
 }
 ```
 
-**Storage location:** `./coppermind-storage/` in current working directory.
+**Update detection logic:**
+- `source_id exists + hash matches` → **SKIP** (unchanged)
+- `source_id exists + hash differs` → **UPDATE** (delete old chunks, re-index)
+- `source_id not found` → **ADD** (new source)
 
-### Serialization with bincode
+### Tombstone-Based HNSW Deletion
 
-Search indexes (HNSW graph, BM25 term frequencies) are serialized using [bincode](https://github.com/bincode-org/bincode) for compact binary encoding:
+Since rust-cv/hnsw doesn't support deletion, we implement soft-delete with background compaction:
 
-```rust
-// Serialize HNSW index
-let index_data = bincode::serialize(&vector_index)?;
-storage.save("vector_index.bin", &index_data).await?;
+- `mark_deleted(doc_id)` - O(1) tombstone marking
+- Search filters tombstones with oversampling (fetch 2x candidates, filter, return top-k)
+- Background compaction rebuilds index when tombstone ratio > 30%
 
-// Deserialize on load
-let index_data = storage.load("vector_index.bin").await?;
-let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
-```
+This is the industry-standard approach used by Weaviate, Milvus, and hnswlib.
 
 ---
 
@@ -794,10 +764,9 @@ let vector_index: VectorSearchEngine = bincode::deserialize(&index_data)?;
 - **[bm25 2.3](https://github.com/Michael-JB/bm25)** - Keyword search (Okapi BM25 ranking with TF-IDF)
 - **Reciprocal Rank Fusion** - Result fusion (rank-based merging from Cormack et al. SIGIR 2009)
 
-### Storage & Serialization
-- **OPFS** - Web storage (Origin Private File System, 2-7x faster than IndexedDB, supported by all modern browsers since 2023)
-- **tokio::fs** - Desktop storage (Async filesystem operations)
-- **[bincode 1.3](https://github.com/bincode-org/bincode)** - Binary serialization (Compact index persistence)
+### Storage & Persistence
+- **[IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)** - Web storage (browser-native key-value store, O(1) lookups, zero bundle cost)
+- **[redb 2.4](https://github.com/cberner/redb)** - Desktop/Mobile storage (pure Rust B-tree database, ACID transactions, O(log n) lookups)
 
 ### Browser Integration
 - **Web Workers** - Background processing (ML inference off main thread, message passing with WASM binary)

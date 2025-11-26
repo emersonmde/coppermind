@@ -1,10 +1,54 @@
-// BM25 keyword search integration
+//! BM25 keyword search for exact term matching.
+//!
+//! This module wraps the [`bm25`](https://crates.io/crates/bm25) crate to provide
+//! keyword-based search capabilities. BM25 (Best Matching 25) is a ranking function
+//! used by search engines to score documents based on query term frequency.
+//!
+//! # Algorithm
+//!
+//! BM25 scores documents based on:
+//! - **Term Frequency (TF)**: How often query terms appear in the document
+//! - **Inverse Document Frequency (IDF)**: Rarity of terms across the corpus
+//! - **Document Length**: Normalized to avoid bias toward longer documents
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use coppermind_core::search::keyword::KeywordSearchEngine;
+//!
+//! let mut engine = KeywordSearchEngine::new();
+//! engine.add_document(DocId::from_u64(1), "rust programming language".to_string());
+//! engine.add_document(DocId::from_u64(2), "python scripting language".to_string());
+//!
+//! // Search returns (DocId, score) pairs
+//! let results = engine.search("rust", 10);
+//! ```
+//!
+//! # Integration with Hybrid Search
+//!
+//! This engine is used alongside [`VectorSearchEngine`](super::vector::VectorSearchEngine)
+//! in the [`HybridSearchEngine`](super::engine::HybridSearchEngine). Results from both
+//! are combined using [Reciprocal Rank Fusion](super::fusion::reciprocal_rank_fusion).
 
 use super::types::DocId;
 use bm25::{Document, Language, SearchEngineBuilder};
 use tracing::instrument;
 
-/// Keyword search engine using BM25 algorithm
+/// BM25-based keyword search engine.
+///
+/// Provides full-text search using the BM25 ranking algorithm. Documents are
+/// indexed by their text content and can be searched using natural language queries.
+///
+/// # Features
+///
+/// - **Case-insensitive**: Queries and documents are normalized
+/// - **Multi-term queries**: Multiple words are scored independently and combined
+/// - **Language-aware**: Uses English tokenization and stemming
+///
+/// # Thread Safety
+///
+/// This type is **not thread-safe**. For concurrent access, wrap in appropriate
+/// synchronization primitives (e.g., `Mutex`).
 pub struct KeywordSearchEngine {
     /// BM25 search engine
     search_engine: bm25::SearchEngine<u64>,
@@ -13,6 +57,9 @@ pub struct KeywordSearchEngine {
 }
 
 impl KeywordSearchEngine {
+    /// Creates a new empty keyword search engine.
+    ///
+    /// Initializes with English language settings for tokenization and stemming.
     pub fn new() -> Self {
         // Create empty search engine with English language
         // Using with_documents to get proper u64 type
@@ -26,7 +73,15 @@ impl KeywordSearchEngine {
         }
     }
 
-    /// Add a document to the BM25 corpus
+    /// Adds a document to the BM25 corpus.
+    ///
+    /// The document text is tokenized and indexed for keyword search.
+    /// If a document with the same ID already exists, it is updated (upsert semantics).
+    ///
+    /// # Arguments
+    ///
+    /// * `doc_id` - Unique identifier for the document
+    /// * `text` - Full text content to index
     #[instrument(skip_all, fields(text_len = text.len()))]
     pub fn add_document(&mut self, doc_id: DocId, text: String) {
         // Create BM25 document with DocId as u64
@@ -40,7 +95,20 @@ impl KeywordSearchEngine {
         self.document_count += 1;
     }
 
-    /// Search using BM25 keyword matching
+    /// Searches for documents matching the query.
+    ///
+    /// Returns up to `k` documents ranked by BM25 score. Higher scores indicate
+    /// better matches based on term frequency and document relevance.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - Search query (can contain multiple terms)
+    /// * `k` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Vector of `(DocId, score)` pairs sorted by score descending.
+    /// Returns empty vector if query is empty or no documents match.
     pub fn search(&self, query: &str, k: usize) -> Vec<(DocId, f32)> {
         // Perform search
         let results = self.search_engine.search(query, k);
@@ -56,13 +124,13 @@ impl KeywordSearchEngine {
             .collect()
     }
 
-    /// Get number of indexed documents
+    /// Returns the number of indexed documents.
     #[allow(dead_code)] // Public API
     pub fn len(&self) -> usize {
         self.document_count
     }
 
-    /// Check if index is empty
+    /// Returns `true` if no documents have been indexed.
     #[allow(dead_code)] // Public API
     pub fn is_empty(&self) -> bool {
         self.len() == 0

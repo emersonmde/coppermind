@@ -291,6 +291,9 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
 
                     let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                     total_index_time_ms += insert_duration_ms;
+                    // Split metrics between HNSW (vector) and BM25 (keyword) indexing.
+                    // 70/30 is an estimate - HNSW graph insertion is typically more expensive
+                    // than BM25 term frequency updates. Actual ratio varies by document size.
                     global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
                     global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
                     indexed_count += 1;
@@ -397,6 +400,9 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
 
                 let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                 total_index_time_ms += insert_duration_ms;
+                // Split metrics between HNSW (vector) and BM25 (keyword) indexing.
+                // 70/30 is an estimate - HNSW graph insertion is typically more expensive
+                // than BM25 term frequency updates. Actual ratio varies by document size.
                 global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
                 global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
                 indexed_count += 1;

@@ -10,7 +10,10 @@
 //! - **Vector Search**: HNSW (Hierarchical Navigable Small World) for semantic similarity
 //! - **Keyword Search**: BM25 (Best Matching 25) for exact keyword matching
 //! - **Fusion**: Reciprocal Rank Fusion to combine rankings
-//! - **Storage**: Platform-specific backends (OPFS for web, filesystem for desktop)
+//! - **Storage**: Platform-specific backends (IndexedDB for web, redb for desktop)
+//!
+//! See the [architecture documentation](https://github.com/example/coppermind/blob/main/docs/architecture-design.md)
+//! for detailed design information.
 //!
 //! # Platform Support
 //!

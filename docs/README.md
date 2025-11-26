@@ -13,7 +13,7 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 - Browser ML with Candle (JinaBERT embeddings, model loading, inference)
 - Web Worker architecture for non-blocking ML inference
 - Cross-platform compilation (web vs desktop)
-- Storage & persistence (OPFS vs native filesystem)
+- Storage & persistence (IndexedDB for web, redb for desktop)
 
 **Read this:** To understand how the system works and implementation details.
 
@@ -37,9 +37,9 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 **Project status, completed features, and future directions.**
 
 **Topics:**
-- Completed features (hybrid search, crawler, GPU scheduler)
-- Planned improvements (persistence, WebGPU)
-- Experimental ideas (quantization, multi-model support)
+- Completed features (hybrid search, crawler, GPU scheduler, persistence)
+- Backlog (WebGPU, quantization, multi-model support)
+- Experimental ideas and future directions
 
 **Read this:** To understand project status and future directions.
 
@@ -58,5 +58,5 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 - [Reciprocal Rank Fusion](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf) - Cormack et al. (2009)
 
 ### Web Standards
-- [OPFS (Origin Private File System)](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
+- [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) - Browser storage for web platform
 - [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API)

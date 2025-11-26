@@ -110,7 +110,7 @@ pub trait DocumentStore {
     /// source_id is platform-specific:
     /// - Desktop: full file path (e.g., "/Users/matt/docs/README.md")
     /// - Web: "web:{filename}" (e.g., "web:README.md")
-    /// - Crawler: full URL (e.g., "https://example.com/docs/intro")
+    /// - Crawler: full URL (e.g., `https://example.com/docs/intro`)
     ///
     /// Returns `Ok(None)` if the source doesn't exist.
     async fn get_source(&self, source_id: &str) -> Result<Option<SourceRecord>, StoreError>;

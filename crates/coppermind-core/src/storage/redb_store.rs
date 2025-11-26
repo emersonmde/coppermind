@@ -17,6 +17,7 @@ use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use tracing::warn;
 
 // Table definitions
 const DOCUMENTS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("documents");
@@ -80,13 +81,6 @@ impl RedbDocumentStore {
         Ok(Self { db: Arc::new(db) })
     }
 
-    /// Returns the path to the database file.
-    #[allow(dead_code)]
-    pub fn path(&self) -> Option<&Path> {
-        // redb Database doesn't expose path, so we can't return it
-        None
-    }
-
     /// Serializes a DocumentRecord to JSON bytes.
     fn serialize_document(doc: &DocumentRecord) -> Result<Vec<u8>, StoreError> {
         serde_json::to_vec(doc).map_err(|e| {
@@ -115,7 +109,14 @@ impl RedbDocumentStore {
         })
     }
 
-    /// Serializes an embedding to raw bytes (little-endian f32s).
+    /// Serializes an embedding to raw bytes.
+    ///
+    /// Format: Little-endian f32 values packed sequentially (4 bytes per value).
+    /// This format is chosen for efficiency over JSON - embeddings can be large
+    /// (512 dimensions * 4 bytes = 2KB per embedding).
+    ///
+    /// NOTE: Endianness MUST match `deserialize_embedding()`. Both use little-endian
+    /// for compatibility with x86/ARM architectures.
     fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(embedding.len() * 4);
         for &val in embedding {
@@ -125,6 +126,9 @@ impl RedbDocumentStore {
     }
 
     /// Deserializes an embedding from raw bytes.
+    ///
+    /// Format: Little-endian f32 values (4 bytes per value).
+    /// See `serialize_embedding()` for format details.
     fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
         bytes
             .chunks_exact(4)
@@ -512,63 +516,71 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
         })?;
 
-        // Clear each table by draining all entries
-        {
-            let mut table = write_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
-            })?;
-            // Collect keys first to avoid borrowing issues
-            let keys: Vec<u64> = table
-                .iter()
-                .map_err(|e| StoreError::DatabaseError(format!("Failed to iterate: {}", e)))?
-                .filter_map(|r| r.ok().map(|(k, _)| k.value()))
-                .collect();
-            for key in keys {
-                let _ = table.remove(key);
-            }
-        }
-
-        {
-            let mut table = write_txn.open_table(EMBEDDINGS_TABLE).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to open embeddings table: {}", e))
+        // Helper to clear a table with u64 keys
+        fn clear_u64_table<V: redb::Value>(
+            write_txn: &redb::WriteTransaction,
+            table_def: TableDefinition<u64, V>,
+            table_name: &str,
+        ) -> Result<usize, StoreError> {
+            let mut table = write_txn.open_table(table_def).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to open {} table: {}", table_name, e))
             })?;
             let keys: Vec<u64> = table
                 .iter()
-                .map_err(|e| StoreError::DatabaseError(format!("Failed to iterate: {}", e)))?
+                .map_err(|e| {
+                    StoreError::DatabaseError(format!("Failed to iterate {}: {}", table_name, e))
+                })?
                 .filter_map(|r| r.ok().map(|(k, _)| k.value()))
                 .collect();
-            for key in keys {
-                let _ = table.remove(key);
+            let mut removed = 0;
+            for key in &keys {
+                if let Err(e) = table.remove(*key) {
+                    warn!(
+                        "Failed to remove key {} from {}: {} (continuing)",
+                        key, table_name, e
+                    );
+                } else {
+                    removed += 1;
+                }
             }
+            Ok(removed)
         }
 
-        {
-            let mut table = write_txn.open_table(SOURCES_TABLE).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to open sources table: {}", e))
+        // Helper to clear a table with string keys
+        fn clear_str_table<V: redb::Value>(
+            write_txn: &redb::WriteTransaction,
+            table_def: TableDefinition<&str, V>,
+            table_name: &str,
+        ) -> Result<usize, StoreError> {
+            let mut table = write_txn.open_table(table_def).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to open {} table: {}", table_name, e))
             })?;
             let keys: Vec<String> = table
                 .iter()
-                .map_err(|e| StoreError::DatabaseError(format!("Failed to iterate: {}", e)))?
+                .map_err(|e| {
+                    StoreError::DatabaseError(format!("Failed to iterate {}: {}", table_name, e))
+                })?
                 .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
                 .collect();
+            let mut removed = 0;
             for key in &keys {
-                let _ = table.remove(key.as_str());
+                if let Err(e) = table.remove(key.as_str()) {
+                    warn!(
+                        "Failed to remove key '{}' from {}: {} (continuing)",
+                        key, table_name, e
+                    );
+                } else {
+                    removed += 1;
+                }
             }
+            Ok(removed)
         }
 
-        {
-            let mut table = write_txn.open_table(METADATA_TABLE).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to open metadata table: {}", e))
-            })?;
-            let keys: Vec<String> = table
-                .iter()
-                .map_err(|e| StoreError::DatabaseError(format!("Failed to iterate: {}", e)))?
-                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
-                .collect();
-            for key in &keys {
-                let _ = table.remove(key.as_str());
-            }
-        }
+        // Clear all tables - log warnings for individual failures but continue
+        clear_u64_table(&write_txn, DOCUMENTS_TABLE, "documents")?;
+        clear_u64_table(&write_txn, EMBEDDINGS_TABLE, "embeddings")?;
+        clear_str_table(&write_txn, SOURCES_TABLE, "sources")?;
+        clear_str_table(&write_txn, METADATA_TABLE, "metadata")?;
 
         write_txn
             .commit()

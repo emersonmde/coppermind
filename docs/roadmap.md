@@ -42,11 +42,20 @@ Automatic strategy selection based on file type:
 - **Text**: Sentence-based chunking using ICU4X segmentation
 - **Platform Behavior**: Web uses Markdown + Text; Desktop/mobile adds Code chunking
 
-#### ✅ Cross-Platform Storage
-Storage backend infrastructure implemented via `StorageBackend` trait:
-- **Web**: OPFS (Origin Private File System) implementation complete
-- **Desktop/Mobile**: Native filesystem access via tokio::fs
-- **In-Memory**: `InMemoryStorage` for testing and development
+#### ✅ Cross-Platform Storage & Persistence
+**ADR:** [007-document-storage-reupload-handling.md](adrs/007-document-storage-reupload-handling.md)
+
+Persistent document storage via `DocumentStore` trait with platform-specific implementations:
+- **Web**: IndexedDB for O(1) key lookups (browser-native, zero bundle cost)
+- **Desktop/Mobile**: redb (pure Rust B-tree database) for O(log n) lookups with ACID transactions
+- **In-Memory**: `InMemoryDocumentStore` for testing and development
+
+**Features implemented:**
+- Source tracking with SHA-256 content hashes for re-upload detection
+- Intelligent update handling: SKIP (unchanged), UPDATE (modified), ADD (new)
+- Tombstone-based HNSW deletion (soft-delete without index rebuild)
+- Automatic compaction when tombstone ratio exceeds 30%
+- Incomplete source recovery on startup (crash-safe)
 
 #### ✅ Web Worker Architecture
 Non-blocking ML inference on web platform:
@@ -88,30 +97,17 @@ Thread-safe GPU access for Metal backend (works around Candle threading bug):
 
 ### Phase 1: Persistence Layer
 
-**Status:** In Progress
-**ADR:** TBD
+**Status:** ✅ Complete
+**ADR:** [007-document-storage-reupload-handling.md](adrs/007-document-storage-reupload-handling.md)
 
-**Description:**
-Enable persistence across all platforms. Storage backend infrastructure exists but needs platform-specific path configuration:
-- **DMG builds**: Need writable paths (`~/Library/Application Support/`)
-- **iOS**: App sandbox documents directory
-- **Web**: OPFS implementation ready, needs testing
-
-**Goals:**
-1. Save indexed documents and embeddings to storage
-2. Restore search index on application startup
-3. Platform-specific paths (OPFS for web, native filesystem for desktop/mobile)
-4. Incremental updates (add/remove documents without full rebuild)
-
-**Technical Considerations:**
-- **Platform-specific paths**:
-  - macOS: `~/Library/Application Support/com.coppermind.app/`
-  - iOS: App sandbox documents directory
-  - Linux: `~/.local/share/coppermind/`
-  - Windows: `%APPDATA%/Coppermind/`
-  - Web: OPFS (no filesystem paths)
-- Storage format versioning
-- Background persistence (don't block UI during saves)
+**Implemented:**
+- Platform-specific persistent storage via `DocumentStore` trait
+- **Web**: IndexedDB (browser-native key-value store)
+- **Desktop/Mobile**: redb (pure Rust embedded database)
+- Source tracking with content hash for re-upload detection (SKIP/UPDATE/ADD)
+- Tombstone-based HNSW deletion with automatic compaction
+- Index restoration on application startup
+- Crash-safe recovery for incomplete indexing operations
 
 ---
 

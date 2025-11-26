@@ -17,12 +17,12 @@
 //! # Usage
 //!
 //! ```ignore
-//! use coppermind::search::{HybridSearchEngine, Document, DocumentMetadata};
-//! use coppermind::storage::NativeStorage;
+//! use coppermind_core::search::{HybridSearchEngine, Document, DocumentMetadata};
+//! use coppermind_core::storage::InMemoryDocumentStore;
 //!
-//! // Create search engine
-//! let storage = NativeStorage::new("./data").await?;
-//! let mut engine = HybridSearchEngine::new(storage, 512).await?;
+//! // Create search engine with a document store
+//! let store = InMemoryDocumentStore::new();
+//! let mut engine = HybridSearchEngine::new(store, 512).await?;
 //!
 //! // Index documents with pre-computed embeddings
 //! let doc = Document {
@@ -60,10 +60,15 @@
 //! - **Search**: O(log n) for vector, O(n) for keyword (small corpus)
 //! - **Memory**: ~1KB per document + embedding storage
 //!
+//! # Implemented Features
+//!
+//! - ✅ Persistence via [`DocumentStore`](crate::storage::DocumentStore) trait
+//! - ✅ Incremental index updates (HNSW supports online insertion)
+//! - ✅ Tombstone-based deletion with automatic compaction
+//! - ✅ Source tracking for re-upload detection
+//!
 //! # Future Extensions
 //!
-//! - Persistence/serialization of indexes
-//! - Incremental index updates
 //! - Query expansion and reranking
 //! - Multi-field search (title, body, metadata)
 

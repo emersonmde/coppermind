@@ -1,4 +1,46 @@
-// rust-cv/hnsw vector search integration with incremental updates
+//! HNSW vector search for semantic similarity.
+//!
+//! This module provides vector search using the [rust-cv/hnsw](https://crates.io/crates/hnsw)
+//! implementation of Hierarchical Navigable Small World graphs.
+//!
+//! # Algorithm
+//!
+//! HNSW builds a multi-layer graph where each layer has decreasing connectivity.
+//! Search starts at the top layer (sparse) and traverses down to the bottom layer
+//! (dense) for efficient approximate nearest neighbor search.
+//!
+//! **Time complexity:**
+//! - Insert: O(log n)
+//! - Search: O(log n)
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use coppermind_core::search::vector::VectorSearchEngine;
+//!
+//! let mut engine = VectorSearchEngine::new(512); // 512-dimensional embeddings
+//! engine.add_document(DocId::from_u64(1), embedding_vec)?;
+//!
+//! // Search returns (DocId, similarity_score) pairs
+//! let results = engine.search(&query_embedding, 10)?;
+//! ```
+//!
+//! # Tombstone-Based Deletion
+//!
+//! HNSW doesn't support true deletion (removing nodes would break graph connectivity).
+//! Instead, we use tombstone marking:
+//!
+//! 1. Mark entries as deleted via `mark_tombstone(index)`
+//! 2. Filter tombstoned entries during search
+//! 3. Periodically `compact()` to rebuild index without tombstones
+//!
+//! This approach is used by Weaviate, Milvus, and other production vector databases.
+//!
+//! # Integration with Hybrid Search
+//!
+//! This engine is used alongside [`KeywordSearchEngine`](super::keyword::KeywordSearchEngine)
+//! in the [`HybridSearchEngine`](super::engine::HybridSearchEngine). Results from both
+//! are combined using [Reciprocal Rank Fusion](super::fusion::reciprocal_rank_fusion).
 
 use super::types::{validate_dimension, DocId, SearchError};
 use hnsw::{Hnsw, Searcher};
