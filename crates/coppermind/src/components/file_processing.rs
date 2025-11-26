@@ -585,4 +585,134 @@ mod tests {
             generate_source_id("https://example.com/docs")
         );
     }
+
+    // =========================================================================
+    // Additional Tests for 1.0 Release
+    // =========================================================================
+
+    #[test]
+    fn test_is_likely_binary_edge_cases() {
+        // Long text file should not be binary
+        let long_text = "Lorem ipsum ".repeat(1000);
+        assert!(!is_likely_binary(&long_text));
+
+        // Code-like content with special chars but no null bytes
+        let code = r#"
+            fn main() {
+                let x = "hello\nworld";
+                println!("{}", x);
+            }
+        "#;
+        assert!(!is_likely_binary(code));
+
+        // JSON content
+        let json = r#"{"key": "value", "array": [1, 2, 3]}"#;
+        assert!(!is_likely_binary(json));
+
+        // XML/HTML content
+        let xml = "<root><child attr=\"value\">text</child></root>";
+        assert!(!is_likely_binary(xml));
+
+        // Markdown with code blocks
+        let markdown = r#"
+# Title
+
+```rust
+fn example() {}
+```
+
+Some **bold** text.
+        "#;
+        assert!(!is_likely_binary(markdown));
+
+        // Whitespace-only content
+        assert!(!is_likely_binary("   \n\t\r\n   "));
+    }
+
+    #[test]
+    fn test_compute_content_hash_determinism() {
+        // Hash should be deterministic across multiple calls
+        let content = "Test content for hashing";
+        let hashes: Vec<String> = (0..5).map(|_| compute_content_hash(content)).collect();
+        assert!(hashes.windows(2).all(|w| w[0] == w[1]));
+    }
+
+    #[test]
+    fn test_compute_content_hash_unicode() {
+        // Unicode content should hash correctly
+        let hash1 = compute_content_hash("日本語テキスト");
+        let hash2 = compute_content_hash("日本語テキスト");
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64);
+
+        // Emoji content
+        let emoji_hash = compute_content_hash("🎉🚀💻");
+        assert_eq!(emoji_hash.len(), 64);
+    }
+
+    #[test]
+    fn test_compute_content_hash_whitespace_sensitivity() {
+        // Different whitespace should produce different hashes
+        let hash1 = compute_content_hash("hello world");
+        let hash2 = compute_content_hash("hello  world");
+        let hash3 = compute_content_hash("hello\nworld");
+        let hash4 = compute_content_hash("hello\tworld");
+
+        assert_ne!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+        assert_ne!(hash1, hash4);
+    }
+
+    #[test]
+    fn test_compute_content_hash_empty() {
+        // Empty string should have a valid hash
+        let hash = compute_content_hash("");
+        assert_eq!(hash.len(), 64);
+
+        // Different from whitespace
+        let whitespace_hash = compute_content_hash(" ");
+        assert_ne!(hash, whitespace_hash);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_generate_source_id_special_paths() {
+        // Paths with spaces
+        let path_with_spaces = generate_source_id("/Users/test/My Documents/file.txt");
+        assert_eq!(path_with_spaces, "/Users/test/My Documents/file.txt");
+
+        // Paths with unicode
+        let unicode_path = generate_source_id("/Users/test/文档/readme.md");
+        assert_eq!(unicode_path, "/Users/test/文档/readme.md");
+
+        // Windows-style paths (if testing on Windows or for compatibility)
+        let windows_path = generate_source_id("C:\\Users\\test\\docs\\file.txt");
+        assert_eq!(windows_path, "C:\\Users\\test\\docs\\file.txt");
+    }
+
+    #[test]
+    fn test_source_update_action_variants() {
+        // Test that SourceUpdateAction enum covers expected cases
+        let skip = SourceUpdateAction::Skip;
+        let add = SourceUpdateAction::Add;
+        let update = SourceUpdateAction::Update { old_chunk_count: 5 };
+
+        // Ensure they're distinct
+        match skip {
+            SourceUpdateAction::Skip => {}
+            _ => panic!("Expected Skip"),
+        }
+
+        match add {
+            SourceUpdateAction::Add => {}
+            _ => panic!("Expected Add"),
+        }
+
+        match update {
+            SourceUpdateAction::Update { old_chunk_count } => {
+                assert_eq!(old_chunk_count, 5);
+            }
+            _ => panic!("Expected Update"),
+        }
+    }
 }

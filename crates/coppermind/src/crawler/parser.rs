@@ -232,4 +232,255 @@ mod tests {
         let links = extract_links(html, "https://example.com").unwrap();
         assert_eq!(links, vec!["https://example.com/page"]);
     }
+
+    // =========================================================================
+    // Additional Edge Case Tests for 1.0 Release
+    // =========================================================================
+
+    #[test]
+    fn test_extract_text_nested_elements() {
+        let html = r#"
+            <html><body>
+                <div>
+                    <article>
+                        <section>
+                            <p>Deeply <strong>nested <em>content</em></strong> here</p>
+                        </section>
+                    </article>
+                </div>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Deeply"));
+        assert!(text.contains("nested"));
+        assert!(text.contains("content"));
+        assert!(text.contains("here"));
+    }
+
+    #[test]
+    fn test_extract_text_strips_style_content() {
+        let html = r#"
+            <html>
+                <head>
+                    <style>
+                        body { color: red; }
+                        .hidden { display: none; }
+                    </style>
+                </head>
+                <body><p>Visible content</p></body>
+            </html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Visible content"));
+        assert!(!text.contains("color"));
+        assert!(!text.contains("display"));
+    }
+
+    #[test]
+    fn test_extract_text_strips_noscript() {
+        let html = r#"
+            <html><body>
+                <p>JavaScript content</p>
+                <noscript>Please enable JavaScript</noscript>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("JavaScript content"));
+        assert!(!text.contains("Please enable"));
+    }
+
+    #[test]
+    fn test_extract_text_strips_svg() {
+        let html = r#"
+            <html><body>
+                <p>Regular text</p>
+                <svg><text>SVG text</text><path d="M0 0"/></svg>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Regular text"));
+        assert!(!text.contains("SVG text"));
+    }
+
+    #[test]
+    fn test_extract_text_strips_iframe() {
+        let html = r#"
+            <html><body>
+                <p>Page content</p>
+                <iframe>Iframe fallback</iframe>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Page content"));
+        assert!(!text.contains("Iframe fallback"));
+    }
+
+    #[test]
+    fn test_extract_text_preserves_whitespace_between_elements() {
+        let html = r#"<html><body><span>Hello</span> <span>World</span></body></html>"#;
+        let text = extract_text(html).unwrap();
+        // Should have both words (whitespace between spans preserved as newline or space)
+        assert!(text.contains("Hello"));
+        assert!(text.contains("World"));
+    }
+
+    #[test]
+    fn test_extract_text_handles_entities() {
+        let html = r#"<html><body><p>5 &gt; 3 &amp; 2 &lt; 4</p></body></html>"#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains(">"));
+        assert!(text.contains("&"));
+        assert!(text.contains("<"));
+    }
+
+    #[test]
+    fn test_extract_text_empty_document() {
+        let html = r#"<html><body></body></html>"#;
+        let text = extract_text(html).unwrap();
+        assert!(text.is_empty() || text.trim().is_empty());
+    }
+
+    #[test]
+    fn test_extract_text_no_body() {
+        // Document without body tag - should still extract something
+        let html = r#"<html><div>Content without body</div></html>"#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Content without body"));
+    }
+
+    #[test]
+    fn test_extract_text_inline_script() {
+        let html = r#"
+            <html><body>
+                <p>Before script</p>
+                <script type="text/javascript">
+                    const x = 1;
+                    document.querySelector('body');
+                </script>
+                <p>After script</p>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Before script"));
+        assert!(text.contains("After script"));
+        assert!(!text.contains("const x"));
+        assert!(!text.contains("querySelector"));
+    }
+
+    #[test]
+    fn test_extract_links_skips_javascript_links() {
+        let html = r#"<a href="javascript:void(0)">Click me</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_links_skips_empty_href() {
+        let html = r#"<a href="">Empty link</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_links_relative_path() {
+        let html = r#"<a href="page.html">Page</a>"#;
+        let links = extract_links(html, "https://example.com/docs/").unwrap();
+        assert_eq!(links, vec!["https://example.com/docs/page.html"]);
+    }
+
+    #[test]
+    fn test_extract_links_parent_path() {
+        let html = r#"<a href="../other">Other</a>"#;
+        let links = extract_links(html, "https://example.com/docs/api/").unwrap();
+        assert_eq!(links, vec!["https://example.com/docs/other"]);
+    }
+
+    #[test]
+    fn test_extract_links_skips_mailto() {
+        let html = r#"<a href="mailto:test@example.com">Email</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_links_skips_tel() {
+        let html = r#"<a href="tel:+1234567890">Call</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_links_preserves_query_params() {
+        let html = r#"<a href="/search?q=test&page=1">Search</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert_eq!(links, vec!["https://example.com/search?q=test&page=1"]);
+    }
+
+    #[test]
+    fn test_extract_links_handles_fragments() {
+        let html = r#"<a href="/page#section">Section</a>"#;
+        let links = extract_links(html, "https://example.com").unwrap();
+        assert_eq!(links, vec!["https://example.com/page#section"]);
+    }
+
+    #[test]
+    fn test_extract_links_multiple_types() {
+        let html = r##"
+            <a href="https://external.com">External</a>
+            <a href="/internal">Internal</a>
+            <a href="relative.html">Relative</a>
+            <a href="#anchor">Anchor</a>
+            <a href="javascript:alert(1)">JS</a>
+        "##;
+        let links = extract_links(html, "https://example.com/docs/").unwrap();
+        assert_eq!(links.len(), 3);
+        assert!(links.contains(&"https://external.com/".to_string()));
+        assert!(links.contains(&"https://example.com/internal".to_string()));
+        assert!(links.contains(&"https://example.com/docs/relative.html".to_string()));
+    }
+
+    #[test]
+    fn test_is_script_content_detection() {
+        // Should detect JS
+        assert!(is_script_content("function() { const x = 1; }"));
+        assert!(is_script_content("document.querySelector('.foo')"));
+        assert!(is_script_content("window.addEventListener('click', fn)"));
+
+        // Should not flag normal text
+        assert!(!is_script_content("This is a normal paragraph"));
+        assert!(!is_script_content("Click the button to continue"));
+        // Single keyword is not enough (needs 2+ indicators)
+        assert!(!is_script_content("Use the function carefully"));
+    }
+
+    #[test]
+    fn test_extract_text_unicode() {
+        let html = r#"<html><body><p>日本語テキスト</p><p>Émojis: 🎉🚀</p></body></html>"#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("日本語テキスト"));
+        assert!(text.contains("🎉"));
+    }
+
+    #[test]
+    fn test_extract_text_mixed_content() {
+        let html = r#"
+            <html><body>
+                <header>
+                    <nav>Navigation links</nav>
+                </header>
+                <main>
+                    <article>
+                        <h1>Article Title</h1>
+                        <p>Article content here.</p>
+                    </article>
+                </main>
+                <footer>Copyright 2024</footer>
+            </body></html>
+        "#;
+        let text = extract_text(html).unwrap();
+        assert!(text.contains("Navigation links"));
+        assert!(text.contains("Article Title"));
+        assert!(text.contains("Article content"));
+        assert!(text.contains("Copyright"));
+    }
 }

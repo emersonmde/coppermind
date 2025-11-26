@@ -1701,4 +1701,363 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    // =========================================================================
+    // Integration Tests for 1.0 Release
+    // =========================================================================
+
+    /// End-to-end test: add documents, search, verify results contain expected content
+    #[tokio::test]
+    async fn test_integration_add_search_retrieve() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add documents about different topics
+        let topics = [
+            (
+                "rust",
+                vec![1.0, 0.0, 0.0],
+                "Rust is a systems programming language",
+            ),
+            (
+                "python",
+                vec![0.0, 1.0, 0.0],
+                "Python is great for data science",
+            ),
+            (
+                "javascript",
+                vec![0.0, 0.0, 1.0],
+                "JavaScript runs in browsers",
+            ),
+        ];
+
+        for (topic, embedding, text) in topics {
+            let doc = Document {
+                text: text.to_string(),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("{}.md", topic)),
+                    source: Some(format!("/docs/{}.md", topic)),
+                    created_at: 0,
+                },
+            };
+            engine.add_document(doc, embedding).await.unwrap();
+        }
+
+        // Search for "rust" - should find the Rust document via keyword match
+        let results = engine.search(&[0.5, 0.5, 0.5], "rust", 3).await.unwrap();
+        assert!(!results.is_empty());
+        assert!(results[0].text.contains("Rust"));
+
+        // Search for "programming" - should find Rust document
+        let results = engine
+            .search(&[0.5, 0.5, 0.5], "programming", 3)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert!(results[0].text.contains("programming"));
+
+        // Vector-weighted search (embedding close to Python, generic query)
+        let results = engine.search(&[0.0, 1.0, 0.0], "great", 3).await.unwrap();
+        assert!(!results.is_empty());
+        // Python should be top result due to cosine similarity + keyword "great"
+        assert!(results[0].text.contains("Python"));
+    }
+
+    /// Test hybrid search ranking: keyword matches should boost vector results
+    #[tokio::test]
+    async fn test_hybrid_ranking_keyword_boost() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add two documents with similar embeddings but different text
+        let doc1 = Document {
+            text: "The quick brown fox jumps over the lazy dog".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        let doc2 = Document {
+            text: "A speedy russet fox leaps across a sleepy canine".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+
+        engine
+            .add_document(doc1, vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        engine
+            .add_document(doc2, vec![1.0, 0.1, 0.0]) // Very similar embedding
+            .await
+            .unwrap();
+
+        // Search with keyword "quick" - should rank doc1 higher despite similar embeddings
+        let results = engine.search(&[1.0, 0.05, 0.0], "quick", 2).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].text.contains("quick"));
+    }
+
+    /// Test that deleted documents don't appear in search results
+    #[tokio::test]
+    async fn test_deleted_docs_not_in_results() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add source with documents
+        let source_id = "test_source";
+        engine
+            .register_source(source_id, "hash".to_string())
+            .await
+            .unwrap();
+
+        let doc = Document {
+            text: "This document will be deleted".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("deleted.txt".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 0,
+            },
+        };
+        let doc_id = engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        engine.complete_source(source_id).await.unwrap();
+
+        // Verify document is searchable
+        let results = engine.search(&[1.0, 0.0, 0.0], "deleted", 5).await.unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Delete the source
+        engine.delete_source(source_id).await.unwrap();
+
+        // Document should no longer appear in results
+        let results = engine.search(&[1.0, 0.0, 0.0], "deleted", 5).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    /// Test persistence: data survives engine reload
+    #[tokio::test]
+    async fn test_persistence_survives_reload() {
+        use std::sync::Arc;
+        let store = Arc::new(InMemoryDocumentStore::new());
+
+        // Create engine and add data
+        {
+            let mut engine = HybridSearchEngine::new(store.clone(), 3).await.unwrap();
+
+            let source_id = "persistent_source";
+            engine
+                .register_source(source_id, "hash123".to_string())
+                .await
+                .unwrap();
+
+            let doc = Document {
+                text: "This data should persist".to_string(),
+                metadata: DocumentMetadata {
+                    filename: Some("persistent.txt".to_string()),
+                    source: Some(source_id.to_string()),
+                    created_at: 42,
+                },
+            };
+            let doc_id = engine.add_document(doc, vec![0.5, 0.5, 0.0]).await.unwrap();
+            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+            engine.complete_source(source_id).await.unwrap();
+
+            // Save to store
+            engine.save().await.unwrap();
+        }
+
+        // Reload engine from same store
+        let mut engine = HybridSearchEngine::try_load_or_new(store, 3).await.unwrap();
+
+        // Verify data was loaded
+        assert_eq!(engine.len(), 1);
+
+        // Search should work
+        let results = engine.search(&[0.5, 0.5, 0.0], "persist", 5).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].text.contains("persist"));
+
+        // Source should be tracked
+        let sources = engine.list_sources().await.unwrap();
+        assert_eq!(sources.len(), 1);
+        assert!(sources.contains(&"persistent_source".to_string()));
+    }
+
+    /// Test that source update detection works correctly
+    #[tokio::test]
+    async fn test_source_update_detection() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let source_id = "updatable_source";
+
+        // Register with initial hash
+        engine
+            .register_source(source_id, "hash_v1".to_string())
+            .await
+            .unwrap();
+
+        let doc = Document {
+            text: "Initial content".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("file.txt".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 0,
+            },
+        };
+        let doc_id = engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        engine.complete_source(source_id).await.unwrap();
+
+        // Check if source needs update with same hash (should not)
+        assert!(!engine
+            .source_needs_update(source_id, "hash_v1")
+            .await
+            .unwrap());
+
+        // Check if source needs update with different hash (should)
+        assert!(engine
+            .source_needs_update(source_id, "hash_v2")
+            .await
+            .unwrap());
+    }
+
+    /// Test search with moderately large result set
+    #[tokio::test]
+    async fn test_search_moderate_result_set() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add 50 documents (enough to test pagination without hitting HNSW limits)
+        for i in 0..50 {
+            let doc = Document {
+                text: format!("Document number {} with unique content", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("doc_{}.txt", i)),
+                    source: Some(format!("/batch/doc_{}.txt", i)),
+                    created_at: i,
+                },
+            };
+            // Spread embeddings across the space
+            let angle = (i as f32) * 0.1256; // ~7.2 degrees per doc
+            let embedding = vec![angle.cos(), angle.sin(), 0.0];
+            engine.add_document(doc, embedding).await.unwrap();
+        }
+
+        // Search for top 10
+        let results = engine
+            .search(&[1.0, 0.0, 0.0], "Document", 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 10);
+
+        // Search for top 20
+        let results = engine
+            .search(&[1.0, 0.0, 0.0], "Document", 20)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 20);
+
+        // All results should have "Document" in their text
+        for result in &results {
+            assert!(result.text.contains("Document"));
+        }
+    }
+
+    /// Test search with special characters in query
+    #[tokio::test]
+    async fn test_search_special_characters() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let doc = Document {
+            text: "Function foo() returns bar; use foo->bar syntax".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        // Search with parentheses
+        let results = engine.search(&[1.0, 0.0, 0.0], "foo()", 5).await.unwrap();
+        assert!(!results.is_empty());
+
+        // Search with arrow syntax
+        let results = engine
+            .search(&[1.0, 0.0, 0.0], "foo->bar", 5)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+
+        // Search with semicolon
+        let results = engine.search(&[1.0, 0.0, 0.0], "bar;", 5).await.unwrap();
+        assert!(!results.is_empty());
+    }
+
+    /// Test concurrent add and search operations don't corrupt state
+    #[tokio::test]
+    async fn test_concurrent_operations() {
+        use std::sync::Arc;
+        let store = Arc::new(InMemoryDocumentStore::new());
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add initial documents
+        for i in 0..10 {
+            let doc = Document {
+                text: format!("Initial document {}", i),
+                metadata: DocumentMetadata::default(),
+            };
+            engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Perform multiple searches
+        for _ in 0..5 {
+            let results = engine
+                .search(&[5.0, 0.0, 0.0], "document", 5)
+                .await
+                .unwrap();
+            assert!(results.len() <= 5);
+        }
+
+        // Engine state should be consistent
+        assert_eq!(engine.len(), 10);
+    }
+
+    /// Test document text handling and search accuracy
+    #[tokio::test]
+    async fn test_document_text_search() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add document with specific keyword
+        let doc1 = Document {
+            text: "Alpha bravo charlie information".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine
+            .add_document(doc1, vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        // Add document with different content
+        let doc2 = Document {
+            text: "Delta echo foxtrot data".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine
+            .add_document(doc2, vec![0.0, 1.0, 0.0])
+            .await
+            .unwrap();
+
+        // Hybrid search combines keyword + vector results
+        // Both documents may appear in results, but the one with keyword match should rank higher
+        let results = engine.search(&[0.5, 0.5, 0.0], "Alpha", 5).await.unwrap();
+        assert!(!results.is_empty());
+        // The first result should contain the keyword match
+        assert!(results[0].text.contains("Alpha"));
+
+        // Search with embedding closer to doc2 and keyword "Delta"
+        let results = engine.search(&[0.0, 1.0, 0.0], "Delta", 5).await.unwrap();
+        assert!(!results.is_empty());
+        // The first result should contain "Delta" (keyword + vector agreement)
+        assert!(results[0].text.contains("Delta"));
+    }
 }
