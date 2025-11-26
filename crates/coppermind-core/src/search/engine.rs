@@ -469,6 +469,180 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         Ok(())
     }
 
+    // =========================================================================
+    // Source Tracking (for re-upload detection)
+    // =========================================================================
+
+    /// Get a source record by its source_id.
+    ///
+    /// source_id is platform-specific:
+    /// - Desktop: full file path (e.g., "/Users/matt/docs/README.md")
+    /// - Web: "web:{filename}" (e.g., "web:README.md")
+    /// - Crawler: full URL (e.g., "https://example.com/docs/intro")
+    ///
+    /// Returns `Ok(None)` if the source doesn't exist.
+    pub async fn get_source(
+        &self,
+        source_id: &str,
+    ) -> Result<Option<super::types::SourceRecord>, SearchError> {
+        self.store
+            .get_source(source_id)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))
+    }
+
+    /// Register a new source before indexing begins.
+    ///
+    /// Creates an incomplete source record with the given content hash.
+    /// Call `add_doc_to_source` for each chunk, then `complete_source` when done.
+    ///
+    /// # Arguments
+    /// * `source_id` - Unique identifier for the source (path, URL, etc.)
+    /// * `content_hash` - SHA-256 hash of the source content
+    pub async fn register_source(
+        &self,
+        source_id: &str,
+        content_hash: String,
+    ) -> Result<(), SearchError> {
+        let record = super::types::SourceRecord::new_incomplete(content_hash);
+        self.store
+            .put_source(source_id, &record)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+        info!("Registered source: {}", source_id);
+        Ok(())
+    }
+
+    /// Add a document ID to a source's chunk list.
+    ///
+    /// Call this after adding each chunk from a source.
+    pub async fn add_doc_to_source(
+        &self,
+        source_id: &str,
+        doc_id: DocId,
+    ) -> Result<(), SearchError> {
+        let mut record = self
+            .store
+            .get_source(source_id)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?
+            .ok_or(SearchError::NotFound)?;
+
+        record.doc_ids.push(doc_id);
+
+        self.store
+            .put_source(source_id, &record)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Mark a source as completely indexed.
+    ///
+    /// Call this after all chunks from the source have been added.
+    pub async fn complete_source(&self, source_id: &str) -> Result<(), SearchError> {
+        let mut record = self
+            .store
+            .get_source(source_id)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?
+            .ok_or(SearchError::NotFound)?;
+
+        record.mark_complete();
+
+        self.store
+            .put_source(source_id, &record)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+
+        info!(
+            "Completed source: {} ({} chunks)",
+            source_id,
+            record.doc_ids.len()
+        );
+        Ok(())
+    }
+
+    /// Delete all documents from a source (soft delete via tombstones).
+    ///
+    /// This marks all chunks from the source as tombstoned in the vector index
+    /// and deletes the documents/embeddings from storage. The source record
+    /// is also deleted.
+    ///
+    /// # Returns
+    /// Number of chunks tombstoned.
+    pub async fn delete_source(&mut self, source_id: &str) -> Result<usize, SearchError> {
+        // Get the source record
+        let record = match self.store.get_source(source_id).await {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                warn!("Source not found for deletion: {}", source_id);
+                return Ok(0);
+            }
+            Err(e) => return Err(SearchError::StorageError(e.to_string())),
+        };
+
+        let chunk_count = record.doc_ids.len();
+
+        // Tombstone each document in the vector index
+        for doc_id in &record.doc_ids {
+            // Find the index position for this doc_id
+            if let Some(idx) = self.vector_engine.find_index(*doc_id) {
+                self.vector_engine.mark_tombstone(idx);
+            }
+
+            // Delete from storage (documents and embeddings)
+            let _ = self.store.delete_document(*doc_id).await;
+            let _ = self.store.delete_embedding(*doc_id).await;
+        }
+
+        // Delete the source record
+        self.store
+            .delete_source(source_id)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+
+        // Persist tombstones
+        self.store
+            .put_tombstones(&self.vector_engine.get_tombstones())
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+
+        // Update manifest
+        self.manifest.document_count = self.manifest.document_count.saturating_sub(chunk_count);
+
+        info!(
+            "Deleted source: {} ({} chunks tombstoned)",
+            source_id, chunk_count
+        );
+        Ok(chunk_count)
+    }
+
+    /// List all tracked source IDs.
+    pub async fn list_sources(&self) -> Result<Vec<String>, SearchError> {
+        self.store
+            .list_sources()
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))
+    }
+
+    /// Check if a source has changed by comparing content hashes.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the source is new or has changed
+    /// - `Ok(false)` if the source exists with the same hash
+    pub async fn source_needs_update(
+        &self,
+        source_id: &str,
+        new_content_hash: &str,
+    ) -> Result<bool, SearchError> {
+        match self.get_source(source_id).await? {
+            Some(record) => Ok(record.content_hash != new_content_hash),
+            None => Ok(true), // New source
+        }
+    }
+
     /// Debug dump of the index state.
     pub fn debug_dump(&self) -> String {
         let mut output = String::new();
@@ -988,5 +1162,213 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty());
+    }
+
+    // =========================================================================
+    // Source Tracking Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_source_registration_and_lookup() {
+        let store = InMemoryDocumentStore::new();
+        let engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let source_id = "/Users/test/README.md";
+        let content_hash = "abc123def456".to_string();
+
+        // Source shouldn't exist initially
+        assert!(engine.get_source(source_id).await.unwrap().is_none());
+
+        // Register source
+        engine
+            .register_source(source_id, content_hash.clone())
+            .await
+            .unwrap();
+
+        // Source should exist and be incomplete
+        let record = engine.get_source(source_id).await.unwrap().unwrap();
+        assert_eq!(record.content_hash, content_hash);
+        assert!(!record.complete);
+        assert!(record.doc_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_source_document_tracking() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let source_id = "web:test.txt";
+        let content_hash = "hash123".to_string();
+
+        // Register source
+        engine
+            .register_source(source_id, content_hash)
+            .await
+            .unwrap();
+
+        // Add documents and track them
+        let doc1 = Document {
+            text: "First chunk".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("test.txt (chunk 1)".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 100,
+            },
+        };
+        let doc_id1 = engine
+            .add_document(doc1, vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        engine.add_doc_to_source(source_id, doc_id1).await.unwrap();
+
+        let doc2 = Document {
+            text: "Second chunk".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("test.txt (chunk 2)".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 100,
+            },
+        };
+        let doc_id2 = engine
+            .add_document(doc2, vec![0.0, 1.0, 0.0])
+            .await
+            .unwrap();
+        engine.add_doc_to_source(source_id, doc_id2).await.unwrap();
+
+        // Complete the source
+        engine.complete_source(source_id).await.unwrap();
+
+        // Verify source record
+        let record = engine.get_source(source_id).await.unwrap().unwrap();
+        assert!(record.complete);
+        assert_eq!(record.doc_ids.len(), 2);
+        assert!(record.doc_ids.contains(&doc_id1));
+        assert!(record.doc_ids.contains(&doc_id2));
+    }
+
+    #[tokio::test]
+    async fn test_source_needs_update() {
+        let store = InMemoryDocumentStore::new();
+        let engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let source_id = "/path/to/file.md";
+        let hash_v1 = "version1hash".to_string();
+        let hash_v2 = "version2hash".to_string();
+
+        // New source needs update
+        assert!(engine
+            .source_needs_update(source_id, &hash_v1)
+            .await
+            .unwrap());
+
+        // Register source
+        engine
+            .register_source(source_id, hash_v1.clone())
+            .await
+            .unwrap();
+
+        // Same hash - no update needed
+        assert!(!engine
+            .source_needs_update(source_id, &hash_v1)
+            .await
+            .unwrap());
+
+        // Different hash - update needed
+        assert!(engine
+            .source_needs_update(source_id, &hash_v2)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_delete_source() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        let source_id = "web:delete-test.txt";
+
+        // Register and add documents
+        engine
+            .register_source(source_id, "hash".to_string())
+            .await
+            .unwrap();
+
+        let doc1 = Document {
+            text: "Chunk to delete".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("delete-test.txt".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 0,
+            },
+        };
+        let doc_id1 = engine
+            .add_document(doc1, vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        engine.add_doc_to_source(source_id, doc_id1).await.unwrap();
+
+        let doc2 = Document {
+            text: "Another chunk".to_string(),
+            metadata: DocumentMetadata {
+                filename: Some("delete-test.txt".to_string()),
+                source: Some(source_id.to_string()),
+                created_at: 0,
+            },
+        };
+        let doc_id2 = engine
+            .add_document(doc2, vec![0.0, 1.0, 0.0])
+            .await
+            .unwrap();
+        engine.add_doc_to_source(source_id, doc_id2).await.unwrap();
+
+        engine.complete_source(source_id).await.unwrap();
+
+        // Verify documents are searchable
+        assert_eq!(engine.len(), 2);
+
+        // Delete the source
+        let deleted = engine.delete_source(source_id).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        // Source should be gone
+        assert!(engine.get_source(source_id).await.unwrap().is_none());
+
+        // Documents should be tombstoned (excluded from search)
+        let results = engine
+            .search(&[1.0, 0.0, 0.0], "chunk delete", 10)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_sources() {
+        let store = InMemoryDocumentStore::new();
+        let engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Initially empty
+        let sources = engine.list_sources().await.unwrap();
+        assert!(sources.is_empty());
+
+        // Add some sources
+        engine
+            .register_source("/path/a.md", "hash1".to_string())
+            .await
+            .unwrap();
+        engine
+            .register_source("/path/b.md", "hash2".to_string())
+            .await
+            .unwrap();
+        engine
+            .register_source("web:c.txt", "hash3".to_string())
+            .await
+            .unwrap();
+
+        // List should contain all sources
+        let sources = engine.list_sources().await.unwrap();
+        assert_eq!(sources.len(), 3);
+        assert!(sources.contains(&"/path/a.md".to_string()));
+        assert!(sources.contains(&"/path/b.md".to_string()));
+        assert!(sources.contains(&"web:c.txt".to_string()));
     }
 }
