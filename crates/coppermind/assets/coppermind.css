@@ -1775,3 +1775,228 @@ body.cm-body {
     background: rgba(255, 154, 74, 0.1);
     box-shadow: none;
 }
+
+/* ============================================
+   Settings Button (Appbar)
+   ============================================ */
+
+.cm-settings-btn {
+    background: none;
+    border: 1px solid var(--cm-border-subtle);
+    color: var(--cm-text-secondary);
+    padding: 0.4rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 1.35rem;
+    line-height: 1;
+    transition: all 150ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cm-settings-btn:hover {
+    border-color: var(--cm-accent-copper-soft);
+    color: var(--cm-accent-copper);
+    box-shadow: var(--cm-glow-soft);
+}
+
+.cm-settings-btn:active {
+    transform: scale(0.95);
+}
+
+/* ============================================
+   Modal Dialog System
+   ============================================ */
+
+/* Backdrop */
+.cm-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 7, 13, 0.85);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    animation: cm-fade-in 0.15s ease;
+}
+
+@keyframes cm-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Modal Container */
+.cm-modal {
+    background: var(--cm-bg-elevated);
+    border: 1px solid var(--cm-border-strong);
+    border-radius: var(--cm-radius-card);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+    max-width: 480px;
+    width: 100%;
+    animation: cm-slide-up 0.2s ease;
+}
+
+@keyframes cm-slide-up {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Modal Header */
+.cm-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--cm-border-subtle);
+}
+
+.cm-modal-title {
+    margin: 0;
+    font-size: var(--cm-font-size-lg);
+    font-weight: 600;
+    color: var(--cm-text-primary);
+}
+
+.cm-modal-close {
+    background: none;
+    border: none;
+    color: var(--cm-text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 999px;
+    transition: all 150ms ease;
+    line-height: 1;
+}
+
+.cm-modal-close:hover {
+    color: var(--cm-text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Modal Content */
+.cm-modal-content {
+    padding: 1.5rem;
+}
+
+/* ============================================
+   Settings Dialog Specific Styles
+   ============================================ */
+
+.cm-settings-section {
+    margin-bottom: 1.5rem;
+}
+
+.cm-settings-section:last-child {
+    margin-bottom: 0;
+}
+
+.cm-settings-section-title {
+    font-size: var(--cm-font-size-sm);
+    font-weight: 600;
+    color: var(--cm-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 0.75rem;
+}
+
+.cm-settings-info {
+    font-size: var(--cm-font-size-sm);
+    color: var(--cm-text-secondary);
+    margin: 0 0 1rem;
+}
+
+.cm-settings-action {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.cm-settings-warning {
+    font-size: var(--cm-font-size-sm);
+    color: var(--cm-status-warn-border);
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: var(--cm-status-warn-bg);
+    border: 1px solid rgba(255, 154, 74, 0.3);
+    border-radius: 8px;
+}
+
+.cm-settings-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+.cm-settings-hint {
+    font-size: var(--cm-font-size-xs);
+    color: var(--cm-text-muted);
+    margin: 0.5rem 0 0;
+}
+
+/* Danger Button Variant */
+.cm-btn--danger {
+    background: rgba(255, 77, 109, 0.1);
+    border-color: var(--cm-status-error-border);
+    color: var(--cm-status-error-border);
+    transition: all 150ms ease;
+}
+
+.cm-btn--danger:hover:not(:disabled) {
+    background: rgba(255, 77, 109, 0.2);
+    border-color: var(--cm-status-error-border);
+}
+
+.cm-btn--danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Secondary Button Improvements */
+.cm-btn--secondary:hover:not(:disabled) {
+    background: rgba(255, 154, 74, 0.1);
+}
+
+.cm-btn--secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Mobile responsive for modals */
+@media (max-width: 767px) {
+    .cm-modal-backdrop {
+        padding: 1rem;
+    }
+
+    .cm-modal {
+        max-width: none;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .cm-modal-header {
+        padding: 1rem 1.25rem;
+    }
+
+    .cm-modal-content {
+        padding: 1.25rem;
+    }
+
+    .cm-settings-buttons {
+        flex-direction: column;
+    }
+
+    .cm-settings-buttons .cm-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}

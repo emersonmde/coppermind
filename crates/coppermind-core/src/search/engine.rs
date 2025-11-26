@@ -5,15 +5,21 @@ use super::keyword::KeywordSearchEngine;
 #[cfg(test)]
 use super::types::DocumentMetadata;
 use super::types::{
-    validate_dimension, DocId, Document, DocumentRecord, SearchError, SearchResult,
+    validate_dimension, DocId, Document, DocumentRecord, IndexManifest, LoadResult,
+    PersistedDocuments, SearchError, SearchResult, CURRENT_SCHEMA_VERSION,
 };
 use super::vector::VectorSearchEngine;
-use crate::storage::StorageBackend;
+use crate::storage::{StorageBackend, StorageError};
 use std::collections::HashMap;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 /// Maximum characters to show in debug dump text preview.
 const DEBUG_TEXT_PREVIEW_LEN: usize = 100;
+
+/// Storage keys for persisted data.
+const MANIFEST_KEY: &str = "index/manifest.json";
+const DOCUMENTS_KEY: &str = "index/documents.json";
+const EMBEDDINGS_KEY: &str = "index/embeddings.bin";
 
 /// Hybrid search engine combining vector (semantic) and keyword (BM25) search
 pub struct HybridSearchEngine<S: StorageBackend> {
@@ -23,18 +29,23 @@ pub struct HybridSearchEngine<S: StorageBackend> {
     keyword_engine: KeywordSearchEngine,
     /// Document storage (metadata + text)
     documents: HashMap<DocId, DocumentRecord>,
-    /// Storage backend for persistence (reserved for future use).
-    ///
-    /// Currently unused but kept in the API for future persistence features.
-    /// The underscore prefix suppresses "unused field" warnings while signaling
-    /// that this is intentional, not accidental.
-    _storage: S,
+    /// Embeddings storage (parallel to documents, keyed by DocId)
+    /// Kept separate from VectorSearchEngine for persistence
+    embeddings: HashMap<DocId, Vec<f32>>,
+    /// Storage backend for persistence
+    storage: S,
     /// Embedding dimension (e.g., 512 for JinaBERT)
     embedding_dim: usize,
+    /// Index manifest for versioning
+    manifest: IndexManifest,
+    /// Whether there are unsaved changes
+    dirty: bool,
 }
 
 impl<S: StorageBackend> HybridSearchEngine<S> {
-    /// Create a new hybrid search engine
+    /// Create a new empty hybrid search engine (no persistence load).
+    ///
+    /// Use `try_load_or_new()` to create an engine that loads existing data.
     ///
     /// # Arguments
     /// * `storage` - Storage backend for persisting indexes
@@ -44,9 +55,289 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
             vector_engine: VectorSearchEngine::new(embedding_dim),
             keyword_engine: KeywordSearchEngine::new(),
             documents: HashMap::new(),
-            _storage: storage,
+            embeddings: HashMap::new(),
+            storage,
             embedding_dim,
+            manifest: IndexManifest::new(embedding_dim),
+            dirty: false,
         })
+    }
+
+    /// Create a hybrid search engine, loading existing data if available.
+    ///
+    /// This is the preferred constructor for production use.
+    ///
+    /// # Returns
+    /// - If no existing index: creates empty engine
+    /// - If compatible index exists: loads and rebuilds indices
+    /// - If incompatible index: returns error (caller should offer to clear)
+    pub async fn try_load_or_new(storage: S, embedding_dim: usize) -> Result<Self, SearchError> {
+        // Try to load existing index
+        match Self::load_from_storage(&storage, embedding_dim).await? {
+            LoadResult::NotFound => {
+                info!("No existing index found, creating new engine");
+                Self::new(storage, embedding_dim).await
+            }
+            LoadResult::Loaded {
+                manifest,
+                documents,
+                embeddings,
+            } => {
+                info!(
+                    "Loading existing index with {} documents",
+                    manifest.document_count
+                );
+                Self::rebuild_from_data(storage, manifest, documents, embeddings).await
+            }
+            LoadResult::Incompatible { manifest, reason } => {
+                warn!(
+                    "Incompatible index version {} (min: {}): {}",
+                    manifest.schema_version, manifest.min_compatible_version, reason
+                );
+                Err(SearchError::StorageError(format!(
+                    "Incompatible index version: {}. Please clear storage to continue.",
+                    reason
+                )))
+            }
+        }
+    }
+
+    /// Load index data from storage without building indices.
+    async fn load_from_storage(
+        storage: &S,
+        expected_dim: usize,
+    ) -> Result<LoadResult, SearchError> {
+        // Check if manifest exists
+        let manifest_data = match storage.load(MANIFEST_KEY).await {
+            Ok(data) => data,
+            Err(StorageError::NotFound(_)) => return Ok(LoadResult::NotFound),
+            Err(e) => return Err(SearchError::StorageError(e.to_string())),
+        };
+
+        // Parse manifest
+        let manifest: IndexManifest = serde_json::from_slice(&manifest_data)
+            .map_err(|e| SearchError::StorageError(format!("Failed to parse manifest: {}", e)))?;
+
+        // Check compatibility
+        if !manifest.is_compatible() {
+            let reason = format!(
+                "Index requires version >= {}, app has version {}",
+                manifest.min_compatible_version, CURRENT_SCHEMA_VERSION
+            );
+            return Ok(LoadResult::Incompatible { manifest, reason });
+        }
+
+        // Check dimension match
+        if manifest.embedding_dimension != expected_dim {
+            let reason = format!(
+                "Embedding dimension mismatch: index has {}, expected {}",
+                manifest.embedding_dimension, expected_dim
+            );
+            return Ok(LoadResult::Incompatible { manifest, reason });
+        }
+
+        // Load documents
+        let documents_data = storage
+            .load(DOCUMENTS_KEY)
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to load documents: {}", e)))?;
+
+        let documents: PersistedDocuments = serde_json::from_slice(&documents_data)
+            .map_err(|e| SearchError::StorageError(format!("Failed to parse documents: {}", e)))?;
+
+        // Load embeddings (binary format: doc_count * embedding_dim * f32)
+        let embeddings_data = storage
+            .load(EMBEDDINGS_KEY)
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to load embeddings: {}", e)))?;
+
+        let embeddings = Self::deserialize_embeddings(&embeddings_data, expected_dim)?;
+
+        // Verify counts match
+        if documents.documents.len() != embeddings.len() {
+            return Err(SearchError::StorageError(format!(
+                "Document/embedding count mismatch: {} documents, {} embeddings",
+                documents.documents.len(),
+                embeddings.len()
+            )));
+        }
+
+        Ok(LoadResult::Loaded {
+            manifest,
+            documents,
+            embeddings,
+        })
+    }
+
+    /// Rebuild indices from loaded data.
+    async fn rebuild_from_data(
+        storage: S,
+        manifest: IndexManifest,
+        documents: PersistedDocuments,
+        embeddings: Vec<Vec<f32>>,
+    ) -> Result<Self, SearchError> {
+        let embedding_dim = manifest.embedding_dimension;
+        let mut engine = Self {
+            vector_engine: VectorSearchEngine::new(embedding_dim),
+            keyword_engine: KeywordSearchEngine::new(),
+            documents: HashMap::new(),
+            embeddings: HashMap::new(),
+            storage,
+            embedding_dim,
+            manifest,
+            dirty: false,
+        };
+
+        // Track maximum ID to initialize the counter
+        let mut max_id: u64 = 0;
+
+        // Rebuild indices from documents and embeddings
+        for (doc_record, embedding) in documents.documents.into_iter().zip(embeddings.into_iter()) {
+            let doc_id = doc_record.id;
+
+            // Track max ID
+            max_id = max_id.max(doc_id.as_u64());
+
+            // Add to vector index
+            engine
+                .vector_engine
+                .add_document(doc_id, embedding.clone())?;
+
+            // Add to keyword index
+            engine
+                .keyword_engine
+                .add_document(doc_id, doc_record.text.clone());
+
+            // Store in maps
+            engine.embeddings.insert(doc_id, embedding);
+            engine.documents.insert(doc_id, doc_record);
+        }
+
+        // Initialize DocId counter to continue after the highest loaded ID
+        // This prevents ID collisions when adding new documents
+        DocId::init_counter(max_id);
+
+        info!(
+            "Rebuilt indices: {} documents, {} vectors",
+            engine.documents.len(),
+            engine.vector_engine.len()
+        );
+
+        Ok(engine)
+    }
+
+    /// Save the current index to storage.
+    pub async fn save(&mut self) -> Result<(), SearchError> {
+        if !self.dirty && self.manifest.document_count == self.documents.len() {
+            // No changes to save
+            return Ok(());
+        }
+
+        // Update manifest
+        self.manifest.update(self.documents.len());
+
+        // Serialize manifest
+        let manifest_json = serde_json::to_vec_pretty(&self.manifest).map_err(|e| {
+            SearchError::StorageError(format!("Failed to serialize manifest: {}", e))
+        })?;
+
+        // Serialize documents (maintaining insertion order via doc_ids)
+        let doc_records: Vec<DocumentRecord> = self.documents.values().cloned().collect();
+        let documents = PersistedDocuments::from_documents(doc_records);
+        let documents_json = serde_json::to_vec_pretty(&documents).map_err(|e| {
+            SearchError::StorageError(format!("Failed to serialize documents: {}", e))
+        })?;
+
+        // Serialize embeddings (binary, same order as documents)
+        let embeddings_bin = self.serialize_embeddings(&documents.documents)?;
+
+        // Save all files
+        self.storage
+            .save(MANIFEST_KEY, &manifest_json)
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to save manifest: {}", e)))?;
+
+        self.storage
+            .save(DOCUMENTS_KEY, &documents_json)
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to save documents: {}", e)))?;
+
+        self.storage
+            .save(EMBEDDINGS_KEY, &embeddings_bin)
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to save embeddings: {}", e)))?;
+
+        self.dirty = false;
+        info!("Saved index: {} documents", self.documents.len());
+
+        Ok(())
+    }
+
+    /// Serialize embeddings to binary format (little-endian f32).
+    fn serialize_embeddings(&self, documents: &[DocumentRecord]) -> Result<Vec<u8>, SearchError> {
+        let mut buffer = Vec::with_capacity(documents.len() * self.embedding_dim * 4);
+
+        for doc in documents {
+            let embedding = self.embeddings.get(&doc.id).ok_or_else(|| {
+                SearchError::StorageError(format!("Missing embedding for doc {}", doc.id.as_u64()))
+            })?;
+
+            for &value in embedding {
+                buffer.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+
+        Ok(buffer)
+    }
+
+    /// Deserialize embeddings from binary format.
+    fn deserialize_embeddings(data: &[u8], dim: usize) -> Result<Vec<Vec<f32>>, SearchError> {
+        let float_size = std::mem::size_of::<f32>();
+        let embedding_size = dim * float_size;
+
+        if !data.len().is_multiple_of(embedding_size) {
+            return Err(SearchError::StorageError(format!(
+                "Invalid embeddings data size: {} bytes not divisible by {} (dim={})",
+                data.len(),
+                embedding_size,
+                dim
+            )));
+        }
+
+        let count = data.len() / embedding_size;
+        let mut embeddings = Vec::with_capacity(count);
+
+        for i in 0..count {
+            let start = i * embedding_size;
+            let mut embedding = Vec::with_capacity(dim);
+
+            for j in 0..dim {
+                let offset = start + j * float_size;
+                let bytes: [u8; 4] = data[offset..offset + 4].try_into().map_err(|_| {
+                    SearchError::StorageError("Invalid embedding bytes".to_string())
+                })?;
+                embedding.push(f32::from_le_bytes(bytes));
+            }
+
+            embeddings.push(embedding);
+        }
+
+        Ok(embeddings)
+    }
+
+    /// Check if there are unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Get a reference to the storage backend.
+    pub fn storage(&self) -> &S {
+        &self.storage
+    }
+
+    /// Get the current manifest.
+    pub fn manifest(&self) -> &IndexManifest {
+        &self.manifest
     }
 
     /// Add a document to the index
@@ -70,10 +361,13 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         let doc_id = DocId::new();
 
         // Add to vector index
-        self.vector_engine.add_document(doc_id, embedding)?;
+        self.vector_engine.add_document(doc_id, embedding.clone())?;
 
         // Add to keyword index
         self.keyword_engine.add_document(doc_id, doc.text.clone());
+
+        // Store embedding for persistence
+        self.embeddings.insert(doc_id, embedding);
 
         // Store document record
         let record = DocumentRecord {
@@ -82,6 +376,9 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
             metadata: doc.metadata,
         };
         self.documents.insert(doc_id, record);
+
+        // Mark as dirty for save
+        self.dirty = true;
 
         Ok(doc_id)
     }
@@ -103,10 +400,13 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
 
         // Add to vector index (deferred rebuild)
         self.vector_engine
-            .add_document_deferred(doc_id, embedding)?;
+            .add_document_deferred(doc_id, embedding.clone())?;
 
         // Add to keyword index
         self.keyword_engine.add_document(doc_id, doc.text.clone());
+
+        // Store embedding for persistence
+        self.embeddings.insert(doc_id, embedding);
 
         // Store document record
         let record = DocumentRecord {
@@ -115,6 +415,9 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
             metadata: doc.metadata,
         };
         self.documents.insert(doc_id, record);
+
+        // Mark as dirty for save
+        self.dirty = true;
 
         Ok(doc_id)
     }
@@ -265,12 +568,33 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         self.documents.get(doc_id)
     }
 
-    /// Clear all documents from the index
-    #[allow(dead_code)] // Public API
+    /// Clear all documents from the in-memory index (does not clear storage).
+    ///
+    /// Use `clear_all()` to also clear persistent storage.
     pub fn clear(&mut self) {
         self.documents.clear();
+        self.embeddings.clear();
         self.vector_engine = VectorSearchEngine::new(self.embedding_dim);
         self.keyword_engine = KeywordSearchEngine::new();
+        self.manifest = IndexManifest::new(self.embedding_dim);
+        self.dirty = false;
+    }
+
+    /// Clear all documents from both memory and persistent storage.
+    ///
+    /// This is a full reset - useful for testing or when user wants to start fresh.
+    pub async fn clear_all(&mut self) -> Result<(), SearchError> {
+        // Clear in-memory state
+        self.clear();
+
+        // Clear persistent storage
+        self.storage
+            .clear()
+            .await
+            .map_err(|e| SearchError::StorageError(format!("Failed to clear storage: {}", e)))?;
+
+        info!("Cleared all index data (memory and storage)");
+        Ok(())
     }
 
     /// Debug dump of the index state

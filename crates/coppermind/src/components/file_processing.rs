@@ -9,6 +9,7 @@
 use crate::embedding::ChunkEmbeddingResult;
 use crate::error::FileProcessingError;
 use crate::metrics::global_metrics;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::platform::run_blocking;
 use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
@@ -88,6 +89,8 @@ pub fn is_likely_binary(content: &str) -> bool {
 /// ).await?;
 /// println!("Indexed {} chunks", indexed);
 /// ```
+// Desktop: Uses blocking thread pool for CPU-intensive work, requires Send + Sync
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "profile", instrument(skip_all, fields(chunks = embedding_results.len())))]
 pub async fn index_chunks<S: StorageBackend + Send + Sync + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
@@ -158,6 +161,77 @@ pub async fn index_chunks<S: StorageBackend + Send + Sync + 'static>(
     .await?;
 
     let (indexed_count, total_index_time_ms) = result;
+    let total_elapsed_ms = index_start.elapsed().as_secs_f64() * 1000.0;
+
+    info!(
+        "✅ Added {} chunks to search engine ({:.1}ms total, {:.1}ms indexing)",
+        indexed_count, total_elapsed_ms, total_index_time_ms
+    );
+
+    Ok(indexed_count)
+}
+
+// Web: Single-threaded, no blocking thread pool needed, no Send + Sync required
+#[cfg(target_arch = "wasm32")]
+pub async fn index_chunks<S: StorageBackend + 'static>(
+    engine: Arc<Mutex<HybridSearchEngine<S>>>,
+    embedding_results: &[ChunkEmbeddingResult],
+    file_label: &str,
+) -> Result<usize, FileProcessingError> {
+    // Prepare documents outside the lock
+    let timestamp = get_current_timestamp();
+    let file_label_owned = file_label.to_string();
+
+    let docs: Vec<(Document, Vec<f32>, usize)> = embedding_results
+        .iter()
+        .map(|chunk_result| {
+            let doc = Document {
+                text: chunk_result.text.clone(),
+                metadata: DocumentMetadata {
+                    filename: Some(format!(
+                        "{} (chunk {})",
+                        file_label_owned,
+                        chunk_result.chunk_index + 1
+                    )),
+                    source: Some(file_label_owned.clone()),
+                    created_at: timestamp,
+                },
+            };
+            (
+                doc,
+                chunk_result.embedding.clone(),
+                chunk_result.chunk_index,
+            )
+        })
+        .collect();
+
+    // Web is single-threaded, so we can index directly without blocking thread pool
+    let index_start = Instant::now();
+    let mut search_engine = engine.lock().await;
+
+    let mut indexed_count = 0;
+    let mut total_index_time_ms = 0.0;
+
+    for (doc, embedding, chunk_index) in docs {
+        let insert_start = Instant::now();
+
+        match search_engine.add_document(doc, embedding).await {
+            Ok(_) => {
+                let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
+                total_index_time_ms += insert_duration_ms;
+                global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
+                global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
+                indexed_count += 1;
+            }
+            Err(e) => {
+                return Err(FileProcessingError::IndexingFailed(format!(
+                    "Failed to index chunk {}: {:?}",
+                    chunk_index, e
+                )));
+            }
+        }
+    }
+
     let total_elapsed_ms = index_start.elapsed().as_secs_f64() * 1000.0;
 
     info!(

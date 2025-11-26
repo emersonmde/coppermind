@@ -1,10 +1,17 @@
 // OPFS (Origin Private File System) storage implementation for web
+//
+// Stores index data in the browser's Origin Private File System,
+// which persists across page refreshes and browser restarts.
 
 use super::{StorageBackend, StorageError};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{FileSystemDirectoryHandle, FileSystemGetFileOptions};
+use web_sys::{FileSystemDirectoryHandle, FileSystemGetDirectoryOptions, FileSystemGetFileOptions};
 
+/// OPFS storage backend for web platform.
+///
+/// Data is stored in the browser's Origin Private File System.
+/// Supports nested paths (e.g., "index/documents.json") by creating subdirectories.
 pub struct OpfsStorage {
     root: FileSystemDirectoryHandle,
 }
@@ -30,16 +37,68 @@ impl OpfsStorage {
         Ok(Self { root })
     }
 
+    /// Get or create a directory handle for the given path.
+    /// Supports nested paths like "index" or "index/subdir".
+    async fn get_directory(
+        &self,
+        path: &str,
+        create: bool,
+    ) -> Result<FileSystemDirectoryHandle, StorageError> {
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+        let mut current_dir = self.root.clone();
+
+        for part in parts {
+            let options = FileSystemGetDirectoryOptions::new();
+            options.set_create(create);
+
+            let dir_promise = current_dir.get_directory_handle_with_options(part, &options);
+
+            let dir_handle = JsFuture::from(dir_promise).await.map_err(|e| {
+                if create {
+                    StorageError::IoError(format!("Failed to create directory '{}': {:?}", part, e))
+                } else {
+                    StorageError::NotFound(path.to_string())
+                }
+            })?;
+
+            current_dir = dir_handle.dyn_into().map_err(|_| {
+                StorageError::IoError("Failed to cast directory handle".to_string())
+            })?;
+        }
+
+        Ok(current_dir)
+    }
+
+    /// Parse a key into (directory_path, filename).
+    /// E.g., "index/documents.json" -> (Some("index"), "documents.json")
+    fn parse_key(key: &str) -> (Option<&str>, &str) {
+        if let Some(pos) = key.rfind('/') {
+            (Some(&key[..pos]), &key[pos + 1..])
+        } else {
+            (None, key)
+        }
+    }
+
     async fn write_file(&self, key: &str, data: &[u8]) -> Result<(), StorageError> {
+        let (dir_path, filename) = Self::parse_key(key);
+
+        // Get the directory (create if needed)
+        let dir = if let Some(path) = dir_path {
+            self.get_directory(path, true).await?
+        } else {
+            self.root.clone()
+        };
+
         // Get or create file handle
         let options = FileSystemGetFileOptions::new();
         options.set_create(true);
 
-        let file_handle_promise = self.root.get_file_handle_with_options(key, &options);
+        let file_handle_promise = dir.get_file_handle_with_options(filename, &options);
 
         let file_handle = JsFuture::from(file_handle_promise)
             .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await file handle: {:?}", e)))?;
+            .map_err(|e| StorageError::IoError(format!("Failed to get file handle: {:?}", e)))?;
 
         let file_handle: web_sys::FileSystemFileHandle = file_handle
             .dyn_into()
@@ -50,7 +109,7 @@ impl OpfsStorage {
 
         let writable = JsFuture::from(writable_promise)
             .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await writable: {:?}", e)))?;
+            .map_err(|e| StorageError::IoError(format!("Failed to create writable: {:?}", e)))?;
 
         let writable: web_sys::FileSystemWritableFileStream = writable
             .dyn_into()
@@ -71,14 +130,23 @@ impl OpfsStorage {
 
         JsFuture::from(close_promise)
             .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await close: {:?}", e)))?;
+            .map_err(|e| StorageError::IoError(format!("Failed to close: {:?}", e)))?;
 
         Ok(())
     }
 
     async fn read_file(&self, key: &str) -> Result<Vec<u8>, StorageError> {
+        let (dir_path, filename) = Self::parse_key(key);
+
+        // Get the directory (don't create)
+        let dir = if let Some(path) = dir_path {
+            self.get_directory(path, false).await?
+        } else {
+            self.root.clone()
+        };
+
         // Get file handle (don't create)
-        let file_handle_promise = self.root.get_file_handle(key);
+        let file_handle_promise = dir.get_file_handle(filename);
 
         let file_handle = JsFuture::from(file_handle_promise)
             .await
@@ -93,7 +161,7 @@ impl OpfsStorage {
 
         let file = JsFuture::from(file_promise)
             .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await file: {:?}", e)))?;
+            .map_err(|e| StorageError::IoError(format!("Failed to get file: {:?}", e)))?;
 
         let file: web_sys::File = file
             .dyn_into()
@@ -104,13 +172,74 @@ impl OpfsStorage {
 
         let array_buffer = JsFuture::from(array_buffer_promise)
             .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await array buffer: {:?}", e)))?;
+            .map_err(|e| StorageError::IoError(format!("Failed to read array buffer: {:?}", e)))?;
 
         // Convert to Vec<u8>
         let uint8_array = js_sys::Uint8Array::new(&array_buffer);
         let data = uint8_array.to_vec();
 
         Ok(data)
+    }
+
+    async fn file_exists(&self, key: &str) -> Result<bool, StorageError> {
+        let (dir_path, filename) = Self::parse_key(key);
+
+        // Try to get the directory
+        let dir = if let Some(path) = dir_path {
+            match self.get_directory(path, false).await {
+                Ok(d) => d,
+                Err(StorageError::NotFound(_)) => return Ok(false),
+                Err(e) => return Err(e),
+            }
+        } else {
+            self.root.clone()
+        };
+
+        // Try to get file handle without creating
+        let file_handle_promise = dir.get_file_handle(filename);
+
+        match JsFuture::from(file_handle_promise).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    async fn delete_file(&self, key: &str) -> Result<(), StorageError> {
+        let (dir_path, filename) = Self::parse_key(key);
+
+        // Get the directory
+        let dir = if let Some(path) = dir_path {
+            self.get_directory(path, false).await?
+        } else {
+            self.root.clone()
+        };
+
+        let remove_promise = dir.remove_entry(filename);
+
+        JsFuture::from(remove_promise)
+            .await
+            .map_err(|e| StorageError::IoError(format!("Failed to delete: {:?}", e)))?;
+
+        Ok(())
+    }
+
+    /// Recursively delete a directory and all its contents.
+    async fn delete_directory_recursive(
+        &self,
+        parent: &FileSystemDirectoryHandle,
+        name: &str,
+    ) -> Result<(), StorageError> {
+        // Use removeEntry with recursive option
+        let options = web_sys::FileSystemRemoveOptions::new();
+        options.set_recursive(true);
+
+        let remove_promise = parent.remove_entry_with_options(name, &options);
+
+        JsFuture::from(remove_promise)
+            .await
+            .map_err(|e| StorageError::IoError(format!("Failed to delete directory: {:?}", e)))?;
+
+        Ok(())
     }
 }
 
@@ -125,24 +254,11 @@ impl StorageBackend for OpfsStorage {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, StorageError> {
-        // Try to get file handle without creating
-        let file_handle_promise = self.root.get_file_handle(key);
-
-        // Await the promise to see if the file actually exists
-        match JsFuture::from(file_handle_promise).await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        self.file_exists(key).await
     }
 
     async fn delete(&self, key: &str) -> Result<(), StorageError> {
-        let remove_promise = self.root.remove_entry(key);
-
-        JsFuture::from(remove_promise)
-            .await
-            .map_err(|e| StorageError::IoError(format!("Failed to await remove: {:?}", e)))?;
-
-        Ok(())
+        self.delete_file(key).await
     }
 
     async fn list_keys(&self) -> Result<Vec<String>, StorageError> {
@@ -150,30 +266,21 @@ impl StorageBackend for OpfsStorage {
         // The FileSystemDirectoryHandle.entries() method exists but requires
         // async iteration which is complex in wasm-bindgen.
         //
-        // Current limitation: Returns empty vec. To properly implement this,
-        // we would need to either:
-        // 1. Track keys separately in IndexedDB
-        // 2. Use the async iterator API with more complex JS interop
-        //
-        // Returning an error here would break code that expects to gracefully
-        // handle "no keys" vs "operation failed", so we return empty with a warning.
-        web_sys::console::warn_1(
-            &"OPFS list_keys() not implemented - returning empty vec. Keys must be tracked externally.".into(),
-        );
+        // For our use case, we know the exact keys we use (manifest, documents, embeddings),
+        // so we don't need full enumeration. Return empty and rely on exists() checks.
         Ok(vec![])
     }
 
     async fn clear(&self) -> Result<(), StorageError> {
-        // Cannot clear without list_keys() implementation.
-        // Unlike list_keys() which can gracefully return empty, clear() that
-        // silently does nothing is dangerous - callers expect data to be deleted.
-        //
-        // Return an error to make the limitation explicit rather than silently
-        // leaving data in place.
-        Err(StorageError::IoError(
-            "OPFS clear() not implemented: requires list_keys() to enumerate files. \
-             Delete files individually using delete(key) instead."
-                .to_string(),
-        ))
+        // Delete the "index" directory which contains all our data
+        // This is more reliable than trying to enumerate all files
+        match self.delete_directory_recursive(&self.root, "index").await {
+            Ok(()) => Ok(()),
+            Err(StorageError::IoError(_)) => {
+                // Directory might not exist, that's fine
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 }

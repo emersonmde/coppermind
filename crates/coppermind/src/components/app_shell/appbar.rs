@@ -14,13 +14,14 @@ pub enum View {
     Index,
 }
 
-/// Global app bar with logo, navigation, status pills, and metrics toggle
+/// Global app bar with logo, navigation, status pills, metrics toggle, and settings
 #[component]
 pub fn AppBar(
     current_view: ReadSignal<View>,
     on_view_change: EventHandler<View>,
     on_metrics_toggle: EventHandler<()>,
     metrics_collapsed: ReadSignal<bool>,
+    on_settings_click: EventHandler<()>,
 ) -> Element {
     let engine_status = use_search_engine_status();
 
@@ -175,6 +176,15 @@ pub fn AppBar(
                 {worker_pill}
                 {model_pill}
                 {index_pill}
+                // Settings button (gear icon)
+                button {
+                    class: "cm-settings-btn",
+                    onclick: move |_| on_settings_click.call(()),
+                    "aria-label": "Settings",
+                    title: "Settings",
+                    // Unicode gear icon (U+2699)
+                    "\u{2699}"
+                }
             }
         }
     }

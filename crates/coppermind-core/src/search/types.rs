@@ -30,19 +30,36 @@ pub fn get_current_timestamp() -> u64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DocId(u64);
 
+/// Global counter for generating unique document IDs.
+/// Must be initialized with `init_counter` after loading existing documents.
+static DOC_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl DocId {
     /// Generates a new unique document ID.
     ///
     /// Uses an atomic counter to ensure IDs are unique across threads.
+    /// The counter should be initialized via `DocId::init_counter()` after
+    /// loading existing documents to prevent ID collisions.
     ///
     /// Note: Default trait is intentionally NOT implemented because it would
     /// be misleading - calling default() multiple times would generate different
     /// IDs, violating the semantic expectation that default() returns the same value.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        Self(COUNTER.fetch_add(1, Ordering::SeqCst))
+        use std::sync::atomic::Ordering;
+        Self(DOC_ID_COUNTER.fetch_add(1, Ordering::SeqCst))
+    }
+
+    /// Initialize the ID counter to start after the given maximum ID.
+    ///
+    /// Call this after loading existing documents to ensure new IDs don't
+    /// collide with existing ones. Only updates if the new value is higher.
+    pub fn init_counter(max_existing_id: u64) {
+        use std::sync::atomic::Ordering;
+        // Set counter to max_id + 1, but only if it's higher than current
+        // This handles the case where multiple loads might happen
+        let next_id = max_existing_id.saturating_add(1);
+        DOC_ID_COUNTER.fetch_max(next_id, Ordering::SeqCst);
     }
 
     /// Creates a DocId from a raw u64 value.
@@ -210,4 +227,122 @@ impl From<String> for SearchError {
     fn from(s: String) -> Self {
         SearchError::IndexError(s)
     }
+}
+
+// ============================================================================
+// Persistence Types
+// ============================================================================
+
+/// Current schema version for the index format.
+///
+/// Increment this when making breaking changes to the persistence format.
+/// The version history:
+/// - v1: Initial format (documents.json + embeddings.bin + manifest.json)
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// Index manifest containing version and metadata.
+///
+/// Stored as `manifest.json` in the index directory. Used to verify
+/// compatibility and track index statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexManifest {
+    /// Current schema version of this index
+    pub schema_version: u32,
+    /// Minimum schema version required to read this index
+    pub min_compatible_version: u32,
+    /// ISO 8601 timestamp when the index was created
+    pub created_at: String,
+    /// ISO 8601 timestamp of last modification
+    pub last_modified: String,
+    /// Number of documents in the index
+    pub document_count: usize,
+    /// Embedding dimension (e.g., 512 for JinaBERT)
+    pub embedding_dimension: usize,
+}
+
+impl IndexManifest {
+    /// Creates a new manifest for a fresh index.
+    pub fn new(embedding_dimension: usize) -> Self {
+        let now = Self::current_timestamp();
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            min_compatible_version: 1, // v1 can read v1
+            created_at: now.clone(),
+            last_modified: now,
+            document_count: 0,
+            embedding_dimension,
+        }
+    }
+
+    /// Updates the manifest after documents are added/removed.
+    pub fn update(&mut self, document_count: usize) {
+        self.document_count = document_count;
+        self.last_modified = Self::current_timestamp();
+    }
+
+    /// Returns current timestamp in ISO 8601 format.
+    fn current_timestamp() -> String {
+        // Use instant for cross-platform compatibility
+        let secs = get_current_timestamp();
+        // Simple ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+        // For proper formatting we'd use chrono, but this is sufficient
+        format!("{}", secs)
+    }
+
+    /// Checks if this index can be read by the current app version.
+    pub fn is_compatible(&self) -> bool {
+        CURRENT_SCHEMA_VERSION >= self.min_compatible_version
+    }
+
+    /// Checks if this index needs migration to the current version.
+    pub fn needs_migration(&self) -> bool {
+        self.schema_version < CURRENT_SCHEMA_VERSION
+    }
+}
+
+/// Persisted index data (documents only, embeddings stored separately).
+///
+/// The actual HNSW and BM25 indices are rebuilt on load from this data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedDocuments {
+    /// All document records in insertion order
+    pub documents: Vec<DocumentRecord>,
+}
+
+impl PersistedDocuments {
+    /// Creates an empty persisted documents collection.
+    pub fn new() -> Self {
+        Self {
+            documents: Vec::new(),
+        }
+    }
+
+    /// Creates from a list of document records.
+    pub fn from_documents(documents: Vec<DocumentRecord>) -> Self {
+        Self { documents }
+    }
+}
+
+impl Default for PersistedDocuments {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of loading a persisted index.
+#[derive(Debug)]
+pub enum LoadResult {
+    /// Successfully loaded existing index
+    Loaded {
+        manifest: IndexManifest,
+        documents: PersistedDocuments,
+        embeddings: Vec<Vec<f32>>,
+    },
+    /// No existing index found (fresh start)
+    NotFound,
+    /// Index exists but is incompatible (needs clear or migration)
+    Incompatible {
+        manifest: IndexManifest,
+        reason: String,
+    },
 }

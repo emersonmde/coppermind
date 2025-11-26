@@ -38,6 +38,7 @@ mod app_shell;
 mod batch_processor; // Batch processing orchestration
 mod index;
 pub mod search; // Public for SearchView re-export
+mod settings_dialog;
 
 // Legacy components (Phase 6: remove)
 mod file_processing;
@@ -60,6 +61,9 @@ pub use testing::DeveloperTesting;
 // Re-export web crawler
 pub use web_crawler::WebCrawlerCard;
 
+// Re-export settings dialog
+pub use settings_dialog::SettingsDialog;
+
 // Main app component that composes all sections
 use crate::search::HybridSearchEngine;
 use dioxus::logger::tracing::error;
@@ -74,26 +78,20 @@ use std::sync::Arc;
 // ============================================================================
 
 // Storage backends
-use crate::storage::InMemoryStorage;
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(unused_imports)] // Used when persistence is re-enabled
 use crate::storage::NativeStorage;
 #[cfg(target_arch = "wasm32")]
-#[allow(unused_imports)] // Used when persistence is re-enabled
 use crate::storage::OpfsStorage;
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(unused_imports)] // Used when persistence is re-enabled
-use std::path::PathBuf;
 
-// Web platform (WASM)
+// Web platform (WASM) - uses OPFS for persistent storage
 #[cfg(target_arch = "wasm32")]
 use worker::provide_worker_state;
 #[cfg(target_arch = "wasm32")]
-type PlatformStorage = InMemoryStorage;
+type PlatformStorage = OpfsStorage;
 
-// Desktop platform (Native)
+// Desktop platform (Native) - uses persistent NativeStorage
 #[cfg(not(target_arch = "wasm32"))]
-type PlatformStorage = InMemoryStorage;
+type PlatformStorage = NativeStorage;
 
 // ============================================================================
 // File processing for indexing
@@ -306,31 +304,39 @@ pub fn calculate_live_metrics(batches: &[Batch]) -> Option<LiveIndexingMetrics> 
 // Platform-specific initialization helpers
 // ============================================================================
 
-// TODO: Enable persistence once storage layer is fully implemented
-// To re-enable persistence, uncomment the platform-specific code below and remove InMemoryStorage
-
-/// Initialize storage backend (currently in-memory only, no persistence).
+/// Initialize storage backend.
+///
+/// - Desktop: Uses NativeStorage with platform-idiomatic paths
+///   (e.g., ~/Library/Application Support/dev.errorsignal.Coppermind/ on macOS)
+/// - Web: Uses OPFS (Origin Private File System) for persistent browser storage
 async fn create_platform_storage() -> Result<PlatformStorage, String> {
-    // Persistence disabled - using in-memory storage
-    Ok(InMemoryStorage::new())
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Web: Use OPFS for persistent storage across page refreshes
+        OpfsStorage::new()
+            .await
+            .map_err(|e| format!("OPFS storage error: {:?}", e))
+    }
 
-    // Uncomment for OPFS persistence on web:
-    // #[cfg(target_arch = "wasm32")]
-    // return OpfsStorage::new()
-    //     .await
-    //     .map_err(|e| format!("Storage error: {:?}", e));
-
-    // Uncomment for native filesystem persistence on desktop:
-    // #[cfg(not(target_arch = "wasm32"))]
-    // return NativeStorage::new(PathBuf::from("./coppermind-storage"))
-    //     .map_err(|e| format!("Storage error: {:?}", e));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Desktop: Use native filesystem storage with platform-idiomatic paths
+        NativeStorage::new().map_err(|e| format!("Storage error: {:?}", e))
+    }
 }
 
 /// Setup search engine with initialized storage.
+///
+/// Attempts to load existing index data from storage. If no index exists
+/// or the index is incompatible, creates a fresh empty engine.
 async fn initialize_search_engine(
     storage: PlatformStorage,
 ) -> Result<HybridSearchEngine<PlatformStorage>, String> {
-    let engine = HybridSearchEngine::new(storage, 512)
+    // JinaBERT embedding dimension
+    const EMBEDDING_DIM: usize = 512;
+
+    // Try to load existing index or create new
+    let engine = HybridSearchEngine::try_load_or_new(storage, EMBEDDING_DIM)
         .await
         .map_err(|e| format!("{:?}", e))?;
 
@@ -557,6 +563,7 @@ pub fn App() -> Element {
     // View state management
     let mut current_view = use_signal(|| View::Search);
     let mut metrics_collapsed = use_signal(|| true);
+    let mut settings_open = use_signal(|| false);
 
     rsx! {
         div { class: "cm-app",
@@ -567,7 +574,10 @@ pub fn App() -> Element {
                 on_metrics_toggle: move |_| {
                     metrics_collapsed.set(!metrics_collapsed());
                 },
-                metrics_collapsed
+                metrics_collapsed,
+                on_settings_click: move |_| {
+                    settings_open.set(true);
+                }
             }
 
             MetricsPane {
@@ -586,6 +596,13 @@ pub fn App() -> Element {
             }
 
             Footer {}
+
+            // Settings dialog (modal overlay)
+            if settings_open() {
+                SettingsDialog {
+                    on_close: move |_| settings_open.set(false)
+                }
+            }
         }
     }
 }
