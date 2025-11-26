@@ -385,12 +385,24 @@ async fn compute_embedding_wasm(text: &str) -> Result<EmbeddingComputation, Embe
     let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
     let token_count = token_ids.len();
 
-    web_sys::console::log_1(&format!("[compute_embedding_wasm] Tokenized into {} tokens", token_count).into());
+    web_sys::console::log_1(
+        &format!(
+            "[compute_embedding_wasm] Tokenized into {} tokens",
+            token_count
+        )
+        .into(),
+    );
 
     let model_clone = model.clone();
     let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
 
-    web_sys::console::log_1(&format!("[compute_embedding_wasm] Generated {}-dim embedding", embedding.len()).into());
+    web_sys::console::log_1(
+        &format!(
+            "[compute_embedding_wasm] Generated {}-dim embedding",
+            embedding.len()
+        )
+        .into(),
+    );
 
     Ok(EmbeddingComputation {
         token_count,
