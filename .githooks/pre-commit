@@ -1,6 +1,7 @@
 #!/bin/sh
 
-# Dioxus project pre-commit hook to mirror CI checks.
+# Coppermind pre-commit hook to mirror CI checks.
+# Runs format, lint, test, audit, and web build.
 
 set -eu
 
@@ -23,7 +24,7 @@ echo "→ Running cargo test (core crate)"
 cargo test -p coppermind-core --verbose
 
 echo "→ Running cargo test (app - desktop)"
-cargo test -p coppermind --verbose --features desktop
+cargo test -p coppermind --features desktop --verbose
 
 echo "→ Running cargo doc --no-deps"
 cargo doc --no-deps

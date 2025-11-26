@@ -1,119 +1,165 @@
-name: Dioxus CI
+name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
 
-# Needed for GitHub Pages deployments
 permissions:
   contents: read
   pages: write
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "pages-${{ github.ref }}"
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
+  # Fast checks on Linux (cheapest runner)
+  check:
+    name: Format, Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: arduino/setup-protoc@v3
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Download model assets
-        run: ./download-models.sh
-      - name: Run tests (library only, no platform-specific deps needed)
-        run: cargo test --lib --verbose
 
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Check formatting
         run: cargo fmt -- --check
 
-  clippy:
-    name: Clippy
+      - name: Clippy (core)
+        run: cargo clippy -p coppermind-core --all-targets -- -D warnings
+
+      - name: Clippy (app - web)
+        run: cargo clippy -p coppermind --target wasm32-unknown-unknown --features web -- -D warnings
+
+  # Core tests run on Linux (no platform deps)
+  test-core:
+    name: Test Core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: arduino/setup-protoc@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run core tests
+        run: cargo test -p coppermind-core --verbose
+
+  # App tests run on macOS (needs desktop/Metal deps)
+  test-app:
+    name: Test App (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-test
+
+      - name: Download model assets
+        run: ./download-models.sh
+
+      - name: Run app tests
+        run: cargo test -p coppermind --features desktop --verbose
+
+  # Clippy for desktop target (needs macOS for Metal deps)
+  clippy-desktop:
+    name: Clippy Desktop (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Download model assets
-        run: ./download-models.sh
-      - name: Lint with Clippy (web target)
-        run: cargo clippy --target wasm32-unknown-unknown --features web -- -D warnings
 
-  cargo-audit:
-    name: Cargo Audit
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-clippy
+
+      - name: Clippy (app - desktop)
+        run: cargo clippy -p coppermind --features desktop --all-targets -- -D warnings
+
+  audit:
+    name: Security Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Download model assets
-        run: ./download-models.sh
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Run cargo audit
-        run: cargo audit
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
 
-  wasm-build:
-    name: Dioxus WASM Build
+  # Web build (Linux) - needed for GitHub Pages
+  build-web:
+    name: Build Web
     runs-on: ubuntu-latest
-    needs: [ test, fmt, clippy, cargo-audit ]
+    needs: [check, test-core]
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install dioxus-cli
         uses: taiki-e/install-action@v2
         with:
           tool: dioxus-cli@0.7
+
       - name: Download model assets
         run: ./download-models.sh
-      - name: Build Dioxus web assets
+
+      - name: Build web bundle
         run: dx bundle -p coppermind --release
-      # Upload the built static site as a Pages artifact
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Dioxus web output location (0.7 default)
           path: target/dx/coppermind/release/web/public
 
-  macos-bundle:
-    name: macOS Bundle
+  # macOS desktop build - primary desktop target
+  build-desktop-macos:
+    name: Build Desktop (macOS)
+    needs: [check, test-core, test-app, clippy-desktop]
     runs-on: macos-latest
-    needs: [ test, fmt, clippy, cargo-audit ]
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-build
+
       - name: Install dioxus-cli
         uses: taiki-e/install-action@v2
         with:
           tool: dioxus-cli@0.7
+
       - name: Download model assets
         run: ./download-models.sh
+
       - name: Build macOS DMG bundle
         run: dx bundle -p coppermind --release --platform desktop
+
       - name: Upload macOS DMG artifact
         uses: actions/upload-artifact@v4
         with:
@@ -121,11 +167,59 @@ jobs:
           path: target/dx/coppermind/bundle/macos/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  # Windows desktop build - optional, doesn't block CI
+  build-desktop-windows:
+    name: Build Desktop (Windows)
+    needs: [check, test-core]
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Download model assets
+        shell: bash
+        run: ./download-models.sh
+
+      - name: Build desktop
+        run: cargo build -p coppermind --features desktop --release --target x86_64-pc-windows-msvc
+
+  # iOS build - optional, doesn't block CI
+  build-ios:
+    name: Build iOS
+    needs: [check, test-core]
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+
+      - name: Download model assets
+        run: ./download-models.sh
+
+      - name: Build iOS
+        run: cargo build -p coppermind --features mobile --release --target aarch64-apple-ios
+
   deploy:
     name: Deploy to GitHub Pages
-    needs: wasm-build
+    needs: [build-web, build-desktop-macos, audit]
+    # Note: Windows and iOS builds are optional (continue-on-error), don't block deploy
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
