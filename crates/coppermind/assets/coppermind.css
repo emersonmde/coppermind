@@ -394,6 +394,13 @@ body.cm-body {
     background: var(--cm-border-subtle);
 }
 
+/* Warning state (compaction needed) */
+.cm-metrics-state--warning {
+    background: rgba(255, 200, 68, 0.1);
+    border: 1px solid rgba(255, 200, 68, 0.3);
+    color: #ffc844;
+}
+
 /* Performance metrics grid */
 .cm-metrics-grid--performance {
     margin-bottom: 0.5rem;

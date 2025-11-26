@@ -258,6 +258,9 @@ pub struct IndexManifest {
     pub document_count: usize,
     /// Embedding dimension (e.g., 512 for JinaBERT)
     pub embedding_dimension: usize,
+    /// Total tokens across all documents (for metrics display)
+    #[serde(default)]
+    pub total_tokens: usize,
 }
 
 impl IndexManifest {
@@ -271,6 +274,7 @@ impl IndexManifest {
             last_modified: now,
             document_count: 0,
             embedding_dimension,
+            total_tokens: 0,
         }
     }
 
@@ -278,6 +282,23 @@ impl IndexManifest {
     pub fn update(&mut self, document_count: usize) {
         self.document_count = document_count;
         self.last_modified = Self::current_timestamp();
+    }
+
+    /// Updates the manifest with token count.
+    pub fn update_with_tokens(&mut self, document_count: usize, total_tokens: usize) {
+        self.document_count = document_count;
+        self.total_tokens = total_tokens;
+        self.last_modified = Self::current_timestamp();
+    }
+
+    /// Add tokens to the running total.
+    pub fn add_tokens(&mut self, tokens: usize) {
+        self.total_tokens += tokens;
+    }
+
+    /// Subtract tokens from the running total (for deletions).
+    pub fn subtract_tokens(&mut self, tokens: usize) {
+        self.total_tokens = self.total_tokens.saturating_sub(tokens);
     }
 
     /// Returns current timestamp in ISO 8601 format.

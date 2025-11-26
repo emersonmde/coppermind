@@ -1,11 +1,20 @@
 use dioxus::prelude::*;
 
-use crate::components::{
-    calculate_engine_metrics, calculate_live_metrics, use_batches, use_search_engine,
-};
+use crate::components::{calculate_engine_metrics, use_batches, use_search_engine, BatchStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gpu::{get_scheduler, is_scheduler_initialized};
 use crate::metrics::global_metrics;
+
+/// Cached index metrics to avoid flickering when lock is held during indexing
+#[derive(Clone, Default)]
+struct CachedIndexMetrics {
+    chunks: usize,
+    tokens: usize,
+    avg_tokens: f64,
+    tombstone_count: usize,
+    tombstone_ratio: f32,
+    needs_compaction: bool,
+}
 
 /// Collapsible metrics panel showing engine statistics
 #[component]
@@ -20,24 +29,40 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     let batches = use_batches();
     let batches_list = batches.read();
 
+    // Check if any batch is currently processing
+    let is_indexing = batches_list
+        .iter()
+        .any(|b| matches!(b.status, BatchStatus::Processing));
+
     // Get search engine for index-specific metrics
     let search_engine_signal = use_search_engine();
     let search_engine_arc = search_engine_signal.read().clone();
 
-    // Get index-specific metrics from search engine
-    let (vector_chunks, vector_tokens, vector_avg_tokens) =
-        if let Some(engine_lock) = &search_engine_arc {
-            // Try to get lock without blocking (UI thread)
-            if let Some(engine) = engine_lock.try_lock() {
-                // Use sync version for UI - can't await in component render
-                engine.get_index_metrics_sync()
-            } else {
-                // Lock held, show zeros temporarily
-                (0, 0, 0.0)
+    // Cache for index metrics - only update when lock is available and not mid-indexing
+    let mut cached_metrics = use_signal(CachedIndexMetrics::default);
+
+    // Try to update cached metrics from engine (only when not actively indexing)
+    if let Some(engine_lock) = &search_engine_arc {
+        if let Some(engine) = engine_lock.try_lock() {
+            // Only update cache when not actively indexing to avoid flickering
+            if !is_indexing {
+                let (chunks, tokens, avg) = engine.get_index_metrics_sync();
+                let (tombstones, _total, ratio) = engine.compaction_stats();
+                let needs_compact = engine.needs_compaction();
+                cached_metrics.set(CachedIndexMetrics {
+                    chunks,
+                    tokens,
+                    avg_tokens: avg,
+                    tombstone_count: tombstones,
+                    tombstone_ratio: ratio,
+                    needs_compaction: needs_compact,
+                });
             }
-        } else {
-            (0, 0, 0.0)
-        };
+        }
+    }
+
+    // Read cached values
+    let index_metrics = cached_metrics.read();
 
     // GPU Scheduler stats (desktop only)
     #[cfg(not(target_arch = "wasm32"))]
@@ -63,7 +88,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     // Memory estimate: chunks × embedding_dim × 4 bytes (f32)
     // Plus ~20% overhead for HNSW graph structure
     let embedding_dim = 512usize;
-    let vector_memory_bytes = vector_chunks * embedding_dim * 4;
+    let vector_memory_bytes = index_metrics.chunks * embedding_dim * 4;
     let estimated_memory_bytes = (vector_memory_bytes as f64 * 1.2) as usize;
     let memory_display = if estimated_memory_bytes > 1_000_000 {
         format!("{:.1} MB", estimated_memory_bytes as f64 / 1_000_000.0)
@@ -74,37 +99,31 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     };
 
     // Format values for display
-    let formatted_avg_tokens = format!("{:.0}", vector_avg_tokens);
+    let formatted_avg_tokens = format!("{:.0}", index_metrics.avg_tokens);
+    let tombstone_pct = index_metrics.tombstone_ratio * 100.0;
 
-    // Calculate aggregate engine metrics from all completed batches (for historical tracking)
+    // Calculate aggregate engine metrics from all completed batches
+    // This is stable - only includes completed batches, not in-progress ones
     let engine_metrics = calculate_engine_metrics(&batches_list);
-    let batch_total_docs = engine_metrics.total_docs;
 
-    // Calculate live/historical indexing metrics
-    let live_metrics = calculate_live_metrics(&batches_list);
+    // Get rolling average metrics (60-second window) for stable performance display
+    let perf_snapshot = global_metrics().snapshot();
 
-    // Extract metrics and state
-    let (tokens_per_sec, chunks_per_sec, avg_chunk_time_ms, state_mode) =
-        if let Some(metrics) = &live_metrics {
-            if metrics.is_live {
-                (
-                    metrics.tokens_per_sec,
-                    metrics.chunks_per_sec,
-                    metrics.avg_chunk_time_ms,
-                    "live",
-                )
-            } else {
-                (
-                    metrics.tokens_per_sec,
-                    metrics.chunks_per_sec,
-                    metrics.avg_chunk_time_ms,
-                    "historical",
-                )
-            }
-        } else {
-            // No batches indexed yet - show zeros with idle state
-            (0.0, 0.0, 0.0, "idle")
-        };
+    // Determine state based on whether we have recent activity
+    let has_recent_activity = perf_snapshot.embedding_count > 0;
+    let state_mode = if is_indexing {
+        "live"
+    } else if has_recent_activity {
+        "historical"
+    } else {
+        "idle"
+    };
+
+    // Use rolling averages for throughput metrics (stable, not per-chunk)
+    let tokens_per_sec =
+        perf_snapshot.embedding_throughput * (engine_metrics.avg_tokens_per_chunk as f64).max(1.0);
+    let chunks_per_sec = perf_snapshot.embedding_throughput;
+    let avg_chunk_time_ms = perf_snapshot.embedding_avg_ms.unwrap_or(0.0);
 
     // Format values for display
     let formatted_tokens_per_sec = format!("{:.1}", tokens_per_sec);
@@ -116,12 +135,12 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         "live" => (
             "cm-metrics-state cm-metrics-state--live",
             "Live",
-            "Vector engines processing…",
+            "Embedding in progress (60s avg)",
         ),
         "historical" => (
             "cm-metrics-state cm-metrics-state--historical",
-            "Last Batch",
-            "Most recent indexing performance",
+            "60s Avg",
+            "Rolling average from last 60 seconds",
         ),
         _ => (
             "cm-metrics-state cm-metrics-state--idle",
@@ -129,9 +148,6 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
             "Waiting for first batch…",
         ),
     };
-
-    // Get rolling average metrics (60-second window)
-    let perf_snapshot = global_metrics().snapshot();
 
     // Format rolling averages for display
     let chunking_avg = perf_snapshot
@@ -173,7 +189,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
 
             // Two-column layout for Aggregate Stats and GPU Scheduler
             div { class: "cm-metrics-columns",
-                // Left column: Aggregate Statistics
+                // Left column: Aggregate Statistics (from completed batches - stable)
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "Aggregate" }
@@ -181,19 +197,19 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Files" }
-                            div { class: "cm-metric-value", "{batch_total_docs}" }
+                            div { class: "cm-metric-value", "{engine_metrics.total_docs}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{vector_chunks}" }
+                            div { class: "cm-metric-value", "{engine_metrics.total_chunks}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{vector_tokens}" }
+                            div { class: "cm-metric-value", "{engine_metrics.total_tokens}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Avg Tok/Chunk" }
-                            div { class: "cm-metric-value", "{formatted_avg_tokens}" }
+                            div { class: "cm-metric-value", "{engine_metrics.avg_tokens_per_chunk}" }
                         }
                     }
                 }
@@ -226,26 +242,40 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
-            // Per-index metrics: HNSW and BM25
+            // Per-index metrics: HNSW and BM25 (from cached engine state - stable)
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-columns",
                 // HNSW Vector Index
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
+                        if index_metrics.needs_compaction {
+                            span { class: "cm-metrics-state cm-metrics-state--warning",
+                                "Compaction Needed"
+                            }
+                        }
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{vector_chunks}" }
+                            div { class: "cm-metric-value", "{index_metrics.chunks}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{vector_tokens}" }
+                            div { class: "cm-metric-value", "{index_metrics.tokens}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Memory" }
                             div { class: "cm-metric-value", "{memory_display}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Tombstones" }
+                            div { class: "cm-metric-value",
+                                "{index_metrics.tombstone_count}",
+                                if index_metrics.tombstone_count > 0 {
+                                    span { class: "cm-metric-unit", " ({tombstone_pct:.0}%)" }
+                                }
+                            }
                         }
                     }
                 }
@@ -258,11 +288,11 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{vector_chunks}" }
+                            div { class: "cm-metric-value", "{index_metrics.chunks}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{vector_tokens}" }
+                            div { class: "cm-metric-value", "{index_metrics.tokens}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Avg Tok/Chunk" }
@@ -272,10 +302,10 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
-            // Performance metrics (live/historical indexing stats)
+            // Performance metrics (rolling 60-second averages)
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "Indexing Performance" }
+                h3 { class: "cm-metrics-section-title", "Embedding Performance" }
                 span { class: state_class,
                     span { class: "cm-metrics-state-indicator" }
                     "{state_label}"

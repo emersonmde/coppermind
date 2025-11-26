@@ -229,7 +229,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
     let source_id_owned = source_id.to_string();
     let content_hash_owned = content_hash.to_string();
 
-    let docs: Vec<(Document, Vec<f32>, usize)> = embedding_results
+    let docs: Vec<(Document, Vec<f32>, usize, usize)> = embedding_results
         .iter()
         .map(|chunk_result| {
             let doc = Document {
@@ -248,6 +248,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
                 doc,
                 chunk_result.embedding.clone(),
                 chunk_result.chunk_index,
+                chunk_result.token_count,
             )
         })
         .collect();
@@ -272,12 +273,16 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
         let mut indexed_count = 0;
         let mut total_index_time_ms = 0.0;
 
-        for (doc, embedding, chunk_index) in docs {
+        for (doc, embedding, chunk_index, token_count) in docs {
             let insert_start = Instant::now();
 
-            // add_document is async but doesn't do any actual async work
+            // add_document_with_tokens is async but doesn't do any actual async work
             // We can safely block_on it in the blocking thread
-            match futures::executor::block_on(search_engine.add_document(doc, embedding)) {
+            match futures::executor::block_on(search_engine.add_document_with_tokens(
+                doc,
+                embedding,
+                token_count,
+            )) {
                 Ok(doc_id) => {
                     // Track this chunk as part of the source
                     if let Err(e) = futures::executor::block_on(
@@ -344,7 +349,7 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     let timestamp = get_current_timestamp();
     let file_label_owned = file_label.to_string();
 
-    let docs: Vec<(Document, Vec<f32>, usize)> = embedding_results
+    let docs: Vec<(Document, Vec<f32>, usize, usize)> = embedding_results
         .iter()
         .map(|chunk_result| {
             let doc = Document {
@@ -363,6 +368,7 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
                 doc,
                 chunk_result.embedding.clone(),
                 chunk_result.chunk_index,
+                chunk_result.token_count,
             )
         })
         .collect();
@@ -382,10 +388,13 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     let mut indexed_count = 0;
     let mut total_index_time_ms = 0.0;
 
-    for (doc, embedding, chunk_index) in docs {
+    for (doc, embedding, chunk_index, token_count) in docs {
         let insert_start = Instant::now();
 
-        match search_engine.add_document(doc, embedding).await {
+        match search_engine
+            .add_document_with_tokens(doc, embedding, token_count)
+            .await
+        {
             Ok(doc_id) => {
                 // Track this chunk as part of the source
                 search_engine

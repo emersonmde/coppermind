@@ -251,6 +251,27 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         doc: Document,
         embedding: Vec<f32>,
     ) -> Result<DocId, SearchError> {
+        self.add_document_with_tokens(doc, embedding, 0).await
+    }
+
+    /// Add a document to the index with token count for metrics tracking.
+    ///
+    /// The document is immediately persisted to the store.
+    ///
+    /// # Arguments
+    /// * `doc` - Document containing text and metadata
+    /// * `embedding` - Pre-computed embedding vector for the document
+    /// * `token_count` - Number of tokens in this chunk (for metrics)
+    ///
+    /// Returns the assigned DocId
+    #[must_use = "Document ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = doc.text.len(), token_count))]
+    pub async fn add_document_with_tokens(
+        &mut self,
+        doc: Document,
+        embedding: Vec<f32>,
+        token_count: usize,
+    ) -> Result<DocId, SearchError> {
         // Validate embedding dimension
         validate_dimension(self.embedding_dim, embedding.len())?;
 
@@ -279,8 +300,9 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         self.vector_engine.add_document(doc_id, embedding)?;
         self.keyword_engine.add_document(doc_id, record.text);
 
-        // Update manifest
+        // Update manifest with token count
         self.manifest.update(self.manifest.document_count + 1);
+        self.manifest.add_tokens(token_count);
 
         Ok(doc_id)
     }
@@ -294,6 +316,21 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         &mut self,
         doc: Document,
         embedding: Vec<f32>,
+    ) -> Result<DocId, SearchError> {
+        self.add_document_deferred_with_tokens(doc, embedding, 0)
+            .await
+    }
+
+    /// Add a document without rebuilding vector index, with token count for metrics.
+    ///
+    /// Call rebuild_vector_index() once after all documents are added.
+    #[must_use = "Document ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = doc.text.len(), token_count))]
+    pub async fn add_document_deferred_with_tokens(
+        &mut self,
+        doc: Document,
+        embedding: Vec<f32>,
+        token_count: usize,
     ) -> Result<DocId, SearchError> {
         // Validate embedding dimension
         validate_dimension(self.embedding_dim, embedding.len())?;
@@ -324,8 +361,9 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .add_document_deferred(doc_id, embedding)?;
         self.keyword_engine.add_document(doc_id, record.text);
 
-        // Update manifest
+        // Update manifest with token count
         self.manifest.update(self.manifest.document_count + 1);
+        self.manifest.add_tokens(token_count);
 
         Ok(doc_id)
     }
@@ -435,27 +473,22 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
     /// Get detailed index metrics.
     ///
     /// Returns (total_chunks, total_tokens, avg_tokens_per_chunk).
-    ///
-    /// Note: This requires loading documents from store, so it's more expensive
-    /// than with the in-memory implementation.
     pub async fn get_index_metrics(&self) -> Result<(usize, usize, f64), SearchError> {
-        let total_chunks = self.manifest.document_count;
-
-        if total_chunks == 0 {
-            return Ok((0, 0, 0.0));
-        }
-
-        // For now, return approximate metrics without loading all documents
-        // A full implementation would iterate all documents
-        Ok((total_chunks, 0, 0.0))
+        Ok(self.get_index_metrics_sync())
     }
 
-    /// Get detailed index metrics (synchronous version for backwards compatibility).
+    /// Get detailed index metrics (synchronous version).
     ///
-    /// Note: Returns (total_chunks, 0, 0.0) since we can't load docs synchronously.
+    /// Returns (total_chunks, total_tokens, avg_tokens_per_chunk).
     pub fn get_index_metrics_sync(&self) -> (usize, usize, f64) {
         let total_chunks = self.manifest.document_count;
-        (total_chunks, 0, 0.0)
+        let total_tokens = self.manifest.total_tokens;
+        let avg_tokens = if total_chunks > 0 {
+            total_tokens as f64 / total_chunks as f64
+        } else {
+            0.0
+        };
+        (total_chunks, total_tokens, avg_tokens)
     }
 
     /// Get vector index size (number of embeddings).
