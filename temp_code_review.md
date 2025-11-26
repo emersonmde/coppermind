@@ -1,379 +1,462 @@
 # Senior Engineer Code Review: Coppermind Workspace
 
-Based on comprehensive analysis of ~15,000 LOC across both crates, here are prioritized findings organized by impact.
+Based on analysis of ~8,500 LOC across 2 crates (coppermind-core and coppermind), here are prioritized findings:
 
 ---
 
-## HIGH PRIORITY - Immediate Action Recommended
+## HIGH PRIORITY
 
-### 1. Code Duplication: TokenizerSizer (3x duplicate, ~45 LOC)
+### 1. BM25 `len()` Returns Hardcoded Zero
 
 **Files:**
-- `crates/coppermind/src/embedding/chunking/text_splitter_adapter.rs:29-44`
-- `crates/coppermind/src/embedding/chunking/markdown_splitter_adapter.rs:19-38`
-- `crates/coppermind/src/embedding/chunking/code_splitter_adapter.rs:80-99`
+- `crates/coppermind-core/src/search/keyword.rs:55-59`
 
-**Issue:** Identical `TokenizerSizer` struct and `ChunkSizer` impl copied 3 times:
+**Issue:** The `len()` method always returns 0 regardless of actual document count:
+
 ```rust
-struct TokenizerSizer {
-    tokenizer: &'static Tokenizer,
+/// Get the number of documents in the index.
+pub fn len(&self) -> usize {
+    0  // BUG: Should return self.documents.len()
 }
-impl ChunkSizer for TokenizerSizer {
-    fn size(&self, chunk: &str) -> usize {
-        self.tokenizer.encode(chunk, false).map(|e| e.len()).unwrap_or(0)
+```
+
+**Justification:** This is a correctness bug. Any code relying on `len()` to check document count will get wrong results. The `is_empty()` method correctly uses `self.documents.is_empty()`, showing inconsistency.
+
+**Fix:**
+```rust
+pub fn len(&self) -> usize {
+    self.documents.len()
+}
+```
+
+---
+
+### 2. Potential Panic in Chunk Aggregation
+
+**Files:**
+- `crates/coppermind-core/src/search/aggregation.rs:88`
+
+**Issue:** Direct index access without bounds check:
+
+```rust
+let first_chunk = &chunks[0];  // Panics if chunks is empty
+```
+
+While the code that calls this function filters to non-empty groups, the function itself is public and could panic if called with empty input.
+
+**Justification:** Safety issue - public API should not panic on edge cases.
+
+**Fix:**
+```rust
+let first_chunk = chunks.first().ok_or_else(|| {
+    SearchError::InvalidQuery("Empty chunk group".to_string())
+})?;
+```
+
+Or make the function private if it's only used internally with guaranteed non-empty input.
+
+---
+
+### 3. OPFS Storage Methods Silently Fail
+
+**Files:**
+- `crates/coppermind/src/storage/opfs.rs:148-164`
+
+**Issue:** Both `list_keys()` and `clear()` return empty/success on errors:
+
+```rust
+pub async fn list_keys(&self) -> Vec<String> {
+    // ... on any error:
+    Vec::new()  // Silently returns empty list
+}
+
+pub async fn clear(&self) -> Result<(), String> {
+    // ... on any error:
+    Ok(())  // Silently claims success
+}
+```
+
+**Justification:** Silent failures make debugging impossible. Users may think storage is empty when it's actually inaccessible, or think clear succeeded when it failed.
+
+**Fix:**
+```rust
+pub async fn list_keys(&self) -> Result<Vec<String>, String> {
+    // Return Err(...) on failures
+}
+
+pub async fn clear(&self) -> Result<(), String> {
+    // Return Err(...) on failures, not Ok(())
+}
+```
+
+---
+
+### 4. Chunk Boundary Off-by-One Risk
+
+**Files:**
+- `crates/coppermind/src/embedding/chunking/text_splitter_adapter.rs:77-90`
+
+**Issue:** The `chunk_indices` method calculates byte ranges but there's potential for misalignment between the custom `TokenizerSizer` token counting and the actual tokenizer used for embedding.
+
+**Justification:** Token count mismatches between chunking and embedding can cause truncation or wasted capacity.
+
+**Fix:** Add validation that chunked text token counts match expectations, or use the same tokenizer instance for both operations.
+
+---
+
+## MEDIUM PRIORITY
+
+### 5. Code Duplication: add_document Methods (~27 LOC)
+
+**Files:**
+- `crates/coppermind-core/src/search/vector.rs:78-104` (add_document)
+- `crates/coppermind-core/src/search/vector.rs:106-132` (add_documents)
+
+**Issue:** `add_documents` duplicates the exact same logic as `add_document` instead of calling it:
+
+```rust
+// add_document (lines 78-104)
+pub fn add_document(&mut self, doc_id: DocId, embedding: Vec<f32>) -> Result<(), SearchError> {
+    // Validate, insert to map, add to HNSW
+}
+
+// add_documents (lines 106-132) - DUPLICATES the same logic
+pub fn add_documents(&mut self, documents: Vec<(DocId, Vec<f32>)>) -> Result<(), SearchError> {
+    for (doc_id, embedding) in documents {
+        // Same validation, insert, add logic repeated
     }
 }
 ```
 
-**Justification:** Maintainability - any change requires 3 edits; bug risk from divergence.
+**Justification:** 27 LOC duplicated. Any bug fix must be applied twice.
 
-**Fix:** Extract to `chunking/mod.rs`:
+**Fix:**
 ```rust
-pub(crate) struct TokenizerSizer<'a> {
-    pub tokenizer: &'a Tokenizer,
+pub fn add_documents(&mut self, documents: Vec<(DocId, Vec<f32>)>) -> Result<(), SearchError> {
+    for (doc_id, embedding) in documents {
+        self.add_document(doc_id, embedding)?;
+    }
+    Ok(())
 }
 ```
 
-**Status:** [x] FIXED - Extracted to `chunking/mod.rs` with shared `TokenizerSizer` struct
-
 ---
 
-### 2. Code Duplication: Timestamp Formatting (2x duplicate, ~120 LOC)
+### 6. Code Duplication: Chunking Adapter Boilerplate (~40 LOC)
 
 **Files:**
-- `crates/coppermind/src/components/search/result_card.rs:195-258`
-- `crates/coppermind/src/components/search/source_preview.rs:139-206`
+- `crates/coppermind/src/embedding/chunking/text_splitter_adapter.rs:1-50`
+- `crates/coppermind/src/embedding/chunking/markdown_splitter_adapter.rs:1-50`
+- `crates/coppermind/src/embedding/chunking/code_splitter_adapter.rs:1-50`
 
-**Issue:** `format_timestamp()` and `format_duration()` are byte-for-byte identical in both files, including platform-specific `#[cfg]` blocks.
+**Issue:** All three adapters have nearly identical:
+- Constructor patterns
+- `ChunkingStrategy` trait implementations
+- Token counting via `TokenizerSizer`
 
-**Justification:** Maintainability - these are utility functions that belong in a shared module.
+**Justification:** ~40 LOC repeated across 3 files. Changes to chunking behavior require edits in multiple places.
 
-**Fix:** Create `crates/coppermind/src/utils/formatting.rs`:
+**Fix:** Consider a macro or generic adapter:
 ```rust
-pub fn format_timestamp(unix_secs: u64) -> String { ... }
-pub fn format_duration(secs: u64) -> String { ... }
-```
-
-**Status:** [x] FIXED - Extracted to `utils/formatting.rs` with shared `format_timestamp` and `format_duration` functions
-
----
-
-### 3. Inconsistent Error Handling: Panic vs Result in Vector Search
-
-**Files:**
-- `crates/coppermind-core/src/search/vector.rs:100-104` (uses `assert!` - panics)
-- `crates/coppermind-core/src/search/engine.rs:56-62` (uses `Result` - proper)
-
-**Issue:** `VectorSearchEngine::add_document` panics on dimension mismatch while `HybridSearchEngine::add_document` returns `Err`. Inconsistent API contract.
-
-```rust
-// vector.rs - BAD: panics
-assert_eq!(embedding.len(), self.dimension, "Embedding dimension mismatch");
-
-// engine.rs - GOOD: returns error
-if embedding.len() != self.dimension {
-    return Err(SearchError::EmbeddingError(...));
+macro_rules! impl_chunking_adapter {
+    ($name:ident, $splitter:ty) => {
+        // Common implementation
+    };
 }
 ```
 
-**Justification:** Safety - user code with malformed embeddings crashes instead of handling gracefully.
-
-**Fix:** Change `vector.rs` to return `Result` or document panic behavior explicitly.
-
-**Status:** [x] FIXED - `VectorSearchEngine::add_document()` and `search()` now return `Result<_, SearchError>` instead of panicking
+Or extract common logic to a base struct with a generic splitter type parameter.
 
 ---
 
-### 4. Duplicate Dimension Validation (5x repeated)
+### 7. Complex Function: `embed_text_chunks_auto` (120 lines)
 
 **Files:**
-- `crates/coppermind-core/src/search/engine.rs:56-62, 93-99, 152-158`
-- `crates/coppermind-core/src/search/vector.rs:100-104, 150-154`
+- `crates/coppermind/src/embedding/mod.rs:550-670` (WASM version)
+- `crates/coppermind/src/embedding/mod.rs:672-760` (native version)
 
-**Issue:** Same validation logic repeated 5 times:
+**Issue:** This function handles:
+1. File type detection
+2. Chunking strategy selection
+3. Text chunking
+4. Batch processing
+5. Progress reporting
+6. Embedding computation
+
+Multiple concerns mixed in one function.
+
+**Justification:** Maintainability - 120+ lines with 4+ nesting levels makes changes risky.
+
+**Fix:** Extract into smaller functions:
 ```rust
-if embedding.len() != self.dimension {
-    return Err(SearchError::EmbeddingError(format!(
-        "Embedding dimension mismatch: expected {}, got {}",
-        self.dimension, embedding.len()
-    )));
+fn detect_chunking_strategy(filename: Option<&str>) -> Box<dyn ChunkingStrategy>;
+fn chunk_text(text: &str, strategy: &dyn ChunkingStrategy, max_tokens: usize) -> Vec<String>;
+async fn embed_chunks_with_progress<F>(chunks: Vec<String>, progress: F) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError>;
+```
+
+---
+
+### 8. Complex Function: `crawl_with_progress` (196 lines)
+
+**Files:**
+- `crates/coppermind/src/crawler/engine.rs:50-246`
+
+**Issue:** Single function handling:
+1. URL queue management
+2. Rate limiting
+3. Depth tracking
+4. HTML fetching
+5. Link extraction
+6. Progress reporting
+7. Error handling
+
+**Justification:** 196 lines with deeply nested control flow. Hard to test individual behaviors.
+
+**Fix:** Extract:
+```rust
+struct CrawlState { visited: HashSet<Url>, queue: VecDeque<(Url, u32)>, results: Vec<CrawlResult> }
+impl CrawlState {
+    fn should_visit(&self, url: &Url, depth: u32, config: &CrawlConfig) -> bool;
+    fn process_page(&mut self, url: Url, depth: u32, html: &str) -> Vec<Url>;
 }
 ```
 
-**Justification:** DRY principle - changes require 5 edits.
+---
 
-**Fix:** Extract to private helper:
-```rust
-fn validate_dimension(&self, embedding: &[f32]) -> Result<(), SearchError> { ... }
-```
+### 9. Unused `ResultExt` Abstraction
 
-**Status:** [x] FIXED - Added `validate_dimension()` helper in `types.rs` and used across all validation sites
+**Files:**
+- `crates/coppermind/src/utils/error_ext.rs` (definition)
+- 66 potential use sites across codebase
+
+**Issue:** `ResultExt::context()` trait is defined but rarely used. Most error handling uses direct `.map_err()` with string formatting.
+
+**Justification:** Either remove the abstraction or use it consistently.
+
+**Fix:** Either:
+1. Remove `ResultExt` if not providing value
+2. Adopt it consistently across the codebase for uniform error context
 
 ---
 
-### 5. Unused Storage Parameter in HybridSearchEngine
+### 10. Inconsistent Error Handling Patterns
 
-**File:** `crates/coppermind-core/src/search/engine.rs:22`
+**Files:**
+- `crates/coppermind/src/storage/opfs.rs` - Returns `Result<_, String>`
+- `crates/coppermind/src/storage/native.rs` - Returns `Result<_, String>`
+- `crates/coppermind/src/embedding/mod.rs` - Returns `Result<_, EmbeddingError>`
+- `crates/coppermind/src/crawler/mod.rs` - Returns `Result<_, CrawlError>`
 
-**Issue:** `_storage: S` is accepted but never used - dead code that confuses API consumers.
+**Issue:** Mix of `String` errors and typed errors. Storage uses strings, embedding/crawler use typed errors.
+
+**Justification:** Inconsistent - harder to handle errors uniformly.
+
+**Fix:** Define `StorageError` type for storage module to match other modules' patterns.
+
+---
+
+### 11. Platform Code Duplication in Embedder
+
+**Files:**
+- `crates/coppermind/src/processing/embedder.rs:41-106` (WebEmbedder)
+- `crates/coppermind/src/processing/embedder.rs:113-148` (DesktopEmbedder)
+
+**Issue:** Both implement `PlatformEmbedder` with similar patterns but completely separate code. The trait itself is underutilized - callers use platform-specific types directly.
+
+**Justification:** The abstraction exists but isn't leveraged for polymorphism.
+
+**Fix:** Either:
+1. Use `Box<dyn PlatformEmbedder>` for platform-agnostic code
+2. Remove trait if platform-specific code is acceptable
+
+---
+
+### 12. Hardcoded Constants Without Source Documentation
+
+**Files:**
+- `crates/coppermind/src/embedding/config.rs:25-30` - Model dimensions
+- `crates/coppermind-core/src/search/vector.rs:15-16` - HNSW parameters
+- `crates/coppermind-core/src/search/fusion.rs:12` - RRF constant
+
+**Issue:** Magic numbers without source references:
 ```rust
-pub struct HybridSearchEngine<S: StorageBackend> {
-    _storage: S,  // UNUSED - has underscore prefix
-    // ...
+const M: usize = 16;      // Why 16?
+const M0: usize = 32;     // Why 32?
+const K: f32 = 60.0;      // Why 60?
+```
+
+**Justification:** Makes it hard to know if values are optimal or arbitrary.
+
+**Fix:** Add source documentation:
+```rust
+/// M=16 provides good recall/speed tradeoff per HNSW paper (Malkov & Yashunin, 2018)
+const M: usize = 16;
+
+/// K=60 is the standard RRF constant from the original paper (Cormack et al., 2009)
+const K: f32 = 60.0;
+```
+
+---
+
+### 13. Missing Input Validation in Search
+
+**Files:**
+- `crates/coppermind-core/src/search/engine.rs:45-80`
+
+**Issue:** `search()` doesn't validate:
+- Empty query strings
+- Negative or zero `top_k`
+- Query length limits
+
+**Justification:** Edge cases could cause unexpected behavior or panics downstream.
+
+**Fix:**
+```rust
+pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchResult>, SearchError> {
+    if query.trim().is_empty() {
+        return Err(SearchError::InvalidQuery("Query cannot be empty".to_string()));
+    }
+    if top_k == 0 {
+        return Err(SearchError::InvalidQuery("top_k must be > 0".to_string()));
+    }
+    // ... rest of search
 }
 ```
 
-**Justification:** API clarity - users might expect persistence to work.
-
-**Fix:** Either remove the generic parameter entirely, or implement actual persistence. This was discussed in ADR-005 but implementation is incomplete.
-
-**Status:** [x] FIXED - Documented with explanation: "Storage backend for persistence (reserved for future use)"
-
 ---
 
-## MEDIUM PRIORITY - Refactor When Touching These Areas
+## LOW PRIORITY
 
-### 6. Complex Function: `crawl_with_progress` (195 lines)
-
-**File:** `crates/coppermind/src/crawler/engine.rs:111-306`
-
-**Issue:** Single function with triple-nested control flow, multiple responsibilities (cancellation, batching, progress, politeness delay, concurrent fetching).
-
-**Justification:** Readability/maintainability - hard to understand and test.
-
-**Suggested extraction:**
-```rust
-fn collect_batch(&mut self) -> Vec<(String, usize)>
-fn process_batch_results(&mut self, results: Vec<CrawlResult>) -> Vec<String>
-async fn fetch_and_process_page(&self, url: &str) -> Result<CrawlResult, CrawlError>
-```
-
-**Status:** [x] FIXED - Streaming batch processing with `EMBEDDING_BATCH_SIZE=10`, fault-tolerant (preserves work on failure)
-
----
-
-### 7. Complex Function: `embed_text_chunks_auto` (78 lines)
-
-**File:** `crates/coppermind/src/embedding/mod.rs:284-362`
-
-**Issue:** Orchestrates 6 concerns in one function: model loading, tokenizer access, chunk size calculation, file type detection, chunker instantiation, and embedding loop.
-
-**Justification:** Readability - the chunker instantiation block (lines 300-324) with platform-specific conditionals is particularly dense.
-
-**Suggested extraction:**
-```rust
-fn create_chunker_for_file_type(
-    file_type: FileType,
-    max_tokens: usize,
-    tokenizer: &'static Tokenizer,
-) -> Box<dyn ChunkingStrategy>
-```
-
-**Status:** [x] FIXED - Extracted `create_chunker()` factory function to `chunking/mod.rs`
-
----
-
-### 8. Underutilized `ResultExt` Trait (50+ opportunities)
+### 14. Unnecessary Clone in Search Results
 
 **Files:**
-- `crates/coppermind/src/storage/native.rs:31-33, 39-44, 65-67`
-- `crates/coppermind/src/storage/opfs.rs:40-42, 80-85`
-- `crates/coppermind/src/embedding/assets.rs:59-62, 245-247`
+- `crates/coppermind-core/src/search/engine.rs:72`
 
-**Issue:** The codebase has a `ResultExt::context()` trait (in `utils/error_ext.rs:48-96`) but it's **not used** in storage or embedding modules. Instead, repetitive `map_err` calls:
-
+**Issue:** Results are cloned when they could be moved:
 ```rust
-// Current (repeated 50+ times)
-.map_err(|e| StorageError::IoError(format!("Failed to write file: {}", e)))?
-
-// Could be
-.context("Failed to write file")?
+results.clone()  // Could be just `results`
 ```
 
-**Justification:** Maintainability - reduces boilerplate, consistent error messages.
+**Justification:** Minor performance - unnecessary allocation.
 
-**Status:** [ ] Not Fixed
+**Fix:** Remove `.clone()` if ownership can be transferred.
 
 ---
 
-### 9. Chunk Boundary Calculation Bug (Potential)
+### 15. Vec Pre-allocation Opportunities
 
 **Files:**
-- `crates/coppermind/src/embedding/chunking/text_splitter_adapter.rs:127-128`
-- `crates/coppermind/src/embedding/chunking/markdown_splitter_adapter.rs:118-119`
-- `crates/coppermind/src/embedding/chunking/code_splitter_adapter.rs:188`
+- `crates/coppermind/src/embedding/mod.rs:580` - `Vec::new()` in loop
+- `crates/coppermind/src/crawler/engine.rs:100` - Growing vec without capacity
 
-**Issue:** Using `text.find(chunk)` to locate chunk positions fails with duplicated text:
+**Issue:** Vectors grow dynamically when size is known:
 ```rust
-let start_char = text.find(chunk).unwrap_or(0);  // First occurrence only!
-```
-
-Example: For text `"foo bar foo"`, the third chunk "foo" would incorrectly report `start_char=0` instead of `8`.
-
-**Justification:** Correctness - `TextChunk.start_char` and `end_char` are unreliable.
-
-**Fix:** Check if `text-splitter` crate provides byte offsets; if not, track cumulative position.
-
-**Status:** [x] FIXED - Implemented cumulative position tracking in all chunker adapters
-
----
-
-### 10. SearchError Lacks Granularity
-
-**File:** `crates/coppermind-core/src/search/types.rs:156-171`
-
-**Issue:** String-based error variants lose type information:
-```rust
-pub enum SearchError {
-    EmbeddingError(String),  // Can't distinguish dimension mismatch from inference failure
-    IndexError(String),
-    // ...
+let mut results = Vec::new();  // Could pre-allocate
+for chunk in chunks {
+    results.push(embed(chunk).await?);
 }
 ```
 
-**Justification:** Scalability - as error cases grow, pattern matching becomes string parsing.
+**Justification:** Minor performance optimization.
 
-**Better design:**
+**Fix:**
 ```rust
-pub enum SearchError {
-    DimensionMismatch { expected: usize, actual: usize },
-    InferenceFailed(String),
-    // ...
-}
+let mut results = Vec::with_capacity(chunks.len());
 ```
 
-**Status:** [x] FIXED - Added `SearchError::DimensionMismatch { expected, actual }` variant
-
 ---
 
-## LOW PRIORITY - Nice to Have
-
-### 11. HTTP Client Created Per Request
-
-**File:** `crates/coppermind/src/crawler/fetcher.rs:37-41`
-
-**Issue:** `reqwest::Client::builder()` called for every fetch instead of reusing connection pool.
-
-**Justification:** Performance - connection pooling reduces latency.
-
-**Fix:** Use `once_cell::sync::Lazy<Client>` static.
-
-**Status:** [x] FIXED - Implemented `Lazy<reqwest::Client>` with connection pooling (10 idle connections per host)
-
----
-
-### 12. Incomplete OPFS Implementation
-
-**File:** `crates/coppermind/src/storage/opfs.rs:148-163`
-
-**Issue:** `list_keys()` and `clear()` return empty/no-op with TODO comments.
-
-**Justification:** Feature completeness - currently blocks full web storage functionality.
-
-**Status:** [ ] Not Fixed (deferred - requires IndexedDB for key tracking)
-
----
-
-### 13. Model Cache Race Condition Pattern
-
-**File:** `crates/coppermind/src/embedding/model.rs:418-437`
-
-**Issue:** `get_or_load_model` has slightly inelegant race handling:
-```rust
-let _ = MODEL_CACHE.set(model.clone());
-Ok(MODEL_CACHE.get().unwrap().clone())  // Redundant clone
-```
-
-**Better pattern:**
-```rust
-MODEL_CACHE.get_or_try_init(|| { ... }).cloned()
-```
-
-**Status:** [x] FIXED - Used `get_or_try_init` pattern for safe concurrent initialization
-
----
-
-### 14. Platform Embedding Logic Duplication
+### 16. Debug Logging in Production Code
 
 **Files:**
-- `crates/coppermind/src/components/search/search_view.rs:90-137`
-- `crates/coppermind/src/components/testing.rs:72-108`
+- `crates/coppermind/src/workers/mod.rs:310-315`
+- `crates/coppermind/src/embedding/mod.rs:400-405`
 
-**Issue:** Same platform-conditional embedding code with worker/direct branching in both components.
+**Issue:** Verbose debug logging that may impact performance:
+```rust
+tracing::debug!("Processing embedding for {} tokens", token_count);
+```
 
-**Justification:** Maintainability - future embedding changes require 2 edits.
+**Justification:** Minor - debug logs are compiled out in release, but adds noise in development.
 
-**Fix:** Create `use_embedder()` hook that returns platform-appropriate implementation.
-
-**Status:** [x] FIXED - Created `embed_text()` helper and `PlatformEmbedder` abstraction in `processing/embedder.rs`
+**Fix:** Review and reduce verbose logging, or gate behind feature flag.
 
 ---
 
-### 15. Magic Values in Vector Initialization
+### 17. Unused Imports in Some Modules
 
-**File:** `crates/coppermind-core/src/search/vector.rs:160-169`
+**Files:**
+- Various files have `#[allow(unused_imports)]` or unused imports
 
-**Issue:** `!0` used as sentinel without explanation:
-```rust
-let mut neighbors = vec![Neighbor { index: !0, distance: !0 }; actual_k];
-```
+**Issue:** Minor code cleanliness.
 
-**Justification:** Readability - unclear to readers unfamiliar with hnsw conventions.
+**Fix:** Run `cargo fix --allow-dirty` to auto-remove unused imports.
 
-**Fix:** Add constant: `const UNINITIALIZED: usize = !0;`
+---
 
-**Status:** [x] FIXED - Added `MIN_EF_SEARCH` and `DEBUG_TEXT_PREVIEW_LEN` constants
+### 18. Test Coverage Gaps
+
+**Files:**
+- `crates/coppermind-core/src/search/fusion.rs` - No tests for edge cases
+- `crates/coppermind/src/storage/opfs.rs` - Limited test coverage
+
+**Issue:** Some modules lack comprehensive test coverage.
+
+**Justification:** Future regression risk.
+
+**Fix:** Add tests for:
+- RRF with empty inputs
+- RRF with single-source results
+- OPFS error conditions
 
 ---
 
 ## Summary Metrics
 
-| Category | Count | Status |
+| Category | Count | Impact |
 |----------|-------|--------|
-| Critical duplication | 4 | ✅ All fixed (~280 LOC saved) |
-| Inconsistent error handling | 1 | ✅ Fixed (panic → Result) |
-| Complex functions (>100 LOC) | 2 | ⚠️ 1 fixed, 1 deferred |
-| Underutilized abstractions | 1 | ⏸️ Not addressed (low ROI) |
-| Potential bugs | 1 | ✅ Fixed (chunk boundaries) |
-| Dead code | 1 | ✅ Documented (kept for future) |
-| Performance | 2 | ✅ HTTP pooling + model cache race fixed |
-| Platform abstractions | 1 | ✅ embed_text() helper created |
-
-**Overall: 14/15 issues addressed (93%)**
+| Critical bugs | 2 | Correctness (BM25 len, aggregation panic) |
+| Silent failures | 2 | Debuggability (OPFS methods) |
+| Code duplication | 3 | ~95 LOC savings |
+| Complex functions | 2 | 316 LOC to refactor |
+| Unused abstractions | 1 | 66 potential use sites |
+| Missing validation | 2 | Edge case safety |
+| Minor optimizations | 4 | Performance |
 
 ---
 
 ## Trait Abstraction Opportunities
 
-| Abstraction | Location | Justification | Status |
-|-------------|----------|---------------|--------|
-| `ChunkerFactory` | embedding/chunking/mod.rs | Reduces 25-line match to single call | ✅ Implemented as `create_chunker()` |
-| `ContentValidator` | crawler/fetcher.rs | Enables PDF/JSON support later | ⏸️ Consider if needed |
-| `LinkFilter` | crawler/engine.rs:40-64 | Enables robots.txt, blacklists | ⏸️ Consider if needed |
-| `DeviceSelector` | embedding/model.rs:127-170 | Simplifies 43-line nested cfg | ⏸️ Low value |
+| Abstraction | Location | Justification | Recommendation |
+|-------------|----------|---------------|----------------|
+| `ChunkingStrategy` | embedding/chunking/ | Already exists, well-used | Keep |
+| `StorageBackend` | storage/ | Already exists, well-used | Keep |
+| `PlatformEmbedder` | processing/embedder.rs | Exists but underutilized | Consider removing or using polymorphically |
+| `Embedder` | embedding/model.rs | Single implementation | Skip - premature abstraction |
+| `StorageError` type | storage/ | Inconsistent with other modules | Implement |
 
 ---
 
 ## Recommended Action Plan
 
-### Phase 1 - Quick Wins ✅ COMPLETE
-1. ✅ Extract `TokenizerSizer` to shared module
-2. ✅ Extract timestamp formatting utilities
-3. ✅ Add dimension validation helper in core
+### Phase 1 - Critical Fixes
+1. Fix BM25 `len()` to return actual document count
+2. Add bounds check to aggregation `chunks[0]` access
+3. Make OPFS `list_keys()` and `clear()` return proper errors
 
-### Phase 2 - Error Handling ✅ MOSTLY COMPLETE
-4. ✅ Fix panic vs Result inconsistency in vector.rs
-5. ⏸️ Apply `ResultExt::context()` pattern in storage modules (skipped - low ROI)
-6. ✅ Add `DimensionMismatch` variant to `SearchError`
+### Phase 2 - Code Quality
+1. Deduplicate `add_document`/`add_documents` in vector search
+2. Add input validation to search methods
+3. Document magic constants with sources
 
-### Phase 3 - Complexity Reduction ✅ COMPLETE
-7. ✅ Extract `create_chunker_for_file_type()` factory
-8. ✅ Refactored `crawl_with_progress()` - streaming batch embedding with fault tolerance
-9. ✅ Fix chunk boundary calculation
+### Phase 3 - Maintainability
+1. Extract `embed_text_chunks_auto` into smaller functions
+2. Refactor `crawl_with_progress` into smaller units
+3. Decide on `ResultExt` - adopt or remove
+4. Consider `StorageError` type for consistency
 
-### Phase 4 - Cleanup ✅ COMPLETE
-10. ✅ Document unused `_storage` parameter (kept for future persistence)
-11. ✅ Add HTTP client pooling in crawler (Lazy<Client> with 10 idle connections)
-12. ✅ Create `embed_text()` helper for components (platform-agnostic embedding)
-13. ✅ Add named constants for magic values
-14. ✅ Fix model cache race condition (get_or_try_init pattern)
+### Phase 4 - Nice to Have
+1. Pre-allocate vectors where size is known
+2. Remove unnecessary clones
+3. Add test coverage for edge cases
+4. Clean up unused imports

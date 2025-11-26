@@ -137,9 +137,17 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// # Arguments
     /// * `query_embedding` - Pre-computed embedding for the query text
     /// * `query_text` - The query text for keyword matching
-    /// * `k` - Number of results to return
+    /// * `k` - Number of results to return (must be > 0)
     ///
     /// Returns ranked search results that should be used or errors handled
+    ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::InvalidQuery` if:
+    /// - `query_text` is empty or whitespace-only
+    /// - `k` is 0
+    ///
+    /// Returns `SearchError::DimensionMismatch` if `query_embedding` has wrong dimension.
     ///
     /// Note: Takes `&mut self` because the vector search requires mutable access
     #[must_use = "Search results should be used or errors handled"]
@@ -149,6 +157,18 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
         query_text: &str,
         k: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        // Validate query parameters
+        if query_text.trim().is_empty() {
+            return Err(SearchError::InvalidQuery(
+                "Query text cannot be empty".to_string(),
+            ));
+        }
+        if k == 0 {
+            return Err(SearchError::InvalidQuery(
+                "Number of results (k) must be greater than 0".to_string(),
+            ));
+        }
+
         // Validate query embedding dimension
         validate_dimension(self.embedding_dim, query_embedding.len())?;
 
@@ -680,5 +700,41 @@ mod tests {
         assert_eq!(result.text, doc.text);
         assert_eq!(result.metadata.filename, doc.metadata.filename);
         assert_eq!(result.metadata.created_at, doc.metadata.created_at);
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_query_text() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "test document".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        // Empty query text should return InvalidQuery error
+        let result = engine.search(&[1.0, 0.0, 0.0], "", 10).await;
+        assert!(matches!(result, Err(SearchError::InvalidQuery(_))));
+
+        // Whitespace-only query should also fail
+        let result = engine.search(&[1.0, 0.0, 0.0], "   \t\n  ", 10).await;
+        assert!(matches!(result, Err(SearchError::InvalidQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_search_zero_k() {
+        let storage = MockStorage;
+        let mut engine = HybridSearchEngine::new(storage, 3).await.unwrap();
+
+        let doc = Document {
+            text: "test document".to_string(),
+            metadata: DocumentMetadata::default(),
+        };
+        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+        // k=0 should return InvalidQuery error
+        let result = engine.search(&[1.0, 0.0, 0.0], "test", 0).await;
+        assert!(matches!(result, Err(SearchError::InvalidQuery(_))));
     }
 }

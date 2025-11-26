@@ -61,14 +61,27 @@ impl Metric<Box<[f32]>> for CosineDistance {
 /// Memory layout: Index owns Box<[f32]> embeddings on the heap. Box provides
 /// stable heap allocations that won't move when the index grows, avoiding
 /// lifetime issues entirely without requiring unsafe code.
+///
+/// # HNSW Parameters
+///
+/// - **M = 16**: Number of bidirectional links per node at layers > 0.
+///   Higher values improve recall at cost of memory and build time.
+///   Range 12-48 is typical; 16 is the paper's recommendation for balanced performance.
+///
+/// - **M0 = 32**: Number of links at layer 0 (entry layer). Standard practice
+///   is M0 = 2*M for denser connectivity at the base layer.
+///
+/// Reference: "Efficient and robust approximate nearest neighbor search using
+/// Hierarchical Navigable Small World graphs" by Malkov & Yashunin (2018).
+/// arXiv:1603.09320
 pub struct VectorSearchEngine {
     /// HNSW index for semantic similarity search using cosine distance
     /// Type parameters: <Metric, Data, RNG, M, M0>
     /// - Metric: CosineDistance implementation
     /// - Data: Box<[f32]> - owned heap-allocated embeddings
     /// - RNG: StdRng for WASM compatibility
-    /// - M: 16 - bidirectional links per node
-    /// - M0: 32 - layer 0 connections (2*M)
+    /// - M: 16 - bidirectional links per node (paper recommendation)
+    /// - M0: 32 - layer 0 connections (2*M per standard practice)
     index: Hnsw<CosineDistance, Box<[f32]>, rand::rngs::StdRng, 16, 32>,
     /// Searcher for performing queries (mutated during search)
     searcher: Searcher<u32>,

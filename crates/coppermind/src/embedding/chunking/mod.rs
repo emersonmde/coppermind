@@ -44,6 +44,15 @@ use tokenizers::Tokenizer;
 /// allowing token-based chunk sizing without the onig dependency.
 ///
 /// This is shared across all chunking adapters (text, markdown, code).
+///
+/// # Token Count Consistency
+///
+/// **Important:** The same tokenizer instance used here for chunk sizing MUST be
+/// the same tokenizer used for embedding. This ensures chunk sizes accurately
+/// predict token counts during embedding, preventing truncation or wasted capacity.
+///
+/// The tokenizer is passed as `&'static Tokenizer` to ensure the same singleton
+/// instance is used throughout the application (see `ensure_tokenizer()`).
 pub(crate) struct TokenizerSizer {
     pub tokenizer: &'static Tokenizer,
 }

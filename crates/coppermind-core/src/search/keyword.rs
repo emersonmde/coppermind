@@ -8,6 +8,8 @@ use tracing::instrument;
 pub struct KeywordSearchEngine {
     /// BM25 search engine
     search_engine: bm25::SearchEngine<u64>,
+    /// Document count (tracked separately since bm25 crate doesn't expose it)
+    document_count: usize,
 }
 
 impl KeywordSearchEngine {
@@ -18,7 +20,10 @@ impl KeywordSearchEngine {
         let search_engine =
             SearchEngineBuilder::<u64>::with_documents(Language::English, empty_docs).build();
 
-        Self { search_engine }
+        Self {
+            search_engine,
+            document_count: 0,
+        }
     }
 
     /// Add a document to the BM25 corpus
@@ -32,6 +37,7 @@ impl KeywordSearchEngine {
 
         // Upsert document into search engine
         self.search_engine.upsert(doc);
+        self.document_count += 1;
     }
 
     /// Search using BM25 keyword matching
@@ -53,9 +59,7 @@ impl KeywordSearchEngine {
     /// Get number of indexed documents
     #[allow(dead_code)] // Public API
     pub fn len(&self) -> usize {
-        // Note: SearchEngine doesn't expose document count
-        // This is a limitation we'll need to track separately if needed
-        0 // Placeholder
+        self.document_count
     }
 
     /// Check if index is empty
@@ -233,6 +237,26 @@ mod tests {
 
         // Should return at most 3 results
         assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn test_len_returns_correct_count() {
+        let mut engine = KeywordSearchEngine::new();
+
+        // Empty engine
+        assert_eq!(engine.len(), 0);
+        assert!(engine.is_empty());
+
+        // Add documents and verify count increases
+        engine.add_document(DocId::from_u64(1), "first document".to_string());
+        assert_eq!(engine.len(), 1);
+        assert!(!engine.is_empty());
+
+        engine.add_document(DocId::from_u64(2), "second document".to_string());
+        assert_eq!(engine.len(), 2);
+
+        engine.add_document(DocId::from_u64(3), "third document".to_string());
+        assert_eq!(engine.len(), 3);
     }
 
     #[test]

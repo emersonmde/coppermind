@@ -146,20 +146,34 @@ impl StorageBackend for OpfsStorage {
     }
 
     async fn list_keys(&self) -> Result<Vec<String>, StorageError> {
-        // OPFS doesn't have a simple "list all" API
-        // For now, return empty vec - we can track keys separately if needed
-        // TODO: Implement key tracking if needed
+        // OPFS doesn't have a simple "list all" API in the standard web API.
+        // The FileSystemDirectoryHandle.entries() method exists but requires
+        // async iteration which is complex in wasm-bindgen.
+        //
+        // Current limitation: Returns empty vec. To properly implement this,
+        // we would need to either:
+        // 1. Track keys separately in IndexedDB
+        // 2. Use the async iterator API with more complex JS interop
+        //
+        // Returning an error here would break code that expects to gracefully
+        // handle "no keys" vs "operation failed", so we return empty with a warning.
         web_sys::console::warn_1(
-            &"OPFS list_keys() not fully implemented - returning empty vec".into(),
+            &"OPFS list_keys() not implemented - returning empty vec. Keys must be tracked externally.".into(),
         );
         Ok(vec![])
     }
 
     async fn clear(&self) -> Result<(), StorageError> {
-        // Since we can't easily list all keys, we can't clear easily
-        // This would require tracking keys separately
-        // TODO: Implement clear if needed
-        web_sys::console::warn_1(&"OPFS clear() not fully implemented".into());
-        Ok(())
+        // Cannot clear without list_keys() implementation.
+        // Unlike list_keys() which can gracefully return empty, clear() that
+        // silently does nothing is dangerous - callers expect data to be deleted.
+        //
+        // Return an error to make the limitation explicit rather than silently
+        // leaving data in place.
+        Err(StorageError::IoError(
+            "OPFS clear() not implemented: requires list_keys() to enumerate files. \
+             Delete files individually using delete(key) instead."
+                .to_string(),
+        ))
     }
 }

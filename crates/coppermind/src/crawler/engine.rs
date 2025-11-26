@@ -40,7 +40,7 @@ fn normalize_url(url: &str) -> String {
 
 /// Filters links to only include same-origin URLs under the start path (standalone version for concurrent use).
 fn filter_same_origin_links(links: Vec<String>, start_url: &url::Url) -> Vec<String> {
-    let mut filtered = Vec::new();
+    let mut filtered = Vec::with_capacity(links.len());
 
     // Extract base path from start URL
     let start_path = start_url.path();
@@ -154,7 +154,7 @@ impl CrawlEngine {
             }
 
             // Collect batch of URLs to fetch in parallel
-            let mut batch = Vec::new();
+            let mut batch = Vec::with_capacity(self.config.parallel_requests);
             for _ in 0..self.config.parallel_requests {
                 // Pop URLs until we hit depth limit or queue is empty
                 while let Some((url, depth)) = self.queue.pop_front() {

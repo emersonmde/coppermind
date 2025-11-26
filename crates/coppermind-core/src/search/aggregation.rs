@@ -85,7 +85,11 @@ pub fn aggregate_chunks_by_file(chunk_results: Vec<SearchResult>) -> Vec<FileSea
             });
 
             // Best chunk determines file relevance
-            let best_chunk = &chunks[0];
+            // Safety: chunks is guaranteed non-empty because file_groups only contains
+            // entries that had at least one chunk pushed to them. Using .first().unwrap()
+            // instead of [0] to make the invariant explicit and produce a clearer panic
+            // message if the invariant is ever violated.
+            let best_chunk = chunks.first().expect("file group cannot be empty");
 
             // Extract file name from path
             let file_name = extract_file_name(&file_path);
@@ -228,6 +232,15 @@ mod tests {
             extract_file_name("https://example.com/"),
             "https://example.com/"
         ); // Domain fallback
+    }
+
+    #[test]
+    fn test_empty_input_returns_empty() {
+        let chunks: Vec<SearchResult> = vec![];
+        let file_results = aggregate_chunks_by_file(chunks);
+
+        // Empty input should produce empty output (no panic)
+        assert!(file_results.is_empty());
     }
 
     #[test]

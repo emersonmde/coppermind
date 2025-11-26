@@ -176,6 +176,9 @@ pub enum SearchError {
         /// Actual embedding dimension received
         actual: usize,
     },
+    /// Invalid search query
+    #[error("Invalid query: {0}")]
+    InvalidQuery(String),
 }
 
 /// Validates that an embedding has the expected dimension.
