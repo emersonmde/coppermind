@@ -37,32 +37,76 @@ Coppermind is structured around three core subsystems that work together to prov
 
 ### Module Structure
 
-- **src/main.rs** - Entry point with platform-specific initialization
-- **src/error.rs** - Error types (EmbeddingError, FileProcessingError)
-- **src/components/** - Dioxus UI components and file processing
-  - `mod.rs` - App component, context providers
-  - `file_upload.rs` - File upload UI with progress tracking
-  - `file_processing.rs` - File utilities (binary detection, chunk indexing, directory traversal)
-  - `hero.rs` - Hero section, worker state management
-  - `search.rs` - Search UI component
-  - `testing.rs` - Developer testing utilities
-- **src/embedding/** - ML model inference and text processing
-  - `mod.rs` - Public API, high-level embedding functions
-  - `config.rs` - Model configuration (JinaBertConfig, ModelConfig trait)
-  - `model.rs` - Embedder trait, JinaBertEmbedder implementation
-  - `tokenizer.rs` - Tokenization and chunking
-  - `assets.rs` - Platform-agnostic asset loading
-- **src/workers/** - Web Worker client for background embedding (web only)
+Coppermind uses a Cargo workspace with two crates:
+
+#### `crates/coppermind-core/` - Platform-Independent Core Library
+- **src/lib.rs** - Public API exports
 - **src/search/** - Hybrid search implementation
-  - `engine.rs` - HybridSearchEngine orchestrator
-  - `vector.rs` - HNSW vector search
-  - `keyword.rs` - BM25 keyword search
+  - `engine.rs` - `HybridSearchEngine` orchestrating vector + keyword search
+  - `vector.rs` - HNSW vector search using `hnsw` crate (cosine distance)
+  - `keyword.rs` - BM25 keyword search using `bm25` crate
   - `fusion.rs` - Reciprocal Rank Fusion algorithm
-  - `types.rs` - Shared types (DocId, Document, SearchResult, SearchError)
-- **src/storage/** - Cross-platform persistence
-  - `mod.rs` - StorageBackend trait
-  - `opfs.rs` - Web implementation (Origin Private File System)
-  - `native.rs` - Desktop implementation (tokio::fs)
+  - `aggregation.rs` - `aggregate_chunks_by_file()` for file-level grouping
+  - `types.rs` - `DocId`, `Document`, `SearchResult`, `SearchError`
+- **src/storage/** - `StorageBackend` trait definition
+
+#### `crates/coppermind/` - Application Crate
+- **src/main.rs** - Entry point with platform-specific launch (desktop/mobile/web)
+- **src/lib.rs** - Public API surface, module exports
+- **src/error.rs** - Error types (`EmbeddingError`, `FileProcessingError`)
+
+- **src/embedding/** - ML model inference and text processing
+  - `mod.rs` - High-level API (`compute_embedding`, `embed_text_chunks_auto`)
+  - `config.rs` - `ModelConfig` trait and `JinaBertConfig` implementation
+  - `model.rs` - `Embedder` trait and `JinaBertEmbedder` (Candle-based)
+  - `tokenizer.rs` - Singleton tokenizer initialization with truncation config
+  - `assets.rs` - Platform-agnostic asset loading (Fetch API on web, tokio::fs on desktop)
+  - `chunking/` - Text chunking strategies
+    - `text_splitter_adapter.rs` - ICU4X sentence-based chunking
+    - `markdown_splitter_adapter.rs` - Markdown-aware chunking (pulldown-cmark)
+    - `code_splitter_adapter.rs` - Syntax-aware chunking with tree-sitter (native only)
+
+- **src/gpu/** - GPU scheduler for thread-safe Metal access (desktop only)
+  - `mod.rs` - Global scheduler initialization, `GpuScheduler` trait
+  - `serial_scheduler.rs` - `SerialScheduler` with dedicated worker thread
+  - `types.rs` - `EmbedRequest`, `Priority`, `ModelId`
+  - `error.rs` - `GpuError` types
+
+- **src/crawler/** - Web page crawling (native only, CORS blocks web)
+  - `engine.rs` - BFS crawl with depth limits and cycle detection
+  - `fetcher.rs` - HTTP fetching with reqwest
+  - `parser.rs` - HTML parsing and text extraction (scraper crate)
+
+- **src/storage/** - Cross-platform persistence implementations
+  - `opfs.rs` - OPFS (Origin Private File System) for web
+  - `native.rs` - tokio::fs for desktop
+
+- **src/workers/** - Web Worker for CPU-intensive embedding (WASM only)
+  - `mod.rs` - `EmbeddingWorkerClient`, `start_embedding_worker()` export
+
+- **src/processing/** - File processing pipeline
+  - `embedder.rs` - `PlatformEmbedder` (worker on web, direct on desktop)
+  - `processor.rs` - High-level `process_file_chunks()` pipeline
+
+- **src/metrics.rs** - Performance metrics with rolling averages
+
+- **src/components/** - Dioxus UI components
+  - `mod.rs` - `App` component, context providers
+  - `app_shell/` - Layout (appbar, footer, metrics_pane)
+  - `search/` - Search UI (search_view, search_card, result_card, source_preview)
+  - `index/` - Index management (index_view, upload_card, file_row, batch_list)
+  - `web_crawler.rs` - Crawler UI (desktop only)
+  - `worker.rs` - Platform-specific embedding coordination
+  - `batch_processor.rs` - Queue management for file processing
+  - `file_processing.rs` - File utilities (binary detection, directory traversal)
+  - `testing.rs` - Developer testing utilities
+
+- **src/platform/** - Platform abstraction utilities
+  - `mod.rs` - `run_blocking()`, `run_async()` (tokio on desktop, direct on web)
+
+- **src/utils/** - General utilities
+  - `formatting.rs` - Duration and timestamp formatting
+  - `signal_ext.rs` - Dioxus signal utilities
 
 ---
 
@@ -78,11 +122,17 @@ Vector search uses the [hnsw](https://github.com/rust-cv/hnsw) crate, which impl
 HNSW builds a multi-layer graph structure where each layer contains a subset of the data points. Navigation starts at the top layer (sparse) and progressively moves to denser layers, using greedy search to find approximate nearest neighbors. This hierarchical approach achieves logarithmic search complexity - O(log n) average case - making it practical for large-scale vector search.
 
 **Implementation Details:**
+
+The engine uses `rust-cv/hnsw` which supports incremental updates and is WASM-compatible:
+
 ```rust
 pub struct VectorSearchEngine {
-    index: Option<HnswMap<EmbeddingPoint, DocId>>,
-    embeddings: HashMap<DocId, Vec<f32>>,
-    dimension: usize,  // 512 for JinaBERT
+    /// HNSW index for semantic similarity search using cosine distance
+    index: Hnsw<CosineDistance, Box<[f32]>, Pcg64, 16, 32>,
+    /// Maps DocId to index position in HNSW
+    doc_positions: HashMap<DocId, usize>,
+    /// Embedding dimension (512 for JinaBERT)
+    dimension: usize,
 }
 ```
 
@@ -185,7 +235,8 @@ Coppermind runs JinaBERT embedding inference directly in the browser using [Cand
 - Output: 512-dimensional embeddings
 - Max sequence length: 8192 tokens (via ALiBi positional embeddings)
 - Current configuration: 2048 tokens (configurable via `max_position_embeddings`)
-- Model format: Safetensors (F16 weights, auto-converted to F32 for WASM)
+- Model size: 65MB (safetensors format, F16 weights auto-converted to F32 for WASM)
+- Tokenizer: 695KB (JSON format)
 
 **ALiBi Positional Embeddings:**
 ALiBi (Attention with Linear Biases) enables length extrapolation - the model can handle sequences longer than it was trained on. Memory usage scales as `heads × seq_len² × 4 bytes`:
@@ -239,7 +290,7 @@ The `src/embedding/assets.rs` module handles cross-platform asset fetching:
 - **Web:** HTTP fetch with base path resolution (from `DIOXUS_ASSET_ROOT` meta tag or worker global)
 - **Desktop:** Filesystem read from multiple search locations (app bundle resources, exe directory, working directory)
 
-Both paths use `spawn_blocking` on desktop to prevent UI freezing when loading the 262MB model file.
+Both paths use `spawn_blocking` on desktop to prevent UI freezing when loading the 65MB model file.
 
 ### Tokenization
 

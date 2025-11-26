@@ -44,11 +44,10 @@ The following functions are instrumented for profiling:
 
 | Function | File | Purpose |
 |----------|------|---------|
-| `HybridSearchEngine::add_document` | `search/engine.rs` | Adds doc to both indexes |
-| `HybridSearchEngine::add_document_deferred` | `search/engine.rs` | Batch add variant |
-| `VectorSearchEngine::add_document` | `search/vector.rs` | HNSW insertion |
-| `KeywordSearchEngine::add_document` | `search/keyword.rs` | BM25 indexing |
-| `index_chunks` | `components/file_processing.rs` | High-level indexing loop |
+| `HybridSearchEngine::add_document` | `crates/coppermind-core/src/search/engine.rs` | Adds doc to both indexes |
+| `VectorSearchEngine::add_document` | `crates/coppermind-core/src/search/vector.rs` | HNSW insertion |
+| `KeywordSearchEngine::add_document` | `crates/coppermind-core/src/search/keyword.rs` | BM25 indexing |
+| `index_chunks` | `crates/coppermind/src/components/file_processing.rs` | High-level indexing loop |
 
 ## How to Profile
 

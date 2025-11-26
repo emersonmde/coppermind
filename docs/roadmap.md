@@ -42,11 +42,11 @@ Automatic strategy selection based on file type:
 - **Text**: Sentence-based chunking using ICU4X segmentation
 - **Platform Behavior**: Web uses Markdown + Text; Desktop/mobile adds Code chunking
 
-#### 🚧 Cross-Platform Storage
+#### ✅ Cross-Platform Storage
 Storage backend infrastructure implemented via `StorageBackend` trait:
-- **Web**: OPFS (Origin Private File System) implementation ready
+- **Web**: OPFS (Origin Private File System) implementation complete
 - **Desktop/Mobile**: Native filesystem access via tokio::fs
-- **Current Status**: Temporarily disabled (using `InMemoryStorage`) - see Phase 2 roadmap
+- **In-Memory**: `InMemoryStorage` for testing and development
 
 #### ✅ Web Worker Architecture
 Non-blocking ML inference on web platform:
@@ -54,87 +54,54 @@ Non-blocking ML inference on web platform:
 - Prevents UI freezing during embedding computation
 - Desktop uses `tokio::spawn_blocking` with native threading
 
+#### ✅ Web Crawler (Desktop-First)
+**ADR:** [002-web-crawler-desktop-first.md](adrs/002-web-crawler-desktop-first.md)
+
+Desktop-only web crawler for fetching and indexing web pages:
+- Paste URL and crawl same-origin pages recursively
+- Configurable depth, page limits, and parallel requests
+- BFS traversal with cycle detection and politeness delays
+- HTML text extraction with `scraper` crate
+- Crawled pages indexed via hybrid search pipeline
+
+**Implementation:**
+- `crates/coppermind/src/crawler/` - Engine, fetcher, parser modules
+- `crates/coppermind/src/components/web_crawler.rs` - UI component
+- Hidden on web platform via `#[cfg(not(target_arch = "wasm32"))]`
+
+#### ✅ GPU Scheduler
+**ADR:** [006-gpu-scheduler.md](adrs/006-gpu-scheduler.md)
+
+Thread-safe GPU access for Metal backend (works around Candle threading bug):
+- `SerialScheduler` with dedicated worker thread owning GPU device
+- Priority queue: search queries (P0) before background work (P2)
+- Multi-model support via model registry
+- Batch processing for efficient background embedding
+
+**Implementation:**
+- `crates/coppermind/src/gpu/` - Scheduler, types, error handling
+- Desktop only (WASM uses direct CPU execution)
+
 ---
 
 ## Roadmap
 
-### Phase 1: Web Crawler (Desktop-First)
+### Phase 1: Persistence Layer
 
-**Status:** Planned
-**ADR:** [002-web-crawler-desktop-first.md](adrs/002-web-crawler-desktop-first.md)
-
-**Description:**
-Add web crawler feature to fetch and index web pages, initially for desktop platform only due to CORS restrictions on web.
-
-**Goals:**
-1. Paste URL (e.g., `https://example.com/docs`)
-2. Fetch HTML pages and extract visible text
-3. Find all links and follow same-origin links recursively
-4. Feed extracted text to existing embedding pipeline
-5. Store crawled pages alongside uploaded files
-
-**Implementation Strategy:**
-- Use cross-platform Rust crates (`reqwest` + `scraper`) for easy future web enablement
-- Desktop-only initially (no CORS restrictions)
-- Conditionally show UI with `#[cfg(not(target_arch = "wasm32"))]`
-- Module structure ready for web platform when needed (CORS proxy option)
-
-**Success Criteria:**
-- Desktop: Crawler UI visible and functional (`dx serve -p coppermind --platform desktop`)
-- Web: Crawler UI hidden, no errors (`dx serve -p coppermind`)
-- Crawled pages indexed and searchable via hybrid search
-
-**Future Enhancements:**
-- Recursive crawling with depth limit
-- Progress UI (pages crawled, queued)
-- Robots.txt support (respect crawler directives)
-- Rate limiting (politeness delays)
-- Sitemap.xml parsing
-- Optional browser extension for web platform support (different security context bypasses CORS)
-
----
-
-### Phase 2: Persistence Layer
-
-**Status:** Temporarily Disabled (In-Memory Only)
+**Status:** In Progress
 **ADR:** TBD
 
 **Description:**
-Persistence is currently disabled across all platforms using `InMemoryStorage` to allow testing of the crawler and other features in bundled apps (DMG, iOS). The storage backend infrastructure exists but is commented out due to path issues:
-- **DMG builds**: Read-only filesystem errors (`./coppermind-storage` path invalid)
-- **iOS**: Sandbox requirements for writable directories
-- **Desktop (`dx serve -p coppermind --platform desktop`)**: Works but path not suitable for bundled apps
-- **Web**: OPFS implementation exists but untested
-
-**Re-enabling Persistence:**
-To restore persistence, edit `src/components/mod.rs` line ~310:
-- Uncomment platform-specific storage code
-- Update `PlatformStorage` type alias to use `OpfsStorage` (web) or `NativeStorage` (desktop)
-- Configure proper platform-specific paths (see below)
+Enable persistence across all platforms. Storage backend infrastructure exists but needs platform-specific path configuration:
+- **DMG builds**: Need writable paths (`~/Library/Application Support/`)
+- **iOS**: App sandbox documents directory
+- **Web**: OPFS implementation ready, needs testing
 
 **Goals:**
-1. Debug and fix current persistence issues across all platforms
-2. Save indexed documents and embeddings to storage
-3. Restore search index on application startup
+1. Save indexed documents and embeddings to storage
+2. Restore search index on application startup
+3. Platform-specific paths (OPFS for web, native filesystem for desktop/mobile)
 4. Incremental updates (add/remove documents without full rebuild)
-5. Platform-specific optimizations (OPFS for web, native filesystem for desktop/mobile)
-6. Version compatibility and migration strategy
-
-**Implementation Strategy:**
-- Fix platform-specific storage paths (writable locations on DMG, iOS sandboxing)
-- Leverage existing `StorageBackend` trait (OPFS on web, native fs on desktop/mobile)
-- Serialize search index state (HNSW graph, BM25 statistics, document metadata)
-- Lazy loading for large indices (load on demand, not all at startup)
-- Clear user controls (clear storage, export/import)
-
-**Success Criteria:**
-- Index persists across app restarts on all platforms (web, desktop, iOS)
-- DMG builds use correct writable paths (~/Library/Application Support)
-- iOS respects sandbox requirements
-- OPFS working correctly on web
-- Incremental document addition without full rebuild
-- Clear error handling for storage quota/permission issues
-- Fast startup time even with large indices (lazy loading)
 
 **Technical Considerations:**
 - **Platform-specific paths**:
@@ -143,9 +110,7 @@ To restore persistence, edit `src/components/mod.rs` line ~310:
   - Linux: `~/.local/share/coppermind/`
   - Windows: `%APPDATA%/Coppermind/`
   - Web: OPFS (no filesystem paths)
-- Storage format versioning (handle breaking changes gracefully)
-- OPFS quota management on web (request persistent storage permission)
-- Corruption detection and recovery (checksums, fallback to rebuild)
+- Storage format versioning
 - Background persistence (don't block UI during saves)
 
 ---

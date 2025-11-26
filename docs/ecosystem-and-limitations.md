@@ -225,9 +225,9 @@ assert!(device.is_cpu());  // Always true in browser
 
 **2. Large Model Size**
 ```
-BERT-base:     440 MB (too large for quick loading)
-BERT-small:    ~100 MB (feasible)
-JinaBERT-v2:   262 MB (borderline, slow first load)
+BERT-base:       440 MB (too large for quick loading)
+BERT-small:      ~100 MB (feasible)
+JinaBERT-v2-small: 65 MB (good balance of size and quality)
 ```
 
 **Mitigation:**
@@ -272,8 +272,8 @@ let resp = window.fetch_with_str(url).await?;
 **3. Bundle Size**
 ```
 Minimal Dioxus app:     ~500 KB (gzipped)
-With Candle + model:    ~63 MB (model) + ~2 MB (WASM)
-Total first load:       ~65 MB
+With Candle + model:    ~65 MB (model) + ~2 MB (WASM)
+Total first load:       ~67 MB
 ```
 
 **Mitigation:** Lazy load model only when needed ✅ (already implemented)

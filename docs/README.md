@@ -33,15 +33,15 @@ Technical documentation for Coppermind, a local-first hybrid search engine built
 
 ---
 
-### [Experimental Ideas](innovation-ideas.md)
-**Speculative directions and future explorations.**
+### [Roadmap](roadmap.md)
+**Project status, completed features, and future directions.**
 
 **Topics:**
-- Candle WebGPU backend progress
-- Model quantization (F16/INT8)
-- Advanced features (multi-model, federated learning)
+- Completed features (hybrid search, crawler, GPU scheduler)
+- Planned improvements (persistence, WebGPU)
+- Experimental ideas (quantization, multi-model support)
 
-**Read this:** For future project ideas and experimental directions.
+**Read this:** To understand project status and future directions.
 
 ---
 

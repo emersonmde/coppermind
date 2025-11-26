@@ -44,7 +44,7 @@ cargo audit                        # Security audit (requires cargo-audit)
 
 ### Setup
 ```bash
-./download-models.sh               # Download JinaBERT model (262MB + 695KB tokenizer)
+./download-models.sh               # Download JinaBERT model (65MB + 695KB tokenizer)
 git config core.hooksPath .githooks  # Enable pre-commit checks
 ```
 
@@ -56,70 +56,77 @@ cargo install cargo-audit --locked
 
 ## Architecture
 
-### Module Organization
+### Workspace Structure
 
-- **main.rs**: Entry point with platform-specific launch (desktop/mobile/web), logging, CSS loading
-- **lib.rs**: Public API surface, module exports, crate-level `#![forbid(unsafe_code)]`
-- **error.rs**: Error types (`EmbeddingError`, `FileProcessingError`) with `thiserror` derive
+Coppermind uses a Cargo workspace with two crates:
 
-- **embedding/**: ML model inference and text processing
-  - **mod.rs**: High-level API (`compute_embedding`, `embed_text_chunks_auto`, `get_or_load_model`), WASM bindings
-  - **config.rs**: `ModelConfig` trait and `JinaBertConfig` implementation (512-dim, 4 layers, 8 heads)
-  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` (Candle-based, mean pooling, L2 normalization)
-  - **tokenizer.rs**: Singleton tokenizer initialization with truncation config
-  - **assets.rs**: Platform-agnostic asset loading (Fetch API on web, tokio::fs on desktop)
-  - **chunking/**: Text chunking strategies
-    - **mod.rs**: `ChunkingStrategy` trait, `FileType` enum, `detect_file_type()`
-    - **text_splitter_adapter.rs**: ICU4X sentence-based chunking with custom `TokenizerSizer`
-    - **markdown_splitter_adapter.rs**: Markdown-aware chunking (pulldown-cmark)
-    - **code_splitter_adapter.rs**: Syntax-aware chunking with tree-sitter (native only)
-
-- **search/**: Hybrid search system (vector + keyword + RRF fusion)
-  - **mod.rs**: Public exports
-  - **types.rs**: `DocId`, `Document`, `DocumentMetadata`, `DocumentRecord`, `SearchResult`, `FileSearchResult`, `SearchError`
+#### `crates/coppermind-core/` - Platform-Independent Core Library
+- **src/lib.rs**: Public API exports
+- **src/search/**: Hybrid search implementation
   - **engine.rs**: `HybridSearchEngine` orchestrating vector + keyword search
   - **vector.rs**: HNSW semantic search using `hnsw` crate (cosine distance)
   - **keyword.rs**: BM25 full-text search using `bm25` crate
   - **fusion.rs**: Reciprocal Rank Fusion (RRF) algorithm for merging rankings
   - **aggregation.rs**: `aggregate_chunks_by_file()` for file-level result grouping
+  - **types.rs**: `DocId`, `Document`, `SearchResult`, `SearchError`
+- **src/storage/**: `StorageBackend` trait definition
 
-- **storage/**: Cross-platform persistence layer
-  - **mod.rs**: `StorageBackend` trait (save/load/exists/delete/list_keys/clear)
-  - **opfs.rs**: OPFS (Origin Private File System) for web (WASM only)
-  - **native.rs**: tokio::fs-based storage for desktop
+#### `crates/coppermind/` - Application Crate
+- **src/main.rs**: Entry point with platform-specific launch (desktop/mobile/web)
+- **src/lib.rs**: Public API surface, module exports
+- **src/error.rs**: Error types (`EmbeddingError`, `FileProcessingError`)
 
-- **workers/**: Web Worker for CPU-intensive embedding (WASM only)
-  - **mod.rs**: `EmbeddingWorkerClient` (spawns worker, manages request/response), `start_embedding_worker()` WASM export
+- **src/embedding/**: ML model inference and text processing
+  - **mod.rs**: High-level API (`compute_embedding`, `embed_text_chunks_auto`)
+  - **config.rs**: `ModelConfig` trait and `JinaBertConfig` implementation
+  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` (Candle-based)
+  - **tokenizer.rs**: Singleton tokenizer initialization with truncation config
+  - **assets.rs**: Platform-agnostic asset loading (Fetch API on web, tokio::fs on desktop)
+  - **chunking/**: Text chunking strategies
+    - **text_splitter_adapter.rs**: ICU4X sentence-based chunking
+    - **markdown_splitter_adapter.rs**: Markdown-aware chunking (pulldown-cmark)
+    - **code_splitter_adapter.rs**: Syntax-aware chunking with tree-sitter (native only)
 
-- **processing/**: File processing pipeline
-  - **mod.rs**: Exports, `ChunkProcessingResult`
-  - **embedder.rs**: `PlatformEmbedder` enum (worker on web, direct calls on desktop)
-  - **processor.rs**: High-level `process_file_chunks()` pipeline
+- **src/gpu/**: GPU scheduler for thread-safe Metal access (desktop only)
+  - **mod.rs**: Global scheduler initialization, `GpuScheduler` trait
+  - **serial_scheduler.rs**: `SerialScheduler` with dedicated worker thread
+  - **types.rs**: `EmbedRequest`, `Priority`, `ModelId`
+  - **error.rs**: `GpuError` types
 
-- **crawler/**: Web page crawling (native only, CORS blocks web)
-  - **mod.rs**: `CrawlConfig`, `CrawlResult`, `CrawlProgress`, `CrawlError`
+- **src/crawler/**: Web page crawling (native only, CORS blocks web)
+  - **engine.rs**: BFS crawl with depth limits and cycle detection
   - **fetcher.rs**: HTTP fetching with reqwest
   - **parser.rs**: HTML parsing and text extraction (scraper crate)
-  - **engine.rs**: Recursive crawl logic with depth/page limits
 
-- **platform/**: Platform abstraction utilities
-  - **mod.rs**: `run_blocking()` and `run_async()` - abstracts tokio::spawn_blocking on desktop, direct execution on web
+- **src/storage/**: Cross-platform persistence implementations
+  - **opfs.rs**: OPFS (Origin Private File System) for web
+  - **native.rs**: tokio::fs for desktop
 
-- **utils/**: General utilities
-  - **mod.rs**: Re-exports
-  - **error_ext.rs**: `ResultExt` trait for `.context()` error handling
-  - **signal_ext.rs**: Dioxus signal utilities
+- **src/workers/**: Web Worker for CPU-intensive embedding (WASM only)
+  - **mod.rs**: `EmbeddingWorkerClient`, `start_embedding_worker()` export
 
-- **components/**: Dioxus UI components
-  - **mod.rs**: `App` component, context providers (SearchEngine, StorageBackend)
+- **src/processing/**: File processing pipeline
+  - **embedder.rs**: `PlatformEmbedder` (worker on web, direct on desktop)
+  - **processor.rs**: High-level `process_file_chunks()` pipeline
+
+- **src/metrics.rs**: Performance metrics with rolling averages
+
+- **src/components/**: Dioxus UI components
+  - **mod.rs**: `App` component, context providers
   - **app_shell/**: Layout (appbar, footer, metrics_pane)
-  - **search/**: Search UI (search_view, search_card, result_card, empty_state, source_preview)
-  - **index/**: Index management (index_view, upload_card, file_row, batch, batch_list)
+  - **search/**: Search UI (search_view, search_card, result_card, source_preview)
+  - **index/**: Index management (index_view, upload_card, file_row, batch_list)
+  - **web_crawler.rs**: Crawler UI (desktop only)
   - **worker.rs**: Platform-specific embedding coordination
   - **batch_processor.rs**: Queue management for file processing
-  - **web_crawler.rs**: Crawler UI (desktop only)
   - **file_processing.rs**: File utilities (binary detection, directory traversal)
-  - **testing.rs**: Developer testing utilities
+
+- **src/platform/**: Platform abstraction utilities
+  - **mod.rs**: `run_blocking()`, `run_async()` (tokio on desktop, direct on web)
+
+- **src/utils/**: General utilities
+  - **formatting.rs**: Duration and timestamp formatting
+  - **signal_ext.rs**: Dioxus signal utilities
 
 ### Critical Technical Details
 
@@ -127,7 +134,7 @@ cargo install cargo-audit --locked
 - Initial: 128MB, Max: 512MB
 - JinaBERT `max_position_embeddings` set to 2048 tokens (default config)
 - ALiBi bias size scales as `heads * seq_len^2` (~134MB for 8 heads at 2048 length)
-- Model supports up to 8192 tokens but requires more memory (see `docs/model-optimization.md`)
+- Model supports up to 8192 tokens but requires more memory
 
 **Acceleration (Platform-Specific)**:
 - **macOS Desktop**: Metal + Accelerate (full GPU acceleration)
@@ -165,7 +172,8 @@ cargo install cargo-audit --locked
   - Desktop: tokio::fs for native filesystem access
 
 **Model Loading**:
-- JinaBERT weights loaded as Dioxus `Asset` from `/assets/models/`
+- JinaBERT weights (65MB) loaded as Dioxus `Asset` from `crates/coppermind/assets/models/`
+- Download models with `./download-models.sh`
 - Safetensors weights auto-converted F16→F32 by VarBuilder for WASM compatibility
 - `Device::cuda_if_available(0)` falls back to CPU in browser
 
@@ -191,10 +199,11 @@ The codebase uses traits for extensibility and testing:
 
 | Trait | Location | Purpose | Implementations |
 |-------|----------|---------|-----------------|
-| `Embedder` | `embedding/model.rs` | Abstract ML inference | `JinaBertEmbedder` |
-| `ModelConfig` | `embedding/config.rs` | Model parameters | `JinaBertConfig` |
-| `ChunkingStrategy` | `embedding/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
-| `StorageBackend` | `storage/mod.rs` | Persistence | `OpfsStorage`, `NativeStorage`, `InMemoryStorage` |
+| `Embedder` | `crates/coppermind/src/embedding/model.rs` | Abstract ML inference | `JinaBertEmbedder` |
+| `ModelConfig` | `crates/coppermind/src/embedding/config.rs` | Model parameters | `JinaBertConfig` |
+| `ChunkingStrategy` | `crates/coppermind/src/embedding/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
+| `StorageBackend` | `crates/coppermind-core/src/storage/mod.rs` | Persistence | `OpfsStorage`, `NativeStorage`, `InMemoryStorage` |
+| `GpuScheduler` | `crates/coppermind/src/gpu/scheduler.rs` | GPU access | `SerialScheduler` |
 
 These traits define clean boundaries for:
 - Swapping implementations (e.g., different embedding models)
@@ -331,54 +340,47 @@ if cfg!(target_arch = "wasm32") {
 The `docs/` directory contains detailed technical documentation:
 
 ### [Roadmap & Implementation Plan](docs/roadmap.md)
-Cross-platform development roadmap with detailed milestones.
+Cross-platform development roadmap with completed features and future plans.
 
 **Key Topics:**
+- Completed features (hybrid search, crawler, GPU scheduler)
 - Platform strategy (Web → Desktop → Mobile)
-- Current implementation status
-- Detailed milestones with completion checklists
-- Architecture evolution
-- Performance targets
+- Planned improvements (persistence, WebGPU)
 
-**When to Read:** Before starting new features, to understand the project direction and milestone requirements.
+**When to Read:** Before starting new features, to understand project direction.
 
-### [Model Optimization Guide](docs/model-optimization.md)
-Comprehensive guide on WASM memory configuration and JinaBERT sequence length optimization.
+### [Architecture Design](docs/architecture-design.md)
+Comprehensive technical design document covering the entire system.
 
 **Key Topics:**
-- WASM memory limits (4GB vs current 512MB)
-- JinaBERT sequence length capabilities (8192 tokens vs current 1024)
-- ALiBi memory calculations and tradeoffs
-- Recommended configurations for different use cases
-- Memory budget breakdowns
+- Hybrid search system (HNSW, BM25, RRF fusion)
+- Browser ML with Candle (JinaBERT embeddings)
+- Web Worker architecture for non-blocking inference
+- Cross-platform compilation (web vs desktop)
+- Storage & persistence (OPFS vs native filesystem)
 
-**When to Read:** Before optimizing model performance or increasing sequence lengths.
-
-### [Browser ML Architecture](docs/browser-ml-architecture.md)
-Deep dive into browser-based ML inference patterns and architecture.
-
-**Key Topics:**
-- Cross-Origin Isolation (COOP/COEP) setup via Service Worker
-- Web Workers for parallel processing
-- WebGPU compute shader implementation
-- Model loading patterns (singleton, lazy loading)
-- Performance characteristics and memory footprint
-- Future architecture directions (worker pools, OPFS)
-
-**When to Read:** When implementing new ML features or debugging WASM/WebGPU issues.
+**When to Read:** To understand how the system works and implementation details.
 
 ### [Ecosystem & Limitations](docs/ecosystem-and-limitations.md)
 Community resources, known limitations, and ecosystem integration details.
 
 **Key Topics:**
-- Technology stack integration (Candle + WASM + Dioxus + WebGPU)
+- Technology stack integration (Candle + WASM + Dioxus)
 - Known limitations and workarounds
-- Community implementations (Transformers.js, ONNX Runtime, etc.)
-- Blog posts, tutorials, and learning resources
-- Performance comparisons across different approaches
-- Future directions (WebGPU backend, WASM threads, quantization)
+- Community implementations (Transformers.js, ONNX Runtime)
+- Future directions (WebGPU backend, quantization)
 
-**When to Read:** When evaluating alternatives, troubleshooting limitations, or learning from community patterns.
+**When to Read:** When evaluating alternatives or troubleshooting limitations.
+
+### [Configuration Options](docs/config-options.md)
+Catalog of all configurable options for future preferences implementation.
+
+**When to Read:** When modifying default values or implementing user preferences.
+
+### [Profiling Guide](docs/profiling.md)
+How to profile Coppermind to diagnose performance issues.
+
+**When to Read:** When debugging performance problems or UI lag.
 
 ---
 
