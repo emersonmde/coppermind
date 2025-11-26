@@ -984,6 +984,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "sha2",
  "tempfile",
  "text-splitter",
  "thiserror 2.0.17",

@@ -318,6 +318,92 @@ impl VectorSearchEngine {
     pub fn find_index(&self, doc_id: DocId) -> Option<usize> {
         self.doc_ids.iter().position(|&id| id == doc_id)
     }
+
+    /// Calculate the tombstone ratio (proportion of deleted entries).
+    ///
+    /// Returns a value in [0.0, 1.0] representing the fraction of entries
+    /// that have been soft-deleted via tombstones.
+    ///
+    /// # Returns
+    /// - 0.0 if the index is empty or has no tombstones
+    /// - ratio = tombstones / total_entries
+    pub fn tombstone_ratio(&self) -> f32 {
+        if self.doc_ids.is_empty() {
+            return 0.0;
+        }
+        self.tombstones.len() as f32 / self.doc_ids.len() as f32
+    }
+
+    /// Check if compaction is recommended based on tombstone ratio.
+    ///
+    /// Returns true if tombstone ratio exceeds 30% threshold.
+    /// This threshold balances storage overhead vs compaction cost.
+    pub fn needs_compaction(&self) -> bool {
+        const COMPACTION_THRESHOLD: f32 = 0.30;
+        self.tombstone_ratio() > COMPACTION_THRESHOLD
+    }
+
+    /// Get live (non-tombstoned) entry count.
+    #[allow(dead_code)] // Public API
+    pub fn live_count(&self) -> usize {
+        self.doc_ids.len() - self.tombstones.len()
+    }
+
+    /// Get all live (non-tombstoned) DocIds with their index positions.
+    ///
+    /// Used during compaction to know which embeddings to reload.
+    pub fn get_live_entries(&self) -> Vec<(usize, DocId)> {
+        self.doc_ids
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !self.tombstones.contains(idx))
+            .map(|(idx, &doc_id)| (idx, doc_id))
+            .collect()
+    }
+
+    /// Rebuild the index from a list of (DocId, embedding) pairs.
+    ///
+    /// This creates a fresh HNSW index with only the provided entries,
+    /// effectively compacting away all tombstoned entries.
+    ///
+    /// # Arguments
+    /// * `entries` - Vec of (DocId, embedding) pairs to include in new index
+    ///
+    /// # Returns
+    /// The number of entries in the compacted index
+    ///
+    /// # Note
+    /// This is an expensive operation that rebuilds the entire HNSW graph.
+    /// Should only be called when `needs_compaction()` returns true.
+    #[instrument(skip_all, fields(old_size = self.doc_ids.len(), new_size = entries.len()))]
+    pub fn compact(&mut self, entries: Vec<(DocId, Vec<f32>)>) -> Result<usize, SearchError> {
+        // Validate all embeddings have correct dimension
+        for (_, embedding) in &entries {
+            validate_dimension(self.dimension, embedding.len())?;
+        }
+
+        // Create fresh index and state
+        let mut new_index = Hnsw::new(CosineDistance);
+        let mut new_searcher = Searcher::default();
+        let mut new_doc_ids = Vec::with_capacity(entries.len());
+
+        // Insert all entries into new index
+        for (doc_id, embedding) in entries {
+            new_doc_ids.push(doc_id);
+            let boxed_embedding = embedding.into_boxed_slice();
+            new_index.insert(boxed_embedding, &mut new_searcher);
+        }
+
+        let compacted_count = new_doc_ids.len();
+
+        // Atomic swap - replace old index with new one
+        self.index = new_index;
+        self.searcher = new_searcher;
+        self.doc_ids = new_doc_ids;
+        self.tombstones.clear(); // No tombstones in fresh index
+
+        Ok(compacted_count)
+    }
 }
 
 #[cfg(test)]
@@ -670,5 +756,165 @@ mod tests {
         // Marking same index again doesn't increase count
         engine.mark_tombstone(0);
         assert_eq!(engine.tombstone_count(), 2);
+    }
+
+    #[test]
+    fn test_tombstone_ratio() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        // Empty index has 0 ratio
+        assert_eq!(engine.tombstone_ratio(), 0.0);
+
+        // Add 10 documents
+        for i in 0..10 {
+            engine
+                .add_document(DocId::from_u64(i), vec![i as f32, 0.0, 0.0])
+                .unwrap();
+        }
+
+        // No tombstones = 0 ratio
+        assert_eq!(engine.tombstone_ratio(), 0.0);
+
+        // Tombstone 3 of 10 = 30%
+        engine.mark_tombstone(0);
+        engine.mark_tombstone(1);
+        engine.mark_tombstone(2);
+        assert!((engine.tombstone_ratio() - 0.3).abs() < 0.01);
+
+        // Tombstone 5 of 10 = 50%
+        engine.mark_tombstone(3);
+        engine.mark_tombstone(4);
+        assert!((engine.tombstone_ratio() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_needs_compaction() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        // Add 10 documents
+        for i in 0..10 {
+            engine
+                .add_document(DocId::from_u64(i), vec![i as f32, 0.0, 0.0])
+                .unwrap();
+        }
+
+        // No tombstones - no compaction needed
+        assert!(!engine.needs_compaction());
+
+        // 20% tombstones - still no compaction (threshold is 30%)
+        engine.mark_tombstone(0);
+        engine.mark_tombstone(1);
+        assert!(!engine.needs_compaction());
+
+        // 30% tombstones - still no compaction (threshold is >30%)
+        engine.mark_tombstone(2);
+        assert!(!engine.needs_compaction());
+
+        // 40% tombstones - compaction needed
+        engine.mark_tombstone(3);
+        assert!(engine.needs_compaction());
+    }
+
+    #[test]
+    fn test_live_count_and_entries() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        let doc1 = DocId::from_u64(1);
+        let doc2 = DocId::from_u64(2);
+        let doc3 = DocId::from_u64(3);
+
+        engine.add_document(doc1, vec![1.0, 0.0, 0.0]).unwrap();
+        engine.add_document(doc2, vec![0.0, 1.0, 0.0]).unwrap();
+        engine.add_document(doc3, vec![0.0, 0.0, 1.0]).unwrap();
+
+        // All 3 are live
+        assert_eq!(engine.live_count(), 3);
+        let live_entries = engine.get_live_entries();
+        assert_eq!(live_entries.len(), 3);
+
+        // Tombstone one
+        engine.mark_tombstone(1);
+        assert_eq!(engine.live_count(), 2);
+        let live_entries = engine.get_live_entries();
+        assert_eq!(live_entries.len(), 2);
+        assert!(live_entries.iter().any(|(_, id)| *id == doc1));
+        assert!(!live_entries.iter().any(|(_, id)| *id == doc2));
+        assert!(live_entries.iter().any(|(_, id)| *id == doc3));
+    }
+
+    #[test]
+    fn test_compact() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        let doc1 = DocId::from_u64(1);
+        let doc2 = DocId::from_u64(2);
+        let doc3 = DocId::from_u64(3);
+
+        let emb1 = vec![1.0, 0.0, 0.0];
+        let emb2 = vec![0.0, 1.0, 0.0];
+        let emb3 = vec![0.0, 0.0, 1.0];
+
+        engine.add_document(doc1, emb1.clone()).unwrap();
+        engine.add_document(doc2, emb2.clone()).unwrap();
+        engine.add_document(doc3, emb3.clone()).unwrap();
+
+        // Tombstone doc2
+        engine.mark_tombstone(1);
+        assert_eq!(engine.len(), 3);
+        assert_eq!(engine.tombstone_count(), 1);
+
+        // Compact with only live entries
+        let entries = vec![(doc1, emb1.clone()), (doc3, emb3.clone())];
+        let compacted_count = engine.compact(entries).unwrap();
+
+        assert_eq!(compacted_count, 2);
+        assert_eq!(engine.len(), 2);
+        assert_eq!(engine.tombstone_count(), 0);
+        assert!(!engine.needs_compaction());
+
+        // Search should work on compacted index
+        let results = engine.search(&emb1, 2).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|(id, _)| *id == doc1));
+        assert!(results.iter().any(|(id, _)| *id == doc3));
+        assert!(!results.iter().any(|(id, _)| *id == doc2)); // doc2 was removed
+    }
+
+    #[test]
+    fn test_compact_empty() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        // Add some documents and tombstone all of them
+        engine
+            .add_document(DocId::from_u64(1), vec![1.0, 0.0, 0.0])
+            .unwrap();
+        engine
+            .add_document(DocId::from_u64(2), vec![0.0, 1.0, 0.0])
+            .unwrap();
+        engine.mark_tombstone(0);
+        engine.mark_tombstone(1);
+
+        // Compact with empty entries (everything was deleted)
+        let compacted_count = engine.compact(vec![]).unwrap();
+
+        assert_eq!(compacted_count, 0);
+        assert_eq!(engine.len(), 0);
+        assert!(engine.is_empty());
+    }
+
+    #[test]
+    fn test_compact_dimension_mismatch() {
+        let mut engine = VectorSearchEngine::new(3);
+
+        // Try to compact with wrong dimension
+        let result = engine.compact(vec![(DocId::from_u64(1), vec![1.0, 0.0])]); // 2D instead of 3D
+
+        assert!(matches!(
+            result,
+            Err(SearchError::DimensionMismatch {
+                expected: 3,
+                actual: 2
+            })
+        ));
     }
 }

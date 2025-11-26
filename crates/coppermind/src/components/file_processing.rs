@@ -2,8 +2,9 @@
 //!
 //! This module provides utilities for processing uploaded files, including:
 //! - Binary file detection
-//! - Text chunking
-//! - Search engine indexing
+//! - Content hashing for update detection
+//! - Source ID generation (platform-specific)
+//! - Search engine indexing with source tracking
 //! - Directory traversal (desktop only)
 
 use crate::embedding::ChunkEmbeddingResult;
@@ -19,6 +20,7 @@ use dioxus::logger::tracing::error;
 use dioxus::logger::tracing::info;
 use futures::lock::Mutex;
 use instant::Instant;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 #[cfg(feature = "profile")]
@@ -55,10 +57,128 @@ pub fn is_likely_binary(content: &str) -> bool {
     content_inspector::inspect(content.as_bytes()).is_binary()
 }
 
-/// Indexes embedding chunks in the search engine.
+/// Computes a SHA-256 hash of content for change detection.
+///
+/// Returns the hash as a lowercase hexadecimal string.
+pub fn compute_content_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+/// Generates a platform-specific source ID for a file or URL.
+///
+/// # Platform Behavior
+///
+/// - **Desktop**: Uses the input as-is. This works for:
+///   - File paths (e.g., `/Users/matt/docs/README.md`)
+///   - URLs from the web crawler (e.g., `https://example.com/docs/intro`)
+/// - **Web**: Uses `web:{filename}` format (e.g., `web:README.md`)
+///
+/// This function handles the Dioxus web limitation where only filename is available
+/// (no `webkitRelativePath` support per [issue #3136](https://github.com/DioxusLabs/dioxus/issues/3136)).
+///
+/// # Arguments
+///
+/// * `file_path` - Full path on desktop, URL for crawled pages, filename on web
+///
+/// # Crawler Integration
+///
+/// When the web crawler fetches pages, it passes the full URL as the "filename".
+/// This means re-crawling the same URL will:
+/// 1. Detect the existing source via `source_needs_update()`
+/// 2. Compare content hashes to determine if the page changed
+/// 3. Update (delete old + add new) if changed, or skip if unchanged
+///
+/// # Web Under-Indexing Strategy
+///
+/// On web, multiple files with the same name (from different directories) will
+/// have the same source_id. The chosen strategy is "under-indexing": replace
+/// the existing file rather than accumulate duplicates. This provides cleaner
+/// search results and matches user expectations (re-upload = update).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn generate_source_id(file_path: &str) -> String {
+    // Desktop: Use full file path or URL as stable anchor
+    file_path.to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn generate_source_id(file_path: &str) -> String {
+    // Web: Only have filename, use web: prefix for clarity
+    // Extract filename from path in case user provides relative path
+    let filename = file_path.rsplit('/').next().unwrap_or(file_path);
+    format!("web:{}", filename)
+}
+
+/// Result of checking if a source needs to be updated.
+#[derive(Debug, Clone)]
+pub enum SourceUpdateAction {
+    /// New source, add all chunks normally
+    Add,
+    /// Existing source unchanged, skip processing
+    Skip,
+    /// Existing source changed, delete old chunks then add new
+    Update { old_chunk_count: usize },
+}
+
+/// Checks if a source needs to be indexed, updated, or skipped.
+///
+/// # Arguments
+///
+/// * `engine` - Search engine to check against
+/// * `source_id` - Stable identifier for the source
+/// * `content_hash` - SHA-256 hash of current content
+///
+/// # Returns
+///
+/// - `Add`: New source, process normally
+/// - `Skip`: Source exists with same hash, skip processing
+/// - `Update`: Source exists with different hash, need to replace
+pub async fn check_source_update<S: DocumentStore>(
+    engine: &HybridSearchEngine<S>,
+    source_id: &str,
+    content_hash: &str,
+) -> Result<SourceUpdateAction, FileProcessingError> {
+    // Check if source exists and if it needs updating
+    match engine.source_needs_update(source_id, content_hash).await {
+        Ok(needs_update) => {
+            if needs_update {
+                // Source exists with different hash - need to update
+                match engine.get_source(source_id).await {
+                    Ok(Some(record)) => Ok(SourceUpdateAction::Update {
+                        old_chunk_count: record.doc_ids.len(),
+                    }),
+                    Ok(None) => {
+                        // Race condition: source was deleted between checks
+                        Ok(SourceUpdateAction::Add)
+                    }
+                    Err(e) => Err(FileProcessingError::IndexingFailed(format!(
+                        "Failed to get source info: {:?}",
+                        e
+                    ))),
+                }
+            } else {
+                // Source exists with same hash - skip
+                Ok(SourceUpdateAction::Skip)
+            }
+        }
+        Err(crate::search::SearchError::NotFound) => {
+            // Source doesn't exist - add new
+            Ok(SourceUpdateAction::Add)
+        }
+        Err(e) => Err(FileProcessingError::IndexingFailed(format!(
+            "Failed to check source update: {:?}",
+            e
+        ))),
+    }
+}
+
+/// Indexes embedding chunks in the search engine with source tracking.
 ///
 /// Takes embedding results (which include the decoded text for each chunk)
-/// and indexes them in the search engine.
+/// and indexes them in the search engine, registering them with a source
+/// for future update detection.
 ///
 /// # Type Parameters
 ///
@@ -69,6 +189,8 @@ pub fn is_likely_binary(content: &str) -> bool {
 /// * `engine` - Arc-wrapped Mutex to the search engine
 /// * `embedding_results` - Vector of embedding results with chunk indices, text, and embeddings
 /// * `file_label` - Label for the file (used in metadata)
+/// * `source_id` - Stable identifier for the source (path on desktop, web:{filename} on web)
+/// * `content_hash` - SHA-256 hash of the source content
 ///
 /// # Returns
 ///
@@ -86,6 +208,8 @@ pub fn is_likely_binary(content: &str) -> bool {
 ///     engine.clone(),
 ///     embedding_results,
 ///     "example.txt",
+///     "/path/to/example.txt",
+///     "abc123...",
 /// ).await?;
 /// println!("Indexed {} chunks", indexed);
 /// ```
@@ -96,10 +220,14 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
     embedding_results: &[ChunkEmbeddingResult],
     file_label: &str,
+    source_id: &str,
+    content_hash: &str,
 ) -> Result<usize, FileProcessingError> {
     // Prepare documents outside the lock
     let timestamp = get_current_timestamp();
     let file_label_owned = file_label.to_string();
+    let source_id_owned = source_id.to_string();
+    let content_hash_owned = content_hash.to_string();
 
     let docs: Vec<(Document, Vec<f32>, usize)> = embedding_results
         .iter()
@@ -112,7 +240,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
                         file_label_owned,
                         chunk_result.chunk_index + 1
                     )),
-                    source: Some(file_label_owned.clone()),
+                    source: Some(source_id_owned.clone()),
                     created_at: timestamp,
                 },
             };
@@ -131,6 +259,16 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
         // Use futures::executor::block_on for the lock acquisition
         let mut search_engine = futures::executor::block_on(engine.lock());
 
+        // Register the source before adding documents
+        if let Err(e) = futures::executor::block_on(
+            search_engine.register_source(&source_id_owned, content_hash_owned.clone()),
+        ) {
+            return Err(FileProcessingError::IndexingFailed(format!(
+                "Failed to register source: {:?}",
+                e
+            )));
+        }
+
         let mut indexed_count = 0;
         let mut total_index_time_ms = 0.0;
 
@@ -140,7 +278,17 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
             // add_document is async but doesn't do any actual async work
             // We can safely block_on it in the blocking thread
             match futures::executor::block_on(search_engine.add_document(doc, embedding)) {
-                Ok(_) => {
+                Ok(doc_id) => {
+                    // Track this chunk as part of the source
+                    if let Err(e) = futures::executor::block_on(
+                        search_engine.add_doc_to_source(&source_id_owned, doc_id),
+                    ) {
+                        return Err(FileProcessingError::IndexingFailed(format!(
+                            "Failed to track chunk {} in source: {:?}",
+                            chunk_index, e
+                        )));
+                    }
+
                     let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                     total_index_time_ms += insert_duration_ms;
                     global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
@@ -154,6 +302,15 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
                     )));
                 }
             }
+        }
+
+        // Mark the source as complete (all chunks successfully added)
+        if let Err(e) = futures::executor::block_on(search_engine.complete_source(&source_id_owned))
+        {
+            return Err(FileProcessingError::IndexingFailed(format!(
+                "Failed to complete source: {:?}",
+                e
+            )));
         }
 
         Ok((indexed_count, total_index_time_ms))
@@ -177,6 +334,8 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
     embedding_results: &[ChunkEmbeddingResult],
     file_label: &str,
+    source_id: &str,
+    content_hash: &str,
 ) -> Result<usize, FileProcessingError> {
     // Prepare documents outside the lock
     let timestamp = get_current_timestamp();
@@ -193,7 +352,7 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
                         file_label_owned,
                         chunk_result.chunk_index + 1
                     )),
-                    source: Some(file_label_owned.clone()),
+                    source: Some(source_id.to_string()),
                     created_at: timestamp,
                 },
             };
@@ -209,6 +368,14 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     let index_start = Instant::now();
     let mut search_engine = engine.lock().await;
 
+    // Register the source before adding documents
+    search_engine
+        .register_source(source_id, content_hash.to_string())
+        .await
+        .map_err(|e| {
+            FileProcessingError::IndexingFailed(format!("Failed to register source: {:?}", e))
+        })?;
+
     let mut indexed_count = 0;
     let mut total_index_time_ms = 0.0;
 
@@ -216,7 +383,18 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
         let insert_start = Instant::now();
 
         match search_engine.add_document(doc, embedding).await {
-            Ok(_) => {
+            Ok(doc_id) => {
+                // Track this chunk as part of the source
+                search_engine
+                    .add_doc_to_source(source_id, doc_id)
+                    .await
+                    .map_err(|e| {
+                        FileProcessingError::IndexingFailed(format!(
+                            "Failed to track chunk {} in source: {:?}",
+                            chunk_index, e
+                        ))
+                    })?;
+
                 let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                 total_index_time_ms += insert_duration_ms;
                 global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
@@ -231,6 +409,14 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
             }
         }
     }
+
+    // Mark the source as complete (all chunks successfully added)
+    search_engine
+        .complete_source(source_id)
+        .await
+        .map_err(|e| {
+            FileProcessingError::IndexingFailed(format!("Failed to complete source: {:?}", e))
+        })?;
 
     let total_elapsed_ms = index_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -324,5 +510,73 @@ mod tests {
         // Binary files contain null bytes
         assert!(is_likely_binary("binary\0data"));
         assert!(is_likely_binary("\0"));
+    }
+
+    #[test]
+    fn test_compute_content_hash() {
+        // Same content should produce same hash
+        let hash1 = compute_content_hash("Hello, world!");
+        let hash2 = compute_content_hash("Hello, world!");
+        assert_eq!(hash1, hash2);
+
+        // Different content should produce different hash
+        let hash3 = compute_content_hash("Hello, world");
+        assert_ne!(hash1, hash3);
+
+        // Hash should be 64 hex characters (256 bits)
+        assert_eq!(hash1.len(), 64);
+
+        // Hash should be lowercase hex
+        assert!(hash1
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn test_generate_source_id() {
+        // Test source ID generation
+        let source_id = generate_source_id("example.txt");
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Desktop: Uses full path as-is
+            assert_eq!(source_id, "example.txt");
+
+            let full_path = generate_source_id("/Users/test/docs/README.md");
+            assert_eq!(full_path, "/Users/test/docs/README.md");
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Web: Prefixes with "web:"
+            assert_eq!(source_id, "web:example.txt");
+
+            // Should extract filename from path
+            let with_path = generate_source_id("folder/subfolder/file.txt");
+            assert_eq!(with_path, "web:file.txt");
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_generate_source_id_for_urls() {
+        // URLs from the web crawler should be used as-is on desktop
+        let url1 = generate_source_id("https://example.com/docs/intro");
+        assert_eq!(url1, "https://example.com/docs/intro");
+
+        let url2 = generate_source_id("https://example.com/docs/guide?section=auth#tokens");
+        assert_eq!(url2, "https://example.com/docs/guide?section=auth#tokens");
+
+        // Different URLs should produce different source_ids
+        assert_ne!(
+            generate_source_id("https://example.com/page1"),
+            generate_source_id("https://example.com/page2")
+        );
+
+        // Same URL should produce same source_id (for update detection)
+        assert_eq!(
+            generate_source_id("https://example.com/docs"),
+            generate_source_id("https://example.com/docs")
+        );
     }
 }

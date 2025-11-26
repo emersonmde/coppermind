@@ -2,16 +2,20 @@
 //!
 //! This module handles the high-level batch processing workflow:
 //! 1. Create batches from file lists
-//! 2. Process files with semantic chunking and batch embedding
-//! 3. Update batch/file status as processing progresses
-//! 4. Index embedded chunks in the search engine
+//! 2. Check if files need to be processed (hash-based update detection)
+//! 3. Process files with semantic chunking and batch embedding
+//! 4. Update batch/file status as processing progresses
+//! 5. Index embedded chunks in the search engine with source tracking
 
 use super::{Batch, BatchMetrics, BatchStatus, FileMetrics, FileStatus};
-use crate::components::file_processing::{index_chunks, is_likely_binary};
+use crate::components::file_processing::{
+    check_source_update, compute_content_hash, generate_source_id, index_chunks, is_likely_binary,
+    SourceUpdateAction,
+};
 use crate::processing::processor::process_file_chunks;
 use crate::search::HybridSearchEngine;
 use crate::storage::DocumentStore;
-use dioxus::logger::tracing::{error, info};
+use dioxus::logger::tracing::{debug, error, info, warn};
 use dioxus::prelude::*;
 use futures::lock::Mutex;
 use instant::Instant;
@@ -104,6 +108,8 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
     let mut total_chunks: usize = 0;
     let mut total_tokens: usize = 0;
     let mut processed_count = 0;
+    let mut skipped_count = 0;
+    let mut updated_count = 0;
 
     // Process each file
     for (file_idx, (file_name, contents)) in file_list.iter().enumerate() {
@@ -113,6 +119,66 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
             batches_signal.write()[batch_idx].files[file_idx].status =
                 FileStatus::Failed("Binary file".to_string());
             continue;
+        }
+
+        // Generate source ID and content hash for update detection
+        let source_id = generate_source_id(file_name);
+        let content_hash = compute_content_hash(contents);
+
+        // Check if this source needs to be processed
+        let update_action = if let Some(engine_lock) = &engine {
+            let search_engine = engine_lock.lock().await;
+            match check_source_update(&search_engine, &source_id, &content_hash).await {
+                Ok(action) => action,
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to check source update for '{}': {}",
+                        file_name, e
+                    );
+                    // Default to Add on error - safer to re-index than skip
+                    SourceUpdateAction::Add
+                }
+            }
+        } else {
+            SourceUpdateAction::Add
+        };
+
+        match update_action {
+            SourceUpdateAction::Skip => {
+                info!("⏭️ Skipped '{}': no changes detected", file_name);
+                skipped_count += 1;
+                batches_signal.write()[batch_idx].files[file_idx].status = FileStatus::Completed; // Mark as done (no work needed)
+                batches_signal.write()[batch_idx].files[file_idx].progress_pct = 100.0;
+                continue;
+            }
+            SourceUpdateAction::Update { old_chunk_count } => {
+                info!(
+                    "🔄 Updating '{}': content changed (removing {} old chunks)",
+                    file_name, old_chunk_count
+                );
+                // Delete old chunks before re-indexing
+                if let Some(engine_lock) = &engine {
+                    let mut search_engine = engine_lock.lock().await;
+                    match search_engine.delete_source(&source_id).await {
+                        Ok(deleted) => {
+                            info!("🗑️ Deleted {} old chunks from '{}'", deleted, file_name);
+                        }
+                        Err(e) => {
+                            error!(
+                                "❌ Failed to delete old chunks for '{}': {:?}",
+                                file_name, e
+                            );
+                            batches_signal.write()[batch_idx].files[file_idx].status =
+                                FileStatus::Failed(format!("Failed to delete old chunks: {:?}", e));
+                            continue;
+                        }
+                    }
+                }
+                updated_count += 1;
+            }
+            SourceUpdateAction::Add => {
+                info!("➕ Adding new source '{}'", file_name);
+            }
         }
 
         processed_count += 1;
@@ -152,9 +218,17 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
                     batches[batch_idx].files[file_idx].metrics = Some(chunk_result.metrics);
                 }
 
-                // Index chunks in search engine
+                // Index chunks in search engine with source tracking
                 if let Some(engine_lock) = &engine {
-                    match index_chunks(engine_lock.clone(), &chunk_result.chunks, file_name).await {
+                    match index_chunks(
+                        engine_lock.clone(),
+                        &chunk_result.chunks,
+                        file_name,
+                        &source_id,
+                        &content_hash,
+                    )
+                    .await
+                    {
                         Ok(indexed_count) => {
                             info!("✅ Indexed {} chunks from {}", indexed_count, file_name);
                         }
@@ -175,6 +249,16 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
         }
     }
 
+    // Log summary of update detection
+    if skipped_count > 0 || updated_count > 0 {
+        info!(
+            "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
+            processed_count - updated_count,
+            updated_count,
+            skipped_count
+        );
+    }
+
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
         let doc_count = {
@@ -189,6 +273,41 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
             if let Err(e) = search_engine.rebuild_vector_index().await {
                 error!("❌ Failed to finalize vector index: {}", e);
                 return Err(format!("Index finalization failed: {}", e));
+            }
+
+            // Check if compaction is needed (tombstone ratio > 30%)
+            let (tombstone_count, total_count, ratio) = search_engine.compaction_stats();
+            if tombstone_count > 0 {
+                debug!(
+                    "📊 Tombstone stats: {}/{} entries ({:.1}% tombstoned)",
+                    tombstone_count,
+                    total_count,
+                    ratio * 100.0
+                );
+            }
+
+            // Run compaction if tombstone ratio exceeds threshold
+            match search_engine.compact_if_needed().await {
+                Ok(Some(compacted)) => {
+                    info!(
+                        "🧹 Compaction complete: removed {} tombstoned entries",
+                        tombstone_count
+                    );
+                    debug!("📊 Index size after compaction: {} entries", compacted);
+                }
+                Ok(None) => {
+                    // No compaction needed - only log at debug level if there are tombstones
+                    if tombstone_count > 0 {
+                        debug!(
+                            "📊 Compaction not needed yet (threshold: 30%, current: {:.1}%)",
+                            ratio * 100.0
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Compaction failure is non-fatal - search still works with tombstones
+                    error!("⚠️ Compaction failed: {:?}", e);
+                }
             }
 
             // Save index to persistent storage (desktop only, web is in-memory)
@@ -250,6 +369,8 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
     let mut total_chunks: usize = 0;
     let mut total_tokens: usize = 0;
     let mut processed_count = 0;
+    let mut skipped_count = 0;
+    let mut updated_count = 0;
 
     // Process each file
     for (file_idx, (file_name, contents)) in file_list.iter().enumerate() {
@@ -259,6 +380,66 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
             batches_signal.write()[batch_idx].files[file_idx].status =
                 FileStatus::Failed("Binary file".to_string());
             continue;
+        }
+
+        // Generate source ID and content hash for update detection
+        let source_id = generate_source_id(file_name);
+        let content_hash = compute_content_hash(contents);
+
+        // Check if this source needs to be processed
+        let update_action = if let Some(engine_lock) = &engine {
+            let search_engine = engine_lock.lock().await;
+            match check_source_update(&search_engine, &source_id, &content_hash).await {
+                Ok(action) => action,
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to check source update for '{}': {}",
+                        file_name, e
+                    );
+                    // Default to Add on error - safer to re-index than skip
+                    SourceUpdateAction::Add
+                }
+            }
+        } else {
+            SourceUpdateAction::Add
+        };
+
+        match update_action {
+            SourceUpdateAction::Skip => {
+                info!("⏭️ Skipped '{}': no changes detected", file_name);
+                skipped_count += 1;
+                batches_signal.write()[batch_idx].files[file_idx].status = FileStatus::Completed; // Mark as done (no work needed)
+                batches_signal.write()[batch_idx].files[file_idx].progress_pct = 100.0;
+                continue;
+            }
+            SourceUpdateAction::Update { old_chunk_count } => {
+                info!(
+                    "🔄 Updating '{}': content changed (removing {} old chunks)",
+                    file_name, old_chunk_count
+                );
+                // Delete old chunks before re-indexing
+                if let Some(engine_lock) = &engine {
+                    let mut search_engine = engine_lock.lock().await;
+                    match search_engine.delete_source(&source_id).await {
+                        Ok(deleted) => {
+                            info!("🗑️ Deleted {} old chunks from '{}'", deleted, file_name);
+                        }
+                        Err(e) => {
+                            error!(
+                                "❌ Failed to delete old chunks for '{}': {:?}",
+                                file_name, e
+                            );
+                            batches_signal.write()[batch_idx].files[file_idx].status =
+                                FileStatus::Failed(format!("Failed to delete old chunks: {:?}", e));
+                            continue;
+                        }
+                    }
+                }
+                updated_count += 1;
+            }
+            SourceUpdateAction::Add => {
+                info!("➕ Adding new source '{}'", file_name);
+            }
         }
 
         processed_count += 1;
@@ -298,9 +479,17 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
                     batches[batch_idx].files[file_idx].metrics = Some(chunk_result.metrics);
                 }
 
-                // Index chunks in search engine
+                // Index chunks in search engine with source tracking
                 if let Some(engine_lock) = &engine {
-                    match index_chunks(engine_lock.clone(), &chunk_result.chunks, file_name).await {
+                    match index_chunks(
+                        engine_lock.clone(),
+                        &chunk_result.chunks,
+                        file_name,
+                        &source_id,
+                        &content_hash,
+                    )
+                    .await
+                    {
                         Ok(indexed_count) => {
                             info!("✅ Indexed {} chunks from {}", indexed_count, file_name);
                         }
@@ -321,6 +510,16 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
         }
     }
 
+    // Log summary of update detection
+    if skipped_count > 0 || updated_count > 0 {
+        info!(
+            "📊 Batch summary: {} new, {} updated, {} skipped (unchanged)",
+            processed_count - updated_count,
+            updated_count,
+            skipped_count
+        );
+    }
+
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
         let doc_count = {
@@ -335,6 +534,41 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
             if let Err(e) = search_engine.rebuild_vector_index().await {
                 error!("❌ Failed to finalize vector index: {}", e);
                 return Err(format!("Index finalization failed: {}", e));
+            }
+
+            // Check if compaction is needed (tombstone ratio > 30%)
+            let (tombstone_count, total_count, ratio) = search_engine.compaction_stats();
+            if tombstone_count > 0 {
+                debug!(
+                    "📊 Tombstone stats: {}/{} entries ({:.1}% tombstoned)",
+                    tombstone_count,
+                    total_count,
+                    ratio * 100.0
+                );
+            }
+
+            // Run compaction if tombstone ratio exceeds threshold
+            match search_engine.compact_if_needed().await {
+                Ok(Some(compacted)) => {
+                    info!(
+                        "🧹 Compaction complete: removed {} tombstoned entries",
+                        tombstone_count
+                    );
+                    debug!("📊 Index size after compaction: {} entries", compacted);
+                }
+                Ok(None) => {
+                    // No compaction needed - only log at debug level if there are tombstones
+                    if tombstone_count > 0 {
+                        debug!(
+                            "📊 Compaction not needed yet (threshold: 30%, current: {:.1}%)",
+                            ratio * 100.0
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Compaction failure is non-fatal - search still works with tombstones
+                    error!("⚠️ Compaction failed: {:?}", e);
+                }
             }
 
             // Save index to persistent storage

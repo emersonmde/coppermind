@@ -16,6 +16,7 @@ coppermind-core = { path = "../coppermind-core" }
 
 # Cross-platform dependencies
 dioxus = { version = "0.7.1", features = [] }
+sha2 = "0.10"  # SHA-256 hashing for content change detection
 futures = "0.3"
 futures-channel = "0.3"
 futures-util = "0.3"
@@ -73,19 +74,6 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 
 # IndexedDB wrapper for DocumentStore implementation
 rexie = "0.6"
-
-# OPFS storage features (web-only)
-web-sys = { version = "0.3", features = [
-    "FileSystemDirectoryHandle",
-    "FileSystemFileHandle",
-    "FileSystemWritableFileStream",
-    "FileSystemSyncAccessHandle",
-    "FileSystemGetFileOptions",
-    "FileSystemGetDirectoryOptions",
-    "FileSystemRemoveOptions",
-    "StorageManager",
-    "File"
-] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native filesystem for desktop

@@ -3,9 +3,8 @@
 //! This module provides the [`DocumentStore`] trait which abstracts over
 //! platform-specific storage backends (redb on desktop, IndexedDB on web).
 //!
-//! Unlike the legacy [`StorageBackend`] which stores blobs, DocumentStore
-//! provides O(log n) random access to individual documents, embeddings, and
-//! source records - essential for scaling to millions of chunks.
+//! DocumentStore provides O(log n) random access to individual documents,
+//! embeddings, and source records - essential for scaling to millions of chunks.
 
 use crate::search::types::{DocId, DocumentRecord, SourceRecord};
 use std::collections::{HashMap, HashSet};

@@ -69,7 +69,9 @@ Coppermind uses a Cargo workspace with two crates:
   - **fusion.rs**: Reciprocal Rank Fusion (RRF) algorithm for merging rankings
   - **aggregation.rs**: `aggregate_chunks_by_file()` for file-level result grouping
   - **types.rs**: `DocId`, `Document`, `SearchResult`, `SearchError`
-- **src/storage/**: `StorageBackend` trait definition
+- **src/storage/**: `DocumentStore` trait and implementations
+  - **document_store.rs**: `DocumentStore` trait, `InMemoryDocumentStore`
+  - **redb_store.rs**: `RedbDocumentStore` for desktop (feature-gated)
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs**: Entry point with platform-specific launch (desktop/mobile/web)
@@ -98,9 +100,8 @@ Coppermind uses a Cargo workspace with two crates:
   - **fetcher.rs**: HTTP fetching with reqwest
   - **parser.rs**: HTML parsing and text extraction (scraper crate)
 
-- **src/storage/**: Cross-platform persistence implementations
-  - **opfs.rs**: OPFS (Origin Private File System) for web
-  - **native.rs**: tokio::fs for desktop
+- **src/storage/**: Platform-specific `DocumentStore` implementations
+  - **indexeddb_store.rs**: `IndexedDbDocumentStore` for web (WASM only)
 
 - **src/workers/**: Web Worker for CPU-intensive embedding (WASM only)
   - **mod.rs**: `EmbeddingWorkerClient`, `start_embedding_worker()` export
@@ -167,9 +168,11 @@ Coppermind uses a Cargo workspace with two crates:
   - Formula: `score = 1/(k + rank)` where k=60 (standard constant)
   - Combines best of semantic understanding + exact keyword matching
   - Robust to score scale differences between algorithms
-- **Storage**: Platform-specific persistence via `StorageBackend` trait
-  - Web: OPFS (Origin Private File System) for large binary data
-  - Desktop: tokio::fs for native filesystem access
+- **Storage**: Platform-specific persistence via `DocumentStore` trait
+  - Web: IndexedDB for O(1) key lookups (browser-native, zero bundle cost)
+  - Desktop: redb (Pure Rust B-tree database) for O(log n) lookups
+  - Source tracking for re-upload detection (hash-based change detection)
+  - Tombstone-based HNSW deletion with background compaction
 
 **Model Loading**:
 - JinaBERT weights (65MB) loaded as Dioxus `Asset` from `crates/coppermind/assets/models/`
@@ -202,7 +205,7 @@ The codebase uses traits for extensibility and testing:
 | `Embedder` | `crates/coppermind/src/embedding/model.rs` | Abstract ML inference | `JinaBertEmbedder` |
 | `ModelConfig` | `crates/coppermind/src/embedding/config.rs` | Model parameters | `JinaBertConfig` |
 | `ChunkingStrategy` | `crates/coppermind/src/embedding/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
-| `StorageBackend` | `crates/coppermind-core/src/storage/mod.rs` | Persistence | `OpfsStorage`, `NativeStorage`, `InMemoryStorage` |
+| `DocumentStore` | `crates/coppermind-core/src/storage/document_store.rs` | Persistence | `RedbDocumentStore`, `IndexedDbDocumentStore`, `InMemoryDocumentStore` |
 | `GpuScheduler` | `crates/coppermind/src/gpu/scheduler.rs` | GPU access | `SerialScheduler` |
 
 These traits define clean boundaries for:
@@ -267,10 +270,10 @@ tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
 // 3. Platform-specific imports
 #[cfg(target_arch = "wasm32")]
-use OpfsStorage;  // Web-specific
+use IndexedDbDocumentStore;  // Web-specific
 
 #[cfg(not(target_arch = "wasm32"))]
-use NativeStorage;  // Desktop/mobile
+use RedbDocumentStore;  // Desktop/mobile
 
 // 4. Logging with dioxus::logger (works on all platforms)
 use dioxus::logger::tracing::{info, error};

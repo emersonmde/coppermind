@@ -10,7 +10,7 @@ use super::types::{
 use super::vector::VectorSearchEngine;
 use crate::storage::{DocumentStore, StoreError};
 use std::collections::HashMap;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 /// Maximum characters to show in debug dump text preview.
 const DEBUG_TEXT_PREVIEW_LEN: usize = 100;
@@ -143,17 +143,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             }
         }
 
-        // Load tombstones from store
-        let tombstones = engine
-            .store
-            .get_tombstones()
-            .await
-            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+        // Note: We don't load tombstones on reload because:
+        // 1. Deleted documents/embeddings are removed from storage immediately
+        // 2. HNSW indices aren't stable across rebuilds (indices change)
+        // 3. The rebuilt index only contains live documents
+        //
+        // Tombstones are only meaningful within a session to filter search results
+        // until compaction runs or the app restarts.
 
-        // Apply tombstones to vector engine
-        for idx in tombstones {
-            engine.vector_engine.mark_tombstone(idx);
-        }
+        // Clear any stale tombstones from storage (from previous sessions)
+        let _ = engine
+            .store
+            .put_tombstones(&std::collections::HashSet::new())
+            .await;
 
         // Initialize DocId counter to continue after the highest loaded ID
         DocId::init_counter(max_id);
@@ -172,16 +174,13 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
     /// Save any pending changes to storage.
     ///
-    /// With DocumentStore, writes happen immediately during add_document(),
-    /// so this mainly ensures tombstones are persisted.
+    /// With DocumentStore, document and embedding writes happen immediately.
+    /// Tombstones are session-local (not persisted) since deleted docs are
+    /// removed from storage and HNSW indices aren't stable across rebuilds.
     pub async fn save(&mut self) -> Result<(), SearchError> {
-        // Save tombstones
-        let tombstones = self.vector_engine.get_tombstones();
-        self.store
-            .put_tombstones(&tombstones)
-            .await
-            .map_err(|e| SearchError::StorageError(e.to_string()))?;
-
+        // Documents and embeddings are already persisted on add/delete.
+        // Tombstones are session-local only - on restart, the index is
+        // rebuilt from storage (which excludes deleted documents).
         info!(
             "Saved index state: {} documents",
             self.manifest.document_count
@@ -191,11 +190,11 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
     /// Check if there are unsaved changes.
     ///
-    /// With DocumentStore, documents are saved immediately on add,
-    /// but tombstones may need saving.
+    /// With DocumentStore, all writes happen immediately, so this always
+    /// returns false. Kept for API compatibility.
     pub fn is_dirty(&self) -> bool {
-        // Tombstones may have changed since last save
-        !self.vector_engine.get_tombstones().is_empty()
+        // All changes are persisted immediately with DocumentStore
+        false
     }
 
     /// Get a reference to the document store.
@@ -603,11 +602,9 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
-        // Persist tombstones
-        self.store
-            .put_tombstones(&self.vector_engine.get_tombstones())
-            .await
-            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+        // Note: Tombstones are session-local only (not persisted).
+        // Documents/embeddings are deleted from storage immediately above,
+        // so on restart the index rebuilds without them.
 
         // Update manifest
         self.manifest.document_count = self.manifest.document_count.saturating_sub(chunk_count);
@@ -615,6 +612,11 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         info!(
             "Deleted source: {} ({} chunks tombstoned)",
             source_id, chunk_count
+        );
+        debug!(
+            "Tombstone count after deletion: {}/{}",
+            self.vector_engine.tombstone_count(),
+            self.vector_engine.len()
         );
         Ok(chunk_count)
     }
@@ -640,6 +642,115 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         match self.get_source(source_id).await? {
             Some(record) => Ok(record.content_hash != new_content_hash),
             None => Ok(true), // New source
+        }
+    }
+
+    // =========================================================================
+    // Compaction (reclaim space from tombstoned entries)
+    // =========================================================================
+
+    /// Check if the vector index needs compaction.
+    ///
+    /// Returns `true` if tombstone ratio exceeds 30% threshold.
+    pub fn needs_compaction(&self) -> bool {
+        self.vector_engine.needs_compaction()
+    }
+
+    /// Get compaction statistics.
+    ///
+    /// Returns (tombstone_count, total_count, ratio).
+    pub fn compaction_stats(&self) -> (usize, usize, f32) {
+        let tombstone_count = self.vector_engine.tombstone_count();
+        let total_count = self.vector_engine.len();
+        let ratio = self.vector_engine.tombstone_ratio();
+        (tombstone_count, total_count, ratio)
+    }
+
+    /// Run compaction to remove tombstoned entries from the vector index.
+    ///
+    /// This rebuilds the HNSW index from scratch, loading embeddings from
+    /// the document store for all live (non-tombstoned) entries.
+    ///
+    /// # Returns
+    /// The number of entries in the compacted index.
+    ///
+    /// # Note
+    /// This is an expensive operation that:
+    /// 1. Loads all live embeddings from storage
+    /// 2. Rebuilds the entire HNSW graph
+    /// 3. Clears tombstones from storage
+    ///
+    /// Search continues to work during compaction (on old index until swap).
+    #[instrument(skip(self), fields(before_size = self.vector_engine.len()))]
+    pub async fn compact(&mut self) -> Result<usize, SearchError> {
+        let (tombstone_count, total_count, ratio) = self.compaction_stats();
+
+        if tombstone_count == 0 {
+            info!("Compaction skipped: no tombstones");
+            return Ok(total_count);
+        }
+
+        info!(
+            "Starting compaction: {} tombstones / {} total ({:.1}%)",
+            tombstone_count,
+            total_count,
+            ratio * 100.0
+        );
+
+        // Get all live entries (non-tombstoned)
+        let live_entries = self.vector_engine.get_live_entries();
+
+        // Load embeddings from storage for live entries
+        let mut entries_with_embeddings = Vec::with_capacity(live_entries.len());
+
+        for (_idx, doc_id) in live_entries {
+            match self.store.get_embedding(doc_id).await {
+                Ok(Some(embedding)) => {
+                    entries_with_embeddings.push((doc_id, embedding));
+                }
+                Ok(None) => {
+                    warn!(
+                        "Embedding not found for doc_id {} during compaction, skipping",
+                        doc_id.as_u64()
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to load embedding for doc_id {} during compaction: {}",
+                        doc_id.as_u64(),
+                        e
+                    );
+                }
+            }
+        }
+
+        // Rebuild the vector index with only live entries
+        // This also clears the in-memory tombstones
+        let compacted_count = self.vector_engine.compact(entries_with_embeddings)?;
+
+        info!(
+            "Compaction complete: {} → {} entries ({} removed)",
+            total_count,
+            compacted_count,
+            total_count - compacted_count
+        );
+
+        Ok(compacted_count)
+    }
+
+    /// Conditionally run compaction if needed.
+    ///
+    /// Only compacts if tombstone ratio exceeds 30% threshold.
+    ///
+    /// # Returns
+    /// - `Ok(Some(count))` if compaction was performed, with the new entry count
+    /// - `Ok(None)` if compaction was not needed
+    pub async fn compact_if_needed(&mut self) -> Result<Option<usize>, SearchError> {
+        if self.needs_compaction() {
+            let count = self.compact().await?;
+            Ok(Some(count))
+        } else {
+            Ok(None)
         }
     }
 
@@ -1370,5 +1481,196 @@ mod tests {
         assert!(sources.contains(&"/path/a.md".to_string()));
         assert!(sources.contains(&"/path/b.md".to_string()));
         assert!(sources.contains(&"web:c.txt".to_string()));
+    }
+
+    // =========================================================================
+    // Compaction Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_compaction_stats() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add 5 documents
+        for i in 0..5 {
+            let doc = Document {
+                text: format!("document {}", i),
+                metadata: DocumentMetadata::default(),
+            };
+            engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+        }
+
+        // Initially no tombstones
+        let (tombstone_count, total_count, ratio) = engine.compaction_stats();
+        assert_eq!(tombstone_count, 0);
+        assert_eq!(total_count, 5);
+        assert_eq!(ratio, 0.0);
+        assert!(!engine.needs_compaction());
+    }
+
+    #[tokio::test]
+    async fn test_compaction_after_delete() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add source with 5 documents
+        let source_id = "test-source";
+        engine
+            .register_source(source_id, "hash1".to_string())
+            .await
+            .unwrap();
+
+        for i in 0..5 {
+            let doc = Document {
+                text: format!("document {}", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("doc{}.txt", i)),
+                    source: Some(source_id.to_string()),
+                    created_at: i as u64,
+                },
+            };
+            let doc_id = engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        }
+        engine.complete_source(source_id).await.unwrap();
+
+        // Delete the source (creates tombstones)
+        engine.delete_source(source_id).await.unwrap();
+
+        // Now we have 100% tombstones
+        let (tombstone_count, total_count, ratio) = engine.compaction_stats();
+        assert_eq!(tombstone_count, 5);
+        assert_eq!(total_count, 5);
+        assert!((ratio - 1.0).abs() < 0.01);
+        assert!(engine.needs_compaction());
+
+        // Run compaction
+        let compacted_count = engine.compact().await.unwrap();
+        assert_eq!(compacted_count, 0); // All entries were tombstoned
+
+        // After compaction
+        let (tombstone_count, total_count, _) = engine.compaction_stats();
+        assert_eq!(tombstone_count, 0);
+        assert_eq!(total_count, 0);
+        assert!(!engine.needs_compaction());
+    }
+
+    #[tokio::test]
+    async fn test_compact_if_needed() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add 10 documents
+        let source_id = "test-source";
+        engine
+            .register_source(source_id, "hash1".to_string())
+            .await
+            .unwrap();
+
+        for i in 0..10 {
+            let doc = Document {
+                text: format!("document {}", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("doc{}.txt", i)),
+                    source: Some(source_id.to_string()),
+                    created_at: i as u64,
+                },
+            };
+            let doc_id = engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        }
+        engine.complete_source(source_id).await.unwrap();
+
+        // No compaction needed yet
+        let result = engine.compact_if_needed().await.unwrap();
+        assert!(result.is_none());
+
+        // Delete source (creates tombstones)
+        engine.delete_source(source_id).await.unwrap();
+
+        // Now compaction is needed (100% tombstones > 30% threshold)
+        let result = engine.compact_if_needed().await.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_preserves_live_entries() {
+        let store = InMemoryDocumentStore::new();
+        let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+        // Add source1 with 3 documents
+        let source1 = "source1";
+        engine
+            .register_source(source1, "hash1".to_string())
+            .await
+            .unwrap();
+
+        for i in 0..3 {
+            let doc = Document {
+                text: format!("source1 document {}", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("s1-doc{}.txt", i)),
+                    source: Some(source1.to_string()),
+                    created_at: i as u64,
+                },
+            };
+            let doc_id = engine
+                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+            engine.add_doc_to_source(source1, doc_id).await.unwrap();
+        }
+        engine.complete_source(source1).await.unwrap();
+
+        // Add source2 with 2 documents
+        let source2 = "source2";
+        engine
+            .register_source(source2, "hash2".to_string())
+            .await
+            .unwrap();
+
+        for i in 0..2 {
+            let doc = Document {
+                text: format!("source2 document {}", i),
+                metadata: DocumentMetadata {
+                    filename: Some(format!("s2-doc{}.txt", i)),
+                    source: Some(source2.to_string()),
+                    created_at: (i + 100) as u64,
+                },
+            };
+            let doc_id = engine
+                .add_document(doc, vec![(i + 10) as f32, 0.0, 0.0])
+                .await
+                .unwrap();
+            engine.add_doc_to_source(source2, doc_id).await.unwrap();
+        }
+        engine.complete_source(source2).await.unwrap();
+
+        // Delete source1 (tombstones 3 of 5 = 60% > 30% threshold)
+        engine.delete_source(source1).await.unwrap();
+
+        assert!(engine.needs_compaction());
+
+        // Compact
+        let compacted_count = engine.compact().await.unwrap();
+        assert_eq!(compacted_count, 2); // Only source2's documents remain
+
+        // source2 documents should still be searchable
+        let results = engine
+            .search(&[10.0, 0.0, 0.0], "source2", 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
     }
 }
