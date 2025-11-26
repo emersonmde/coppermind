@@ -10,7 +10,9 @@
 dist/
 
 # Downloaded model files
-assets/models/*
+crates/coppermind/assets/models/*.safetensors
+crates/coppermind/assets/models/*.json
+!crates/coppermind/assets/models/.gitkeep
 
 
 # Temporary test files
