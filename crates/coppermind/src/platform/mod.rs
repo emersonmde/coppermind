@@ -138,6 +138,36 @@ where
     f.await
 }
 
+/// Yield control back to the async runtime.
+///
+/// Use this between batches of CPU-intensive work to allow the UI to update.
+///
+/// # Platform Behavior
+///
+/// - **Desktop**: Uses `tokio::task::yield_now()` to yield to the tokio runtime
+/// - **Web**: No-op (WASM is single-threaded, yielding doesn't help UI responsiveness)
+///
+/// # Examples
+///
+/// ```ignore
+/// for batch in chunks.chunks(32) {
+///     process_batch(batch).await;
+///     yield_now().await; // Let UI update
+/// }
+/// ```
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn yield_now() {
+    tokio::task::yield_now().await;
+}
+
+/// Yield control back to the async runtime.
+///
+/// Web version: No-op since WASM is single-threaded.
+#[cfg(target_arch = "wasm32")]
+pub async fn yield_now() {
+    // No-op on WASM - single threaded, yielding doesn't help
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

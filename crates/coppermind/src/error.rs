@@ -32,6 +32,12 @@ pub enum EmbeddingError {
     /// Text chunking failed
     #[error("Chunking failed: {0}")]
     ChunkingFailed(String),
+    /// GPU scheduler not initialized
+    #[error("GPU scheduler not initialized")]
+    SchedulerNotInitialized,
+    /// GPU scheduler error
+    #[error("GPU scheduler error: {0}")]
+    SchedulerError(String),
 }
 
 /// Errors that can occur during file processing operations.

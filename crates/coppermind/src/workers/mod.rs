@@ -307,9 +307,39 @@ pub mod embedding_worker {
         };
 
         spawn_local(async move {
+            let start = instant::Instant::now();
+            // Use web_sys::console directly - dioxus logger not initialized in worker context
+            web_sys::console::log_1(
+                &format!(
+                    "[EmbeddingWorker] Processing request {} ({} chars)",
+                    request.request_id,
+                    request.text.len()
+                )
+                .into(),
+            );
+
             let response = match compute_embedding(&request.text).await {
-                Ok(result) => build_success_payload(request.request_id, result),
-                Err(err) => build_error_payload(Some(request.request_id), &err.to_string()),
+                Ok(result) => {
+                    let elapsed = start.elapsed().as_millis();
+                    web_sys::console::log_1(
+                        &format!(
+                            "[EmbeddingWorker] Request {} completed in {}ms ({} tokens)",
+                            request.request_id, elapsed, result.token_count
+                        )
+                        .into(),
+                    );
+                    build_success_payload(request.request_id, result)
+                }
+                Err(err) => {
+                    web_sys::console::error_1(
+                        &format!(
+                            "[EmbeddingWorker] Request {} failed: {:?}",
+                            request.request_id, err
+                        )
+                        .into(),
+                    );
+                    build_error_payload(Some(request.request_id), &err.to_string())
+                }
             };
 
             if let Err(e) = post_message_to_main(&response) {
@@ -332,8 +362,33 @@ pub mod embedding_worker {
         scope.set_onmessage(Some(handler.as_ref().unchecked_ref()));
         handler.forget();
 
-        let ready_msg = build_ready_payload();
-        post_message_to_main(&ready_msg)?;
+        // Pre-load the model in the worker context so first embed request is fast
+        // This happens asynchronously - we send "ready" once model is loaded
+        spawn_local(async move {
+            web_sys::console::log_1(&"[EmbeddingWorker] Pre-loading embedding model...".into());
+            match crate::embedding::get_or_load_model().await {
+                Ok(_) => {
+                    web_sys::console::log_1(
+                        &"[EmbeddingWorker] Model loaded, worker ready!".into(),
+                    );
+                    let ready_msg = build_ready_payload();
+                    if let Err(e) = post_message_to_main(&ready_msg) {
+                        web_sys::console::error_1(
+                            &format!("[EmbeddingWorker] Failed to send ready: {:?}", e).into(),
+                        );
+                    }
+                }
+                Err(e) => {
+                    web_sys::console::error_1(
+                        &format!("[EmbeddingWorker] Failed to load model: {:?}", e).into(),
+                    );
+                    let error_msg =
+                        build_error_payload(None, &format!("Model load failed: {:?}", e));
+                    let _ = post_message_to_main(&error_msg);
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -387,3 +442,34 @@ pub mod embedding_worker {
 
 #[cfg(target_arch = "wasm32")]
 pub use embedding_worker::{start_embedding_worker, EmbeddingWorkerClient};
+
+// Global worker client for use outside of component context
+#[cfg(target_arch = "wasm32")]
+mod global_worker {
+    use super::EmbeddingWorkerClient;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static GLOBAL_WORKER: RefCell<Option<EmbeddingWorkerClient>> = const { RefCell::new(None) };
+    }
+
+    /// Set the global worker client (called during app initialization)
+    pub fn set_global_worker(client: EmbeddingWorkerClient) {
+        GLOBAL_WORKER.with(|w| {
+            *w.borrow_mut() = Some(client);
+        });
+    }
+
+    /// Get a clone of the global worker client
+    pub fn get_global_worker() -> Option<EmbeddingWorkerClient> {
+        GLOBAL_WORKER.with(|w| w.borrow().clone())
+    }
+
+    /// Check if global worker is available
+    pub fn is_global_worker_ready() -> bool {
+        GLOBAL_WORKER.with(|w| w.borrow().is_some())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use global_worker::{get_global_worker, is_global_worker_ready, set_global_worker};

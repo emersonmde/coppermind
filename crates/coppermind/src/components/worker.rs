@@ -4,7 +4,7 @@
 use dioxus::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
-use crate::workers::EmbeddingWorkerClient;
+use crate::workers::{set_global_worker, EmbeddingWorkerClient};
 
 #[cfg(target_arch = "wasm32")]
 use dioxus::logger::tracing::{error, info};
@@ -40,7 +40,11 @@ pub fn provide_worker_state() -> Signal<WorkerStatus> {
         if matches!(*worker_state.read(), WorkerStatus::Pending) {
             info!("🔧 Initializing embedding worker…");
             match EmbeddingWorkerClient::new() {
-                Ok(client) => worker_state.set(WorkerStatus::Ready(client)),
+                Ok(client) => {
+                    // Also set global worker for use outside component context
+                    set_global_worker(client.clone());
+                    worker_state.set(WorkerStatus::Ready(client));
+                }
                 Err(err) => {
                     error!("❌ Embedding worker failed to start: {}", err);
                     worker_state.set(WorkerStatus::Failed(err));

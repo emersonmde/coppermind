@@ -3,6 +3,9 @@ use dioxus::prelude::*;
 use crate::components::{
     calculate_engine_metrics, calculate_live_metrics, use_batches, use_search_engine,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::gpu::{get_scheduler, is_scheduler_initialized};
+use crate::metrics::global_metrics;
 
 /// Collapsible metrics panel showing engine statistics
 #[component]
@@ -36,13 +39,42 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
             (0, 0, 0.0)
         };
 
-    // BM25 and HNSW share the same documents, so metrics are identical
-    let (keyword_chunks, keyword_tokens, keyword_avg_tokens) =
-        (vector_chunks, vector_tokens, vector_avg_tokens);
+    // GPU Scheduler stats (desktop only)
+    #[cfg(not(target_arch = "wasm32"))]
+    let (gpu_queue_depth, gpu_requests_completed, gpu_models_loaded) = {
+        if is_scheduler_initialized() {
+            if let Ok(scheduler) = get_scheduler() {
+                let stats = scheduler.stats();
+                (
+                    stats.queue_depth,
+                    stats.requests_completed,
+                    stats.models_loaded,
+                )
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        }
+    };
+    #[cfg(target_arch = "wasm32")]
+    let (gpu_queue_depth, gpu_requests_completed, gpu_models_loaded) = (0usize, 0u64, 0usize);
+
+    // Memory estimate: chunks × embedding_dim × 4 bytes (f32)
+    // Plus ~20% overhead for HNSW graph structure
+    let embedding_dim = 512usize;
+    let vector_memory_bytes = vector_chunks * embedding_dim * 4;
+    let estimated_memory_bytes = (vector_memory_bytes as f64 * 1.2) as usize;
+    let memory_display = if estimated_memory_bytes > 1_000_000 {
+        format!("{:.1} MB", estimated_memory_bytes as f64 / 1_000_000.0)
+    } else if estimated_memory_bytes > 1_000 {
+        format!("{:.1} KB", estimated_memory_bytes as f64 / 1_000.0)
+    } else {
+        format!("{} B", estimated_memory_bytes)
+    };
 
     // Format values for display
-    let formatted_vector_avg = format!("{:.0}", vector_avg_tokens);
-    let formatted_keyword_avg = format!("{:.0}", keyword_avg_tokens);
+    let formatted_avg_tokens = format!("{:.0}", vector_avg_tokens);
 
     // Calculate aggregate engine metrics from all completed batches (for historical tracking)
     let engine_metrics = calculate_engine_metrics(&batches_list);
@@ -98,6 +130,39 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         ),
     };
 
+    // Get rolling average metrics (60-second window)
+    let perf_snapshot = global_metrics().snapshot();
+
+    // Format rolling averages for display
+    let chunking_avg = perf_snapshot
+        .chunking_avg_ms
+        .map(|v| format!("{:.1}", v))
+        .unwrap_or_else(|| "-".to_string());
+    let tokenization_avg = perf_snapshot
+        .tokenization_avg_ms
+        .map(|v| format!("{:.1}", v))
+        .unwrap_or_else(|| "-".to_string());
+    let embedding_avg = perf_snapshot
+        .embedding_avg_ms
+        .map(|v| format!("{:.1}", v))
+        .unwrap_or_else(|| "-".to_string());
+    let hnsw_avg = perf_snapshot
+        .hnsw_avg_ms
+        .map(|v| format!("{:.2}", v))
+        .unwrap_or_else(|| "-".to_string());
+    let bm25_avg = perf_snapshot
+        .bm25_avg_ms
+        .map(|v| format!("{:.2}", v))
+        .unwrap_or_else(|| "-".to_string());
+
+    // Throughput metrics
+    let embedding_throughput = format!("{:.1}", perf_snapshot.embedding_throughput);
+
+    // Check if we have any rolling metrics data
+    let has_rolling_data = perf_snapshot.chunking_count > 0
+        || perf_snapshot.tokenization_count > 0
+        || perf_snapshot.embedding_count > 0;
+
     rsx! {
         section {
             class: panel_class,
@@ -106,69 +171,109 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 h2 { class: "cm-metrics-title", "Engine Metrics" }
             }
 
-            div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "Aggregate (All Indexes)" }
-            }
-            div { class: "cm-metrics-grid",
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Files Indexed" }
-                    div { class: "cm-metric-value", "{batch_total_docs}" }
+            // Two-column layout for Aggregate Stats and GPU Scheduler
+            div { class: "cm-metrics-columns",
+                // Left column: Aggregate Statistics
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-section-header",
+                        h3 { class: "cm-metrics-section-title", "Aggregate" }
+                    }
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Files" }
+                            div { class: "cm-metric-value", "{batch_total_docs}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Chunks" }
+                            div { class: "cm-metric-value", "{vector_chunks}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Tokens" }
+                            div { class: "cm-metric-value", "{vector_tokens}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Avg Tok/Chunk" }
+                            div { class: "cm-metric-value", "{formatted_avg_tokens}" }
+                        }
+                    }
                 }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Total Chunks" }
-                    div { class: "cm-metric-value", "{vector_chunks}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Total Tokens" }
-                    div { class: "cm-metric-value", "{vector_tokens}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
-                    div { class: "cm-metric-value", "{formatted_vector_avg}" }
+
+                // Right column: GPU Scheduler
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-section-header",
+                        h3 { class: "cm-metrics-section-title", "GPU Scheduler" }
+                        if gpu_queue_depth > 0 {
+                            span { class: "cm-metrics-state cm-metrics-state--live",
+                                span { class: "cm-metrics-state-indicator" }
+                                "Active"
+                            }
+                        }
+                    }
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Queue Depth" }
+                            div { class: "cm-metric-value", "{gpu_queue_depth}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Completed" }
+                            div { class: "cm-metric-value", "{gpu_requests_completed}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Models" }
+                            div { class: "cm-metric-value", "{gpu_models_loaded}" }
+                        }
+                    }
                 }
             }
 
-            // Per-index metrics
-            div { class: "cm-metrics-separator" }
-            div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
-            }
-            div { class: "cm-metrics-grid",
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Chunks" }
-                    div { class: "cm-metric-value", "{vector_chunks}" }
+            // Per-index metrics: HNSW and BM25
+            div { class: "cm-metrics-separator cm-metrics-separator--tight" }
+            div { class: "cm-metrics-columns",
+                // HNSW Vector Index
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-section-header",
+                        h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
+                    }
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Chunks" }
+                            div { class: "cm-metric-value", "{vector_chunks}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Tokens" }
+                            div { class: "cm-metric-value", "{vector_tokens}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Memory" }
+                            div { class: "cm-metric-value", "{memory_display}" }
+                        }
+                    }
                 }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Tokens" }
-                    div { class: "cm-metric-value", "{vector_tokens}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
-                    div { class: "cm-metric-value", "{formatted_vector_avg}" }
-                }
-            }
 
-            div { class: "cm-metrics-separator" }
-            div { class: "cm-metrics-section-header",
-                h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
-            }
-            div { class: "cm-metrics-grid",
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Chunks" }
-                    div { class: "cm-metric-value", "{keyword_chunks}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Tokens" }
-                    div { class: "cm-metric-value", "{keyword_tokens}" }
-                }
-                div { class: "cm-metric-card",
-                    div { class: "cm-metric-label", "Avg Tokens / Chunk" }
-                    div { class: "cm-metric-value", "{formatted_keyword_avg}" }
+                // BM25 Keyword Index
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-section-header",
+                        h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
+                    }
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Chunks" }
+                            div { class: "cm-metric-value", "{vector_chunks}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Tokens" }
+                            div { class: "cm-metric-value", "{vector_tokens}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Avg Tok/Chunk" }
+                            div { class: "cm-metric-value", "{formatted_avg_tokens}" }
+                        }
+                    }
                 }
             }
 
             // Performance metrics (live/historical indexing stats)
-            div { class: "cm-metrics-separator" }
+            div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-section-header",
                 h3 { class: "cm-metrics-section-title", "Indexing Performance" }
                 span { class: state_class,
@@ -176,22 +281,69 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     "{state_label}"
                 }
             }
-            div { class: "cm-metrics-grid cm-metrics-grid--performance",
-                div { class: "cm-metric-card cm-metric-card--rate",
+            div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                div { class: "cm-metric-card cm-metric-card--compact cm-metric-card--rate",
                     div { class: "cm-metric-label", "Tokens / sec" }
                     div { class: "cm-metric-value", "{formatted_tokens_per_sec}" }
                 }
-                div { class: "cm-metric-card cm-metric-card--rate",
+                div { class: "cm-metric-card cm-metric-card--compact cm-metric-card--rate",
                     div { class: "cm-metric-label", "Chunks / sec" }
                     div { class: "cm-metric-value", "{formatted_chunks_per_sec}" }
                 }
-                div { class: "cm-metric-card cm-metric-card--rate",
+                div { class: "cm-metric-card cm-metric-card--compact cm-metric-card--rate",
                     div { class: "cm-metric-label", "Avg Time / Chunk" }
                     div { class: "cm-metric-value", "{formatted_chunk_time}", span { class: "cm-metric-unit", "ms" } }
                 }
             }
             p { class: "cm-metrics-caption",
                 "{state_caption}"
+            }
+
+            // Rolling averages (60-second window)
+            if has_rolling_data {
+                div { class: "cm-metrics-separator cm-metrics-separator--tight" }
+                div { class: "cm-metrics-section-header",
+                    h3 { class: "cm-metrics-section-title", "Operation Timings" }
+                    span { class: "cm-metrics-state cm-metrics-state--historical",
+                        "60s avg"
+                    }
+                }
+                div { class: "cm-metrics-columns",
+                    // Processing Pipeline
+                    div { class: "cm-metrics-column",
+                        div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "Chunking" }
+                                div { class: "cm-metric-value", "{chunking_avg}", span { class: "cm-metric-unit", "ms" } }
+                            }
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "Tokenize" }
+                                div { class: "cm-metric-value", "{tokenization_avg}", span { class: "cm-metric-unit", "ms" } }
+                            }
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "Embed" }
+                                div { class: "cm-metric-value", "{embedding_avg}", span { class: "cm-metric-unit", "ms" } }
+                            }
+                        }
+                    }
+                    // Indexing
+                    div { class: "cm-metrics-column",
+                        div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "HNSW Insert" }
+                                div { class: "cm-metric-value", "{hnsw_avg}", span { class: "cm-metric-unit", "ms" } }
+                            }
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "BM25 Insert" }
+                                div { class: "cm-metric-value", "{bm25_avg}", span { class: "cm-metric-unit", "ms" } }
+                            }
+                            div { class: "cm-metric-card cm-metric-card--compact",
+                                div { class: "cm-metric-label", "Embed/sec" }
+                                div { class: "cm-metric-value", "{embedding_throughput}" }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

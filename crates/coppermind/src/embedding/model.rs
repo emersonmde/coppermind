@@ -124,6 +124,24 @@ impl JinaBertEmbedder {
         })
     }
 
+    /// Creates a model from pre-built parts.
+    ///
+    /// Used by the GPU scheduler to create a model on its dedicated thread
+    /// with an explicit device, rather than auto-detecting.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Pre-built BertModel
+    /// * `config` - Model configuration
+    /// * `device` - Compute device (owned by caller)
+    pub fn from_parts(model: BertModel, config: JinaBertConfig, device: Device) -> Self {
+        Self {
+            model,
+            config,
+            device,
+        }
+    }
+
     /// Selects the best available compute device.
     fn select_device() -> Device {
         #[cfg(not(target_arch = "wasm32"))]
@@ -131,14 +149,14 @@ impl JinaBertEmbedder {
             // Desktop: Try CUDA → Metal → CPU (with MKL/Accelerate)
             if let Ok(cuda_device) = Device::new_cuda(0) {
                 #[cfg(feature = "cudnn")]
-                info!("✓ Initialized CUDA GPU device (with cuDNN)");
+                info!("✓ Using CUDA device (with cuDNN)");
                 #[cfg(not(feature = "cudnn"))]
-                info!("✓ Initialized CUDA GPU device");
+                info!("✓ Using CUDA device");
                 return cuda_device;
             }
 
             if let Ok(metal_device) = Device::new_metal(0) {
-                info!("✓ Initialized Metal GPU device (with Accelerate)");
+                info!("✓ Using Metal device (with Accelerate)");
                 return metal_device;
             }
 
@@ -147,16 +165,16 @@ impl JinaBertEmbedder {
                 not(any(target_os = "macos", target_os = "ios")),
                 any(target_arch = "x86_64", target_arch = "x86")
             ))]
-            info!("✓ Initialized CPU device (with Intel MKL)");
+            info!("✓ Using CPU device (with Intel MKL)");
 
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            info!("✓ Initialized CPU device (with Accelerate)");
+            info!("✓ Using CPU device (with Accelerate)");
 
             #[cfg(all(
                 not(any(target_os = "macos", target_os = "ios")),
                 not(any(target_arch = "x86_64", target_arch = "x86"))
             ))]
-            info!("✓ Initialized CPU device");
+            info!("✓ Using CPU device");
 
             Device::Cpu
         }
@@ -164,7 +182,7 @@ impl JinaBertEmbedder {
         #[cfg(target_arch = "wasm32")]
         {
             // WASM: CPU only (WebGPU not yet supported in Candle)
-            info!("✓ Initialized CPU device (WASM)");
+            info!("✓ Using CPU device (WASM)");
             Device::Cpu
         }
     }
@@ -393,7 +411,13 @@ static MODEL_CACHE: OnceCell<Arc<dyn Embedder>> = OnceCell::new();
 ///
 /// Use this to avoid unnecessary asset fetching when model is already in memory.
 pub fn get_cached_model() -> Option<Arc<dyn Embedder>> {
-    MODEL_CACHE.get().cloned()
+    let cached = MODEL_CACHE.get().cloned();
+    if cached.is_some() {
+        dioxus::logger::tracing::debug!("📦 Model cache hit");
+    } else {
+        dioxus::logger::tracing::debug!("📦 Model cache miss");
+    }
+    cached
 }
 
 /// Gets or loads the embedding model.

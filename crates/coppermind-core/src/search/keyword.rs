@@ -2,6 +2,7 @@
 
 use super::types::DocId;
 use bm25::{Document, Language, SearchEngineBuilder};
+use tracing::instrument;
 
 /// Keyword search engine using BM25 algorithm
 pub struct KeywordSearchEngine {
@@ -21,6 +22,7 @@ impl KeywordSearchEngine {
     }
 
     /// Add a document to the BM25 corpus
+    #[instrument(skip_all, fields(text_len = text.len()))]
     pub fn add_document(&mut self, doc_id: DocId, text: String) {
         // Create BM25 document with DocId as u64
         let doc = Document {

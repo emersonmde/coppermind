@@ -90,7 +90,7 @@ jobs:
       - name: Download model assets
         run: ./download-models.sh
       - name: Build Dioxus web assets
-        run: dx bundle --release
+        run: dx bundle -p coppermind --release
       # Upload the built static site as a Pages artifact
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -113,7 +113,7 @@ jobs:
       - name: Download model assets
         run: ./download-models.sh
       - name: Build macOS DMG bundle
-        run: dx bundle --release --platform desktop
+        run: dx bundle -p coppermind --release --platform desktop
       - name: Upload macOS DMG artifact
         uses: actions/upload-artifact@v4
         with:

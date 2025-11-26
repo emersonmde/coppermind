@@ -8,12 +8,20 @@
 
 use crate::embedding::ChunkEmbeddingResult;
 use crate::error::FileProcessingError;
+use crate::metrics::global_metrics;
+use crate::platform::run_blocking;
 use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageBackend;
-use dioxus::logger::tracing::{error, info};
+#[cfg(not(target_arch = "wasm32"))]
+use dioxus::logger::tracing::error;
+use dioxus::logger::tracing::info;
 use futures::lock::Mutex;
+use instant::Instant;
 use std::sync::Arc;
+
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -49,7 +57,7 @@ pub fn is_likely_binary(content: &str) -> bool {
 /// Indexes embedding chunks in the search engine.
 ///
 /// Takes embedding results (which include the decoded text for each chunk)
-/// and indexes them in the search engine with deferred index rebuilding.
+/// and indexes them in the search engine.
 ///
 /// # Type Parameters
 ///
@@ -80,53 +88,81 @@ pub fn is_likely_binary(content: &str) -> bool {
 /// ).await?;
 /// println!("Indexed {} chunks", indexed);
 /// ```
-pub async fn index_chunks<S: StorageBackend>(
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(chunks = embedding_results.len())))]
+pub async fn index_chunks<S: StorageBackend + Send + Sync + 'static>(
     engine: Arc<Mutex<HybridSearchEngine<S>>>,
     embedding_results: &[ChunkEmbeddingResult],
     file_label: &str,
 ) -> Result<usize, FileProcessingError> {
-    let mut indexed_count = 0;
+    // Prepare documents outside the lock
+    let timestamp = get_current_timestamp();
+    let file_label_owned = file_label.to_string();
 
-    // Lock the engine and add all documents (deferred index rebuild)
-    {
-        let mut search_engine = engine.lock().await;
-
-        for chunk_result in embedding_results.iter() {
+    let docs: Vec<(Document, Vec<f32>, usize)> = embedding_results
+        .iter()
+        .map(|chunk_result| {
             let doc = Document {
                 text: chunk_result.text.clone(),
                 metadata: DocumentMetadata {
                     filename: Some(format!(
                         "{} (chunk {})",
-                        file_label,
+                        file_label_owned,
                         chunk_result.chunk_index + 1
                     )),
-                    source: Some(file_label.to_string()),
-                    created_at: get_current_timestamp(),
+                    source: Some(file_label_owned.clone()),
+                    created_at: timestamp,
                 },
             };
+            (
+                doc,
+                chunk_result.embedding.clone(),
+                chunk_result.chunk_index,
+            )
+        })
+        .collect();
 
-            match search_engine
-                .add_document_deferred(doc, chunk_result.embedding.clone())
-                .await
-            {
-                Ok(_) => indexed_count += 1,
+    // Move all CPU-intensive indexing to blocking thread pool
+    let index_start = Instant::now();
+    let result = run_blocking(move || {
+        // We need to block on the async lock from a sync context
+        // Use futures::executor::block_on for the lock acquisition
+        let mut search_engine = futures::executor::block_on(engine.lock());
+
+        let mut indexed_count = 0;
+        let mut total_index_time_ms = 0.0;
+
+        for (doc, embedding, chunk_index) in docs {
+            let insert_start = Instant::now();
+
+            // add_document is async but doesn't do any actual async work
+            // We can safely block_on it in the blocking thread
+            match futures::executor::block_on(search_engine.add_document(doc, embedding)) {
+                Ok(_) => {
+                    let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
+                    total_index_time_ms += insert_duration_ms;
+                    global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
+                    global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
+                    indexed_count += 1;
+                }
                 Err(e) => {
-                    error!(
-                        "❌ Failed to index chunk {}: {:?}",
-                        chunk_result.chunk_index, e
-                    );
                     return Err(FileProcessingError::IndexingFailed(format!(
                         "Failed to index chunk {}: {:?}",
-                        chunk_result.chunk_index, e
+                        chunk_index, e
                     )));
                 }
             }
         }
-    } // Release lock (index rebuild deferred until caller rebuilds)
+
+        Ok((indexed_count, total_index_time_ms))
+    })
+    .await?;
+
+    let (indexed_count, total_index_time_ms) = result;
+    let total_elapsed_ms = index_start.elapsed().as_secs_f64() * 1000.0;
 
     info!(
-        "✅ Added {} chunks to search engine (rebuild pending)",
-        indexed_count
+        "✅ Added {} chunks to search engine ({:.1}ms total, {:.1}ms indexing)",
+        indexed_count, total_elapsed_ms, total_index_time_ms
     );
 
     Ok(indexed_count)

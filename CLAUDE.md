@@ -27,9 +27,9 @@ Coppermind is a browser-based semantic search engine using Rust and WASM. It use
 
 ### Serving & Building
 ```bash
-dx serve                           # Development server (web platform)
-dx serve --platform desktop        # Desktop platform
-dx bundle --release                # Production build for deployment
+dx serve -p coppermind                           # Development server (web platform)
+dx serve -p coppermind --platform desktop        # Desktop platform
+dx bundle -p coppermind --release                # Production build for deployment
 ```
 
 ### Quality Checks
@@ -212,8 +212,8 @@ These traits define clean boundaries for:
 ## Development Workflow
 
 ### Platform Strategy
-**Primary development:** Web (faster iteration with `dx serve`)
-**Secondary testing:** Desktop (`dx serve --platform desktop`)
+**Primary development:** Web (faster iteration with `dx serve -p coppermind`)
+**Secondary testing:** Desktop (`dx serve -p coppermind --platform desktop`)
 **Future:** Mobile support
 
 ### Code Style & Architecture
@@ -285,7 +285,7 @@ if cfg!(target_arch = "wasm32") {
 **Every milestone MUST:**
 1. **Pass all quality checks:** Run `.githooks/pre-commit` successfully
    - This covers: fmt, clippy, tests, cargo audit, web build
-2. **Work on all platforms:** Test with `dx serve` (web), `dx serve --platform desktop`, and `dx build --platform ios`
+2. **Work on all platforms:** Test with `dx serve -p coppermind` (web), `dx serve -p coppermind --platform desktop`, and `dx build -p coppermind --platform ios`
 3. **Update documentation:** After completing each milestone, you MUST:
    - Update `CLAUDE.md` if architecture or module structure changed
    - Update relevant `docs/*.md` files with new patterns/implementations
@@ -306,9 +306,9 @@ if cfg!(target_arch = "wasm32") {
 - Automated tests are preferred over manual testing
 
 **Manual Testing (When Required):**
-- **IMPORTANT:** Do NOT run interactive commands like `dx serve` yourself
+- **IMPORTANT:** Do NOT run interactive commands like `dx serve -p coppermind` yourself
 - Instead, ask the user to run them and provide specific UAT (User Acceptance Testing) steps
-- Example: "Please run `dx serve` and verify: [specific checklist]"
+- Example: "Please run `dx serve -p coppermind` and verify: [specific checklist]"
 - User must manually open browser and perform UAT actions
 
 **Before Committing:**
@@ -318,10 +318,10 @@ if cfg!(target_arch = "wasm32") {
 
 # 2. If feature needs manual testing, ask user:
 # "Please test both platforms with these UAT steps:
-#  Web: dx serve
+#  Web: dx serve -p coppermind
 #    - [ ] Step 1
 #    - [ ] Step 2
-#  Desktop: dx serve --platform desktop
+#  Desktop: dx serve -p coppermind --platform desktop
 #    - [ ] Step 1
 #    - [ ] Step 2"
 ```

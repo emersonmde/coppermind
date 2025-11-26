@@ -15,6 +15,8 @@ use super::{calculate_chunk_boundaries, ChunkingStrategy, TextChunk, TokenizerSi
 use crate::error::EmbeddingError;
 use text_splitter::{ChunkConfig, MarkdownSplitter};
 use tokenizers::Tokenizer;
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 /// Markdown splitter adapter using the `text-splitter` crate.
 ///
@@ -67,6 +69,7 @@ impl MarkdownSplitterAdapter {
 }
 
 impl ChunkingStrategy for MarkdownSplitterAdapter {
+    #[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len(), max_tokens = self.max_tokens)))]
     fn chunk(&self, text: &str) -> Result<Vec<TextChunk>, EmbeddingError> {
         let text = text.trim();
         if text.is_empty() {

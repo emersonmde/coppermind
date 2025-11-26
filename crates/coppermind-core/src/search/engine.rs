@@ -10,7 +10,7 @@ use super::types::{
 use super::vector::VectorSearchEngine;
 use crate::storage::StorageBackend;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, instrument};
 
 /// Maximum characters to show in debug dump text preview.
 const DEBUG_TEXT_PREVIEW_LEN: usize = 100;
@@ -57,6 +57,7 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     ///
     /// Returns the assigned DocId that should be stored or errors handled
     #[must_use = "Document ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = doc.text.len()))]
     pub async fn add_document(
         &mut self,
         doc: Document,
@@ -88,6 +89,7 @@ impl<S: StorageBackend> HybridSearchEngine<S> {
     /// Add a document without rebuilding vector index (for batch operations)
     /// Call rebuild_vector_index() once after all documents are added
     #[must_use = "Document ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = doc.text.len()))]
     pub async fn add_document_deferred(
         &mut self,
         doc: Document,

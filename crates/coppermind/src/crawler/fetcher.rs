@@ -10,6 +10,8 @@
 
 use super::CrawlError;
 use once_cell::sync::Lazy;
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 /// Global HTTP client for connection pooling.
 ///
@@ -44,6 +46,7 @@ static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 ///     Ok(())
 /// }
 /// ```
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(url)))]
 pub async fn fetch_html(url: &str) -> Result<(String, u16), CrawlError> {
     // Validate URL format
     let parsed_url =

@@ -126,6 +126,12 @@ impl<T> ResultExt<T, EmbeddingError> for Result<T, EmbeddingError> {
             EmbeddingError::ChunkingFailed(msg) => {
                 EmbeddingError::ChunkingFailed(format!("{}: {}", context, msg))
             }
+            EmbeddingError::SchedulerNotInitialized => {
+                EmbeddingError::SchedulerError(format!("{}: scheduler not initialized", context))
+            }
+            EmbeddingError::SchedulerError(msg) => {
+                EmbeddingError::SchedulerError(format!("{}: {}", context, msg))
+            }
         })
     }
 
@@ -162,6 +168,13 @@ impl<T> ResultExt<T, EmbeddingError> for Result<T, EmbeddingError> {
                 }
                 EmbeddingError::ChunkingFailed(msg) => {
                     EmbeddingError::ChunkingFailed(format!("{}: {}", context, msg))
+                }
+                EmbeddingError::SchedulerNotInitialized => EmbeddingError::SchedulerError(format!(
+                    "{}: scheduler not initialized",
+                    context
+                )),
+                EmbeddingError::SchedulerError(msg) => {
+                    EmbeddingError::SchedulerError(format!("{}: {}", context, msg))
                 }
             }
         })

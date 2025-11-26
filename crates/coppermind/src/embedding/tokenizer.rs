@@ -6,6 +6,8 @@
 use crate::error::EmbeddingError;
 use once_cell::sync::OnceCell;
 use tokenizers::tokenizer::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 /// Global tokenizer singleton.
 ///
@@ -96,6 +98,7 @@ fn configure_tokenizer(
 /// # Errors
 ///
 /// Returns `EmbeddingError::TokenizationFailed` if encoding fails or produces no tokens.
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len())))]
 pub fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, EmbeddingError> {
     let encoding = tokenizer
         .encode(text, true)
@@ -124,6 +127,7 @@ pub fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, Embe
 /// # Returns
 ///
 /// Vector of token IDs.
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len())))]
 pub async fn tokenize_text_async(
     tokenizer: &Tokenizer,
     text: &str,

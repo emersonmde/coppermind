@@ -80,8 +80,8 @@ Add web crawler feature to fetch and index web pages, initially for desktop plat
 - Module structure ready for web platform when needed (CORS proxy option)
 
 **Success Criteria:**
-- Desktop: Crawler UI visible and functional (`dx serve --platform desktop`)
-- Web: Crawler UI hidden, no errors (`dx serve`)
+- Desktop: Crawler UI visible and functional (`dx serve -p coppermind --platform desktop`)
+- Web: Crawler UI hidden, no errors (`dx serve -p coppermind`)
 - Crawled pages indexed and searchable via hybrid search
 
 **Future Enhancements:**
@@ -103,7 +103,7 @@ Add web crawler feature to fetch and index web pages, initially for desktop plat
 Persistence is currently disabled across all platforms using `InMemoryStorage` to allow testing of the crawler and other features in bundled apps (DMG, iOS). The storage backend infrastructure exists but is commented out due to path issues:
 - **DMG builds**: Read-only filesystem errors (`./coppermind-storage` path invalid)
 - **iOS**: Sandbox requirements for writable directories
-- **Desktop (`dx serve --desktop`)**: Works but path not suitable for bundled apps
+- **Desktop (`dx serve -p coppermind --platform desktop`)**: Works but path not suitable for bundled apps
 - **Web**: OPFS implementation exists but untested
 
 **Re-enabling Persistence:**

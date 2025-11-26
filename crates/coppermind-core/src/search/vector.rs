@@ -3,6 +3,7 @@
 use super::types::{validate_dimension, DocId, SearchError};
 use hnsw::{Hnsw, Searcher};
 use space::{Metric, Neighbor};
+use tracing::instrument;
 
 /// Minimum ef_search parameter for HNSW queries.
 ///
@@ -114,6 +115,7 @@ impl VectorSearchEngine {
     /// # Memory Safety
     /// Embeddings are converted to Box<[f32]> (stable heap allocation) and owned by the
     /// HNSW index. This avoids lifetime issues without requiring unsafe code.
+    #[instrument(skip_all, fields(index_size = self.doc_ids.len()))]
     pub fn add_document(&mut self, doc_id: DocId, embedding: Vec<f32>) -> Result<(), SearchError> {
         validate_dimension(self.dimension, embedding.len())?;
 

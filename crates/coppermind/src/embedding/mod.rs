@@ -62,42 +62,22 @@ pub use config::{JinaBertConfig, ModelConfig};
 pub use model::{Embedder, JinaBertEmbedder};
 
 use crate::error::EmbeddingError;
-use crate::platform::run_blocking;
 use dioxus::logger::tracing::{debug, info};
 use dioxus::prelude::*; // Includes asset! macro and Asset type
+#[cfg(feature = "profile")]
+use tracing::instrument;
+
+// Platform-specific imports
+#[cfg(not(target_arch = "wasm32"))]
+use crate::gpu::{
+    get_scheduler, init_scheduler, is_scheduler_initialized, BatchEmbedRequest, EmbedRequest,
+    ModelId, ModelLoadConfig, Priority,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::metrics::global_metrics;
+
+use crate::platform::run_blocking;
 use std::sync::Arc;
-
-// Desktop-only: Semaphore to serialize GPU access
-// Workaround for Candle Metal backend bug (not an inherent Metal limitation).
-// See: https://github.com/huggingface/candle/issues/2637
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::Semaphore;
-
-/// Maximum concurrent embedding operations.
-///
-/// Currently set to 1 as a workaround for Candle's Metal backend bug where
-/// command buffers aren't properly isolated between threads. This causes:
-/// "A command encoder is already encoding to this command buffer"
-///
-/// Note: This is NOT an inherent Metal/CUDA limitation - Metal command queues
-/// are designed to be thread-safe. The issue is Candle's implementation.
-/// See: https://github.com/huggingface/candle/issues/2637
-///
-/// Future: May be removable when upgrading to a Candle version with the fix
-/// from PR #3079/3090 (thread-isolated command buffers).
-///
-/// TODO: Make this configurable via preferences (see docs/config-options.md)
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_CONCURRENT_EMBEDDINGS: usize = 1;
-
-/// Global semaphore to serialize embedding operations on desktop.
-///
-/// Workaround for Candle Metal backend bug - prevents concurrent command buffer
-/// access that triggers assertion failures. The fix (PR #3079) introduces
-/// thread-isolated command buffers, which may allow removing this semaphore.
-#[cfg(not(target_arch = "wasm32"))]
-static EMBEDDING_SEMAPHORE: once_cell::sync::Lazy<Semaphore> =
-    once_cell::sync::Lazy::new(|| Semaphore::new(MAX_CONCURRENT_EMBEDDINGS));
 
 // Asset declarations - loaded via Dioxus asset system
 const MODEL_FILE: Asset = asset!("/assets/models/jina-bert.safetensors");
@@ -196,6 +176,87 @@ async fn ensure_tokenizer(
     tokenizer::ensure_tokenizer(tokenizer_bytes, max_positions)
 }
 
+/// Initialize the embedding system with the GPU scheduler.
+///
+/// On desktop, this initializes the GPU scheduler and loads the default
+/// JinaBERT model. Must be called once at application startup.
+///
+/// On WASM, this is a no-op (scheduler not used).
+///
+/// # Errors
+///
+/// Returns `EmbeddingError` if:
+/// - Scheduler initialization fails
+/// - Model loading fails
+/// - Assets cannot be fetched
+///
+/// # Example
+///
+/// ```ignore
+/// // In main.rs or app initialization
+/// embedding::init_embedding_system().await?;
+/// ```
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn init_embedding_system() -> Result<(), EmbeddingError> {
+    // Initialize scheduler if not already done
+    if !is_scheduler_initialized() {
+        init_scheduler().map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+        info!("✓ GPU scheduler initialized");
+    }
+
+    let scheduler = get_scheduler().map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+
+    // Skip if model already loaded
+    if scheduler.is_model_loaded(&ModelId::JinaBert) {
+        debug!("Model already loaded, skipping initialization");
+        return Ok(());
+    }
+
+    // Fetch model and tokenizer assets
+    let model_url = MODEL_FILE.to_string();
+    let tokenizer_url = TOKENIZER_FILE.to_string();
+
+    info!("📦 Loading embedding model for GPU scheduler...");
+    let model_bytes = assets::fetch_asset_bytes(&model_url).await?;
+    let tokenizer_bytes = assets::fetch_asset_bytes(&tokenizer_url).await?;
+
+    // Load model into scheduler
+    let config = ModelLoadConfig::new(model_bytes, tokenizer_bytes, 30528);
+    scheduler
+        .load_model(ModelId::JinaBert, config)
+        .await
+        .map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+
+    // Also ensure tokenizer is initialized for local use
+    let _ = ensure_tokenizer(8192).await?;
+
+    info!("✓ Embedding system initialized with GPU scheduler");
+    Ok(())
+}
+
+/// Initialize the embedding system (WASM version).
+///
+/// On WASM, this loads the model directly without a scheduler.
+#[cfg(target_arch = "wasm32")]
+pub async fn init_embedding_system() -> Result<(), EmbeddingError> {
+    // On WASM, just ensure model is loaded
+    let _ = get_or_load_model().await?;
+    info!("✓ Embedding system initialized (WASM)");
+    Ok(())
+}
+
+/// Check if the embedding system is ready.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_embedding_ready() -> bool {
+    is_scheduler_initialized() && get_scheduler().map(|s| s.is_ready()).unwrap_or(false)
+}
+
+/// Check if the embedding system is ready (WASM version).
+#[cfg(target_arch = "wasm32")]
+pub fn is_embedding_ready() -> bool {
+    model::get_cached_model().is_some()
+}
+
 /// Generates an embedding for a single text.
 ///
 /// This is the high-level API for embedding generation. It handles model
@@ -211,8 +272,8 @@ async fn ensure_tokenizer(
 ///
 /// # Platform-Specific Behavior
 ///
-/// - **Desktop**: Uses `spawn_blocking` for CPU-intensive tokenization and inference
-/// - **Web**: Runs directly (should be called from a worker to avoid blocking UI)
+/// - **Desktop**: Uses GPU scheduler for thread-safe Metal/CUDA inference
+/// - **Web**: Runs directly (no threading issues on CPU)
 ///
 /// # Examples
 ///
@@ -223,7 +284,100 @@ async fn ensure_tokenizer(
 ///          computation.token_count);
 /// ```
 #[must_use = "Embedding computation results should be used or errors handled"]
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    compute_embedding_impl(text, Priority::Interactive).await
+}
+
+/// Generates an embedding for a single text (WASM version).
+#[must_use = "Embedding computation results should be used or errors handled"]
+#[cfg(target_arch = "wasm32")]
+pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    compute_embedding_wasm(text).await
+}
+
+/// Generates an embedding for a search query (highest priority).
+///
+/// Uses `Priority::Immediate` to ensure search queries are processed
+/// before background work like bulk indexing.
+///
+/// # Arguments
+///
+/// * `text` - Search query text to embed
+///
+/// # Returns
+///
+/// `EmbeddingComputation` containing token count and embedding vector.
+#[must_use = "Embedding computation results should be used or errors handled"]
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn compute_search_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    compute_embedding_impl(text, Priority::Immediate).await
+}
+
+/// Generates an embedding for a search query (WASM version - same as regular embedding).
+#[must_use = "Embedding computation results should be used or errors handled"]
+#[cfg(target_arch = "wasm32")]
+pub async fn compute_search_embedding(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    compute_embedding_wasm(text).await
+}
+
+/// Desktop implementation using GPU scheduler.
+#[cfg(not(target_arch = "wasm32"))]
+async fn compute_embedding_impl(
+    text: &str,
+    priority: Priority,
+) -> Result<EmbeddingComputation, EmbeddingError> {
+    // Ensure scheduler is initialized
+    if !is_scheduler_initialized() {
+        init_embedding_system().await?;
+    }
+
+    let scheduler = get_scheduler().map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+    let tokenizer = ensure_tokenizer(8192).await?;
+
+    let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
+    let token_count = token_ids.len();
+
+    debug!(
+        "🧾 Tokenized into {} tokens (priority: {:?})",
+        token_count, priority
+    );
+
+    // Submit to GPU scheduler
+    let stats = scheduler.stats();
+    debug!(
+        "📤 Submitting to scheduler (priority: {:?}, queue_depth: {})",
+        priority, stats.queue_depth
+    );
+
+    let response = scheduler
+        .embed(EmbedRequest::new(token_ids).with_priority(priority))
+        .await
+        .map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+
+    debug!(
+        "✓ Generated {}-dimensional embedding",
+        response.embedding.len()
+    );
+
+    Ok(EmbeddingComputation {
+        token_count,
+        embedding: response.embedding,
+    })
+}
+
+/// WASM implementation - direct model calls (no scheduler needed).
+#[cfg(target_arch = "wasm32")]
+async fn compute_embedding_wasm(text: &str) -> Result<EmbeddingComputation, EmbeddingError> {
+    // Log cache status to diagnose performance issues
+    // (dioxus logger may not be initialized in worker context, so use web_sys::console)
+    let cache_status = if model::get_cached_model().is_some() {
+        "cache hit"
+    } else {
+        "cache miss - will load 65MB model"
+    };
+    web_sys::console::log_1(&format!("[compute_embedding_wasm] Model {}", cache_status).into());
+
     let model = get_or_load_model().await?;
     let max_positions = model.max_position_embeddings();
     let tokenizer = ensure_tokenizer(max_positions).await?;
@@ -231,33 +385,12 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
     let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
     let token_count = token_ids.len();
 
-    debug!("🧾 Tokenized into {} tokens", token_count);
-    debug!("Generating embedding vector...");
+    web_sys::console::log_1(&format!("[compute_embedding_wasm] Tokenized into {} tokens", token_count).into());
 
-    // On desktop: Acquire semaphore to serialize GPU access, then spawn_blocking
-    // This prevents Metal race conditions when multiple batches embed concurrently
-    #[cfg(not(target_arch = "wasm32"))]
-    let embedding = {
-        // Acquire permit (waits if another embedding is in progress)
-        let _permit = EMBEDDING_SEMAPHORE
-            .acquire()
-            .await
-            .map_err(|e| EmbeddingError::InferenceFailed(format!("Semaphore error: {}", e)))?;
+    let model_clone = model.clone();
+    let embedding = run_blocking(move || model_clone.embed_tokens(token_ids)).await?;
 
-        // Now safe to run embedding on blocking thread
-        let model_clone = model.clone();
-        run_blocking(move || model_clone.embed_tokens(token_ids)).await?
-        // _permit dropped here, releasing semaphore for next embedding
-    };
-
-    // On WASM: Run directly (web worker handles parallelism, no GPU race)
-    #[cfg(target_arch = "wasm32")]
-    let embedding = {
-        let model_clone = model.clone();
-        run_blocking(move || model_clone.embed_tokens(token_ids)).await?
-    };
-
-    debug!("✓ Generated {}-dimensional embedding", embedding.len());
+    web_sys::console::log_1(&format!("[compute_embedding_wasm] Generated {}-dim embedding", embedding.len()).into());
 
     Ok(EmbeddingComputation {
         token_count,
@@ -329,15 +462,151 @@ pub async fn compute_embedding(text: &str) -> Result<EmbeddingComputation, Embed
 /// let chunks = embed_text_chunks_auto(text_content, 512, Some("document.txt")).await?;
 ///
 /// // No filename - defaults to TextSplitter
-/// let chunks = embed_text_chunks_auto(content, 512, None).await?;
+/// let chunks = embed_text_chunks_auto(content, 512, None, |_, _| {}).await?;
 /// ```
-pub async fn embed_text_chunks_auto(
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len(), chunk_tokens, filename)))]
+pub async fn embed_text_chunks_auto<F>(
     text: &str,
     chunk_tokens: usize,
     filename: Option<&str>,
-) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError> {
-    let model = get_or_load_model().await?;
-    let max_positions = model.max_position_embeddings();
+    mut progress_callback: F,
+) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError>
+where
+    F: FnMut(usize, usize), // (completed, total)
+{
+    // Ensure scheduler is initialized
+    if !is_scheduler_initialized() {
+        init_embedding_system().await?;
+    }
+
+    let scheduler = get_scheduler().map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+    let tokenizer = ensure_tokenizer(8192).await?;
+    let effective_chunk = chunk_tokens.min(8192);
+
+    // Detect file type and select appropriate chunking strategy
+    let file_type = filename
+        .map(chunking::detect_file_type)
+        .unwrap_or(chunking::FileType::Text);
+
+    let chunker = chunking::create_chunker(file_type, effective_chunk, tokenizer);
+
+    // Chunking is CPU-intensive (ICU4X sentence detection + repeated tokenization)
+    // Move to blocking thread pool to prevent UI freezing
+    let text_owned = text.to_string();
+    let chunk_start = instant::Instant::now();
+    let text_chunks = run_blocking(move || chunker.chunk(&text_owned)).await?;
+    let chunk_duration_ms = chunk_start.elapsed().as_secs_f64() * 1000.0;
+    global_metrics().record_chunking(chunk_duration_ms);
+
+    if text_chunks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let total_chunks = text_chunks.len();
+    info!(
+        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking, {:.1}ms)",
+        total_chunks, effective_chunk, file_type, chunk_duration_ms
+    );
+
+    // Report initial progress
+    progress_callback(0, total_chunks);
+
+    // Tokenize all chunks in a single blocking call to avoid:
+    // 1. Cloning 466KB tokenizer for each chunk
+    // 2. spawn_blocking overhead per chunk
+    // 3. Sequential awaits blocking the async runtime
+    debug!("🔤 Tokenizing {} chunks...", total_chunks);
+    let chunk_texts: Vec<String> = text_chunks.iter().map(|c| c.text.clone()).collect();
+    let tokenize_start = instant::Instant::now();
+    let (token_batches, token_counts) = run_blocking(move || {
+        let mut batches = Vec::with_capacity(chunk_texts.len());
+        let mut counts = Vec::with_capacity(chunk_texts.len());
+        for text in &chunk_texts {
+            let tokens = tokenizer::tokenize_text(tokenizer, text)?;
+            counts.push(tokens.len());
+            batches.push(tokens);
+        }
+        Ok::<_, EmbeddingError>((batches, counts))
+    })
+    .await?;
+    let tokenize_duration_ms = tokenize_start.elapsed().as_secs_f64() * 1000.0;
+    global_metrics().record_tokenization(tokenize_duration_ms);
+
+    // Process in mini-batches to balance GPU efficiency with progress updates
+    // True GPU batching is faster (single forward pass, better utilization)
+    // but we want progress feedback, so we use small batches (8 chunks)
+    const MINI_BATCH_SIZE: usize = 8;
+
+    let mut results = Vec::with_capacity(total_chunks);
+    let mut completed = 0;
+
+    for batch_start in (0..total_chunks).step_by(MINI_BATCH_SIZE) {
+        let batch_end = (batch_start + MINI_BATCH_SIZE).min(total_chunks);
+        let batch_tokens: Vec<Vec<u32>> = token_batches[batch_start..batch_end].to_vec();
+        let batch_size = batch_tokens.len();
+
+        let batch_request =
+            BatchEmbedRequest::new(batch_tokens).with_priority(Priority::Background);
+
+        let embed_start = instant::Instant::now();
+        let embeddings = scheduler
+            .embed_batch(batch_request)
+            .await
+            .map_err(|e| EmbeddingError::SchedulerError(e.to_string()))?;
+        let embed_duration_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_embedding(embed_duration_ms);
+
+        // Build results for this batch
+        for (i, embed_response) in embeddings.into_iter().enumerate() {
+            let idx = batch_start + i;
+            let text_chunk = &text_chunks[idx];
+            let token_count = token_counts[idx];
+
+            debug!(
+                "✓ Chunk {}/{}: {} tokens, {}-dim embedding",
+                idx + 1,
+                total_chunks,
+                token_count,
+                embed_response.embedding.len()
+            );
+
+            results.push(ChunkEmbeddingResult {
+                chunk_index: text_chunk.index,
+                token_count,
+                text: text_chunk.text.clone(),
+                embedding: embed_response.embedding,
+            });
+        }
+
+        completed += batch_size;
+        progress_callback(completed, total_chunks);
+    }
+
+    info!("✅ Embedded all {} chunks successfully", total_chunks);
+
+    Ok(results)
+}
+
+/// Embed text chunks with automatic chunking strategy selection (WASM version).
+///
+/// Uses the web worker if available for better UI responsiveness.
+#[cfg(target_arch = "wasm32")]
+pub async fn embed_text_chunks_auto<F>(
+    text: &str,
+    chunk_tokens: usize,
+    filename: Option<&str>,
+    mut progress_callback: F,
+) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError>
+where
+    F: FnMut(usize, usize), // (completed, total)
+{
+    use crate::workers::get_global_worker;
+
+    // Use known max positions for JinaBERT to avoid loading 65MB model on main thread
+    // The worker has its own model instance for actual embedding
+    const JINA_BERT_MAX_POSITIONS: usize = 2048;
+    let max_positions = JINA_BERT_MAX_POSITIONS;
     let tokenizer = ensure_tokenizer(max_positions).await?;
 
     let effective_chunk = chunk_tokens.min(max_positions);
@@ -354,26 +623,42 @@ pub async fn embed_text_chunks_auto(
         return Ok(vec![]);
     }
 
+    let total_chunks = text_chunks.len();
+
+    // Check if worker is available for off-main-thread embedding
+    let worker = get_global_worker();
+    let using_worker = worker.is_some();
+
     info!(
-        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking)",
-        text_chunks.len(),
+        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking, worker: {})",
+        total_chunks,
         effective_chunk,
-        file_type
+        file_type,
+        if using_worker { "yes" } else { "no" }
     );
 
+    // Report initial progress
+    progress_callback(0, total_chunks);
+
     // Process each chunk
-    let total_chunks = text_chunks.len();
     let mut results = Vec::with_capacity(total_chunks);
 
     for (idx, text_chunk) in text_chunks.iter().enumerate() {
-        info!(
+        debug!(
             "📝 Chunk {}/{}: {} chars",
             idx + 1,
             total_chunks,
             text_chunk.text.len()
         );
 
-        let computation = compute_embedding(&text_chunk.text).await?;
+        // Use worker if available, otherwise fall back to main thread
+        let computation = if let Some(ref w) = worker {
+            w.embed(text_chunk.text.clone())
+                .await
+                .map_err(EmbeddingError::InferenceFailed)?
+        } else {
+            compute_embedding(&text_chunk.text).await?
+        };
 
         results.push(ChunkEmbeddingResult {
             chunk_index: text_chunk.index,
@@ -381,6 +666,9 @@ pub async fn embed_text_chunks_auto(
             text: text_chunk.text.clone(),
             embedding: computation.embedding,
         });
+
+        // Report progress after each chunk
+        progress_callback(idx + 1, total_chunks);
     }
 
     info!("✅ Embedded all {} chunks successfully", total_chunks);
@@ -415,7 +703,7 @@ pub async fn embed_text_chunks(
     text: &str,
     chunk_tokens: usize,
 ) -> Result<Vec<ChunkEmbeddingResult>, EmbeddingError> {
-    embed_text_chunks_auto(text, chunk_tokens, None).await
+    embed_text_chunks_auto(text, chunk_tokens, None, |_, _| {}).await
 }
 
 /// Generates an embedding and formats it for display.

@@ -58,20 +58,20 @@ cd coppermind
 
 ```bash
 # Web platform (development server)
-dx serve
+dx serve -p coppermind
 # Opens http://localhost:8080
 
 # Desktop platform (native app with web crawler)
-dx serve --platform desktop
+dx serve -p coppermind --platform desktop
 
 # iOS platform (experimental)
-dx serve --platform ios
+dx serve -p coppermind --platform ios
 
 # Production build (web)
-dx bundle --release
+dx bundle -p coppermind --release
 
 # Production build (desktop)
-dx bundle --release --platform desktop
+dx bundle -p coppermind --release --platform desktop
 ```
 
 ### Running macOS Desktop App

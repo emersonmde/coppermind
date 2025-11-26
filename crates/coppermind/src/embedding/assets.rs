@@ -61,10 +61,16 @@ async fn fetch_asset_bytes_web(url: &str) -> Result<Vec<u8>, EmbeddingError> {
         .dyn_into::<Function>()
         .map_err(|_| EmbeddingError::AssetFetch("fetch is not callable".to_string()))?;
 
-    // In dev mode, prepend /coppermind base path
-    let resolved_url = if cfg!(debug_assertions) {
+    // Resolve the URL - in dev mode, the URL may already have the base path
+    // from Dioxus asset! macro, so we shouldn't double-prepend
+    let resolved_url = if url.starts_with("/coppermind") {
+        // Already has base path (from Dioxus asset macro in dev mode)
+        url.to_string()
+    } else if cfg!(debug_assertions) {
+        // Dev mode without base path - prepend it
         format!("/coppermind{}", url)
     } else {
+        // Production - use proper resolution
         resolve_asset_url(url)
     };
 

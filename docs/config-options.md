@@ -31,27 +31,24 @@ These are already configurable via the crawler UI:
 | Option | Location | Default | Description |
 |--------|----------|---------|-------------|
 | `EMBEDDING_BATCH_SIZE` | `web_crawler.rs:26` | `10` | Pages per batch for streaming embedding |
-| `MAX_CONCURRENT_EMBEDDINGS` | `embedding/mod.rs:87` | `1` | Max concurrent GPU embedding operations |
+| `MAX_CONCURRENT_EMBEDDINGS` | `embedding/mod.rs:77` | `1` | Serializes GPU access (Candle bug workaround) |
 | `max_tokens` | `embedding/mod.rs` | `512` | Max tokens per chunk (model limit: 8192) |
 
 ### GPU Thread Safety (Candle-specific)
 
-`MAX_CONCURRENT_EMBEDDINGS` controls the semaphore that serializes GPU access:
-- **Current value**: 1 (workaround for Candle bug)
-- **Reason**: Candle's Metal backend doesn't properly isolate command buffers between threads
-- **Note**: This is NOT an inherent Metal/CUDA limitation - Metal command queues are thread-safe by design
+**Status**: Using Candle 0.9.1 stable with Metal support.
 
-This workaround prevents the Candle Metal crash:
-```
--[AGXG15XFamilyCommandBuffer tryCoalescingPreviousComputeCommandEncoderWithConfig:...]:
-failed assertion 'A command encoder is already encoding to this command buffer'
-```
+**Version History:**
+- Candle 0.8.4: Crashes without semaphore (command buffer race condition)
+- Candle 0.9.2-alpha.1: Crashes in `allocate_zeros` (Metal refactor regression)
+- Candle 0.9.1: Stable release, testing for Metal thread safety
 
 **References:**
 - [Candle Issue #2637](https://github.com/huggingface/candle/issues/2637) - Metal tensor assertion failure
-- [PR #3079/3090](https://github.com/huggingface/candle/pull/3090) - Fix via thread-isolated command buffers
+- [PR #3079](https://github.com/huggingface/candle/pull/3079) - Thread-isolated command buffers
+- [PR #3070](https://github.com/huggingface/candle/pull/3070) - Metal refactor (caused 0.9.2-alpha.1 issues)
 
-**Future**: May be removable when upgrading Candle to a version with the thread-isolated command buffer fix.
+**Future**: Upgrade to stable 0.9.2+ when released with Metal fixes.
 
 ### Batch Processing
 

@@ -19,6 +19,8 @@ use super::{calculate_chunk_boundaries, ChunkingStrategy, TextChunk, TokenizerSi
 use crate::error::EmbeddingError;
 use text_splitter::{ChunkConfig, CodeSplitter};
 use tokenizers::Tokenizer;
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 /// Supported programming languages for code chunking.
 ///
@@ -134,6 +136,7 @@ impl CodeSplitterAdapter {
 }
 
 impl ChunkingStrategy for CodeSplitterAdapter {
+    #[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len(), max_tokens = self.max_tokens, language = ?self.language)))]
     fn chunk(&self, text: &str) -> Result<Vec<TextChunk>, EmbeddingError> {
         let text = text.trim();
         if text.is_empty() {

@@ -36,6 +36,9 @@
 pub mod components;
 pub mod embedding;
 pub mod error;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod gpu;
+pub mod metrics;
 pub mod platform;
 pub mod processing;
 pub mod search;

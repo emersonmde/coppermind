@@ -18,9 +18,10 @@ dioxus = { version = "0.7.1", features = [] }
 futures = "0.3"
 futures-channel = "0.3"
 futures-util = "0.3"
-candle-core = "0.8.0"
-candle-nn = "0.8.0"
-candle-transformers = "0.8.0"
+# Using 0.9.1 stable (0.9.2-alpha.1 has Metal crash in allocate_zeros)
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
 serde = { version = "1.0", features = ["derive"] }
 safetensors = "0.4"
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
@@ -84,6 +85,11 @@ web-sys = { version = "0.3", features = [
 # Native filesystem for desktop
 tokio = { version = "1", features = ["fs", "rt", "macros"] }
 
+# Profiling (optional, enabled with --features profile)
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
+tracing-chrome = { version = "0.7", optional = true }
+
 # Web crawler with TLS support (desktop only - CORS blocks web platform)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
@@ -105,29 +111,32 @@ tree-sitter-go = "0.23"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # GPU acceleration for macOS desktop (Metal + Accelerate)
-candle-core = { version = "0.8.0", features = ["metal", "accelerate"] }
-candle-nn = { version = "0.8.0", features = ["metal", "accelerate"] }
-candle-transformers = { version = "0.8.0", features = ["metal", "accelerate"] }
+candle-core = { version = "0.9.1", features = ["metal", "accelerate"] }
+candle-nn = { version = "0.9.1", features = ["metal", "accelerate"] }
+candle-transformers = { version = "0.9.1", features = ["metal", "accelerate"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 # iOS uses CPU-only with Accelerate (Metal has compatibility issues in simulator)
 # Real devices could use Metal, but CPU mode ensures universal compatibility
-candle-core = { version = "0.8.0", features = ["accelerate"] }
-candle-nn = { version = "0.8.0", features = ["accelerate"] }
-candle-transformers = { version = "0.8.0", features = ["accelerate"] }
+candle-core = { version = "0.9.1", features = ["accelerate"] }
+candle-nn = { version = "0.9.1", features = ["accelerate"] }
+candle-transformers = { version = "0.9.1", features = ["accelerate"] }
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "macos", target_os = "ios")), any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
 # Intel MKL CPU optimization for x86/x86_64 platforms (Windows, Linux)
 # Excluded from Apple platforms which use Accelerate instead
-candle-core = { version = "0.8.0", features = ["mkl"] }
-candle-nn = { version = "0.8.0", features = ["mkl"] }
-candle-transformers = { version = "0.8.0", features = ["mkl"] }
+candle-core = { version = "0.9.1", features = ["mkl"] }
+candle-nn = { version = "0.9.1", features = ["mkl"] }
+candle-transformers = { version = "0.9.1", features = ["mkl"] }
 
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
+# Performance profiling - generates trace.json for chrome://tracing
+# Usage: dx serve --platform desktop --features profile
+profile = ["tracing", "tracing-subscriber", "tracing-chrome"]
 # Optional CUDA support for NVIDIA GPUs (requires CUDA toolkit installed)
 cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 # Enhanced CUDA with cuDNN for deep learning (requires CUDA + cuDNN installed)

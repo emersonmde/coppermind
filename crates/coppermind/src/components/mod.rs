@@ -537,7 +537,6 @@ pub fn App() -> Element {
                                 batch_idx,
                                 file_list,
                                 batches_for_spawn,
-                                &embedder,
                                 engine_clone,
                                 engine_status_for_spawn,
                             )

@@ -2,13 +2,12 @@
 //!
 //! This module handles the high-level batch processing workflow:
 //! 1. Create batches from file lists
-//! 2. Process files using platform-specific embedders
+//! 2. Process files with semantic chunking and batch embedding
 //! 3. Update batch/file status as processing progresses
 //! 4. Index embedded chunks in the search engine
 
 use super::{Batch, BatchMetrics, BatchStatus, FileMetrics, FileStatus};
 use crate::components::file_processing::{index_chunks, is_likely_binary};
-use crate::processing::embedder::PlatformEmbedder;
 use crate::processing::processor::process_file_chunks;
 use crate::search::HybridSearchEngine;
 use crate::storage::StorageBackend;
@@ -18,28 +17,30 @@ use futures::lock::Mutex;
 use instant::Instant;
 use std::sync::Arc;
 
+#[cfg(feature = "profile")]
+use tracing::instrument;
+
 /// Process a batch of files with embeddings and indexing.
 ///
 /// This is the main orchestration function that coordinates file processing,
-/// using the platform-specific embedder and updating UI state via signals.
+/// using semantic chunking and batch embedding, updating UI state via signals.
 ///
 /// # Arguments
 ///
 /// * `batch_idx` - Index of the batch in the batches vector
 /// * `file_list` - List of (filename, contents) pairs to process
 /// * `batches_signal` - Signal for batch state updates
-/// * `embedder` - Platform-specific embedder implementation
 /// * `engine` - Search engine for indexing
 /// * `engine_status` - Signal for updating engine status
 ///
 /// # Returns
 ///
 /// Batch metrics on success, or error message on failure.
-pub async fn process_batch<S: StorageBackend>(
+#[cfg_attr(feature = "profile", instrument(skip_all, fields(batch_idx, file_count = file_list.len())))]
+pub async fn process_batch<S: StorageBackend + Send + Sync + 'static>(
     batch_idx: usize,
     file_list: Vec<(String, String)>,
     mut batches_signal: Signal<Vec<Batch>>,
-    embedder: &impl PlatformEmbedder,
     engine: Option<Arc<Mutex<HybridSearchEngine<S>>>>,
     mut engine_status: Signal<super::SearchEngineStatus>,
 ) -> Result<BatchMetrics, String> {
@@ -67,7 +68,7 @@ pub async fn process_batch<S: StorageBackend>(
         // Process file chunks with progress tracking and live metrics updates
         let result = process_file_chunks(
             contents,
-            embedder,
+            Some(file_name), // Pass filename for semantic chunking
             |current, total, pct, tokens, elapsed_ms| {
                 // Use .write() directly for better reactivity from async contexts
                 let mut batches = batches_signal.write();

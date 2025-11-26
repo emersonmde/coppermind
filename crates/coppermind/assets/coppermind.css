@@ -221,7 +221,7 @@ body.cm-body {
 
 /* Metrics Panel */
 .cm-metrics-panel {
-    padding: 1.25rem 2rem;
+    padding: 0.75rem 1.5rem;
     border-bottom: 1px solid var(--cm-border-subtle);
     background: radial-gradient(
             circle at top left,
@@ -238,7 +238,7 @@ body.cm-body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
 }
 
 .cm-metrics-title {
@@ -309,7 +309,11 @@ body.cm-body {
 .cm-metrics-separator {
     height: 1px;
     background: var(--cm-border-subtle);
-    margin: 1.25rem 0;
+    margin: 0.75rem 0;
+}
+
+.cm-metrics-separator--tight {
+    margin: 0.5rem 0;
 }
 
 /* Section Headers (Aggregate Metrics, Indexing Performance) */
@@ -317,15 +321,11 @@ body.cm-body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 0.75rem;
-}
-
-.cm-metrics-section-header:first-of-type {
-    margin-top: 0.5rem;
+    margin-bottom: 0.4rem;
 }
 
 .cm-metrics-section-title {
-    font-size: var(--cm-font-size-md);
+    font-size: var(--cm-font-size-sm);
     font-weight: 600;
     margin: 0;
     color: var(--cm-text-primary);
@@ -411,6 +411,52 @@ body.cm-body {
     font-weight: 400;
     color: var(--cm-text-muted);
     margin-left: 0.25rem;
+}
+
+/* Two-column layout for metrics sections */
+.cm-metrics-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 0.25rem;
+}
+
+@media (max-width: 768px) {
+    .cm-metrics-columns {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+}
+
+.cm-metrics-column {
+    min-width: 0;
+}
+
+/* Compact metric grid - smaller cards, tighter spacing */
+.cm-metrics-grid--compact {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Compact metric cards */
+.cm-metric-card--compact {
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+}
+
+.cm-metric-card--compact .cm-metric-label {
+    font-size: 0.65rem;
+    margin-bottom: 0.1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cm-metric-card--compact .cm-metric-value {
+    font-size: 0.95rem;
+    font-weight: 600;
 }
 
 /* Views */

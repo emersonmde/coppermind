@@ -14,6 +14,8 @@ use std::time::Duration;
 
 use dioxus::logger::tracing::{error, info};
 use tokio::time::sleep;
+#[cfg(feature = "profile")]
+use tracing::instrument;
 
 use super::fetcher::fetch_html;
 use super::parser::{extract_links, extract_text};
@@ -108,6 +110,7 @@ impl CrawlEngine {
     ///     Ok(())
     /// }
     /// ```
+    #[cfg_attr(feature = "profile", instrument(skip_all, fields(start_url = %self.config.start_url, max_depth = self.config.max_depth)))]
     pub async fn crawl_with_progress<F, G>(
         &mut self,
         mut progress_callback: Option<F>,
