@@ -290,6 +290,19 @@ if cfg!(target_arch = "wasm32") {
 if cfg!(target_arch = "wasm32") {
     document::Script { src: "/coi-serviceworker.min.js" }  // Web only
 }
+
+// 7. Fallback implementations for doc/test builds
+// When code requires platform features but must compile for `cargo test` or `cargo doc`,
+// provide a fallback cfg that uses InMemoryDocumentStore or stub implementations:
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "desktop"),
+    not(feature = "mobile")
+))]
+type PlatformDocumentStore = InMemoryDocumentStore;
+
+// CI runs tests with --features desktop, so platform code is properly tested.
+// The fallback only enables compilation for edge cases like `cargo test` without features.
 ```
 
 ### Milestone Completion Requirements

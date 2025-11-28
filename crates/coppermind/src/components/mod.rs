@@ -116,7 +116,7 @@ type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<IndexedDbDo
 #[cfg(any(feature = "desktop", feature = "mobile"))]
 type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<RedbDocumentStore>>>>>;
 
-// Fallback for doc builds without platform features (never used at runtime)
+// Fallback for doc/test builds without platform features (never used at runtime)
 #[cfg(all(
     not(target_arch = "wasm32"),
     not(feature = "desktop"),
@@ -124,6 +124,13 @@ type SearchEngineSignal = Signal<Option<Arc<Mutex<HybridSearchEngine<RedbDocumen
 ))]
 type SearchEngineSignal =
     Signal<Option<Arc<Mutex<HybridSearchEngine<crate::storage::InMemoryDocumentStore>>>>>;
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "desktop"),
+    not(feature = "mobile")
+))]
+type PlatformDocumentStore = crate::storage::InMemoryDocumentStore;
 
 // Search engine status for UI display
 #[derive(Clone)]
@@ -363,6 +370,32 @@ async fn initialize_search_engine(
         .await
         .map_err(|e| format!("{:?}", e))?;
 
+    Ok(engine)
+}
+
+// Fallback implementations for doc/test builds without platform features
+// These are never called at runtime but allow the code to compile for tests
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "desktop"),
+    not(feature = "mobile")
+))]
+async fn create_platform_document_store() -> Result<PlatformDocumentStore, String> {
+    Ok(crate::storage::InMemoryDocumentStore::new())
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "desktop"),
+    not(feature = "mobile")
+))]
+async fn initialize_search_engine(
+    store: PlatformDocumentStore,
+) -> Result<HybridSearchEngine<PlatformDocumentStore>, String> {
+    const EMBEDDING_DIM: usize = 512;
+    let engine = HybridSearchEngine::try_load_or_new(store, EMBEDDING_DIM)
+        .await
+        .map_err(|e| format!("{:?}", e))?;
     Ok(engine)
 }
 
