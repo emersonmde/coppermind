@@ -133,13 +133,18 @@ type SearchEngineSignal =
 type PlatformDocumentStore = crate::storage::InMemoryDocumentStore;
 
 // Search engine status for UI display
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum SearchEngineStatus {
+    /// Initial state - index initialization hasn't started
     Pending,
+    /// Index is being loaded from storage (rebuilding HNSW/BM25 indices)
+    Loading,
+    /// Index is ready for search
     Ready {
         doc_count: usize,
         total_tokens: usize,
     },
+    /// Index initialization failed
     Failed(String),
 }
 
@@ -361,19 +366,49 @@ async fn create_platform_document_store() -> Result<PlatformDocumentStore, Strin
 ///
 /// Attempts to load existing index data from storage. If no index exists
 /// or the index is incompatible, creates a fresh empty engine.
-#[cfg(any(target_arch = "wasm32", feature = "desktop", feature = "mobile"))]
+///
+/// On desktop, this runs in a blocking thread pool to avoid freezing the UI
+/// during index loading (HNSW/BM25 index building is CPU-intensive).
+#[cfg(target_arch = "wasm32")]
 async fn initialize_search_engine(
     store: PlatformDocumentStore,
 ) -> Result<HybridSearchEngine<PlatformDocumentStore>, String> {
     // JinaBERT embedding dimension
     const EMBEDDING_DIM: usize = 512;
 
-    // Try to load existing index or create new
+    // Web: Run directly (single-threaded, no blocking thread pool)
     let engine = HybridSearchEngine::try_load_or_new(store, EMBEDDING_DIM)
         .await
         .map_err(|e| format!("{:?}", e))?;
 
     Ok(engine)
+}
+
+#[cfg(any(feature = "desktop", feature = "mobile"))]
+async fn initialize_search_engine(
+    store: PlatformDocumentStore,
+) -> Result<HybridSearchEngine<PlatformDocumentStore>, String> {
+    // JinaBERT embedding dimension
+    const EMBEDDING_DIM: usize = 512;
+
+    // Desktop/Mobile: Run in blocking thread pool to avoid UI freeze
+    // The index rebuilding (HNSW insertions, BM25 indexing) is CPU-intensive
+    // and would otherwise block the main async executor, freezing the UI.
+    tokio::task::spawn_blocking(move || {
+        // Create a new runtime for the async store operations inside the blocking task
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            HybridSearchEngine::try_load_or_new(store, EMBEDDING_DIM)
+                .await
+                .map_err(|e| format!("{:?}", e))
+        })
+    })
+    .await
+    .map_err(|e| format!("Task join failed: {}", e))?
 }
 
 // Fallback implementations for doc/test builds without platform features
@@ -427,6 +462,9 @@ pub fn App() -> Element {
     use_effect(move || {
         if engine_signal.read().is_none() {
             spawn(async move {
+                // Set loading status before starting initialization
+                status_signal.set(SearchEngineStatus::Loading);
+
                 match create_platform_document_store().await {
                     Ok(store) => match initialize_search_engine(store).await {
                         Ok(engine) => {
@@ -574,6 +612,35 @@ pub fn App() -> Element {
                         let worker_state_for_spawn = worker_state_for_coroutine;
 
                         spawn(async move {
+                            // Wait for search engine to be initialized
+                            // This ensures we can index documents after embedding them
+                            loop {
+                                let engine_ready = engine_for_spawn.read().is_some();
+                                if engine_ready {
+                                    break;
+                                }
+                                // Check status - if failed, abort the batch
+                                let status = engine_status_for_spawn.read().clone();
+                                if let SearchEngineStatus::Failed(err) = status {
+                                    error!("Search engine failed to initialize: {}", err);
+                                    batches_for_spawn.mutate(|batches| {
+                                        batches[batch_idx].status = BatchStatus::Completed;
+                                        for file in &mut batches[batch_idx].files {
+                                            file.status = FileStatus::Failed(format!(
+                                                "Index failed: {}",
+                                                err
+                                            ));
+                                        }
+                                    });
+                                    return;
+                                }
+                                // Wait a bit before checking again
+                                #[cfg(target_arch = "wasm32")]
+                                gloo_timers::future::TimeoutFuture::new(100).await;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+
                             // Create platform-specific embedder
                             #[cfg(target_arch = "wasm32")]
                             let embedder = {

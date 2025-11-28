@@ -97,11 +97,21 @@ pub fn AppBar(
         match status {
             SearchEngineStatus::Pending => rsx! {
                 button {
+                    class: "cm-status-pill cm-status-pill--muted cm-status-pill--clickable",
+                    onclick: move |_| on_metrics_toggle.call(()),
+                    "aria-label": "Toggle metrics panel",
+                    span { class: "cm-status-dot cm-status-dot--muted" }
+                    "Index: pending"
+                    span { class: "cm-status-chevron", "{chevron}" }
+                }
+            },
+            SearchEngineStatus::Loading => rsx! {
+                button {
                     class: "cm-status-pill cm-status-pill--warn cm-status-pill--clickable",
                     onclick: move |_| on_metrics_toggle.call(()),
                     "aria-label": "Toggle metrics panel",
                     span { class: "cm-status-dot cm-status-dot--warn" }
-                    "Index initializing…"
+                    "Index: loading…"
                     span { class: "cm-status-chevron", "{chevron}" }
                 }
             },

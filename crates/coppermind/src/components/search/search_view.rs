@@ -191,9 +191,19 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     };
 
     // Determine what to show
-    let engine_ready = matches!(engine_status.read().clone(), SearchEngineStatus::Ready { doc_count, .. } if doc_count > 0);
+    let engine_status_val = engine_status.read().clone();
+    let engine_loading = matches!(
+        engine_status_val,
+        SearchEngineStatus::Pending | SearchEngineStatus::Loading
+    );
+    let engine_ready_with_docs = matches!(
+        engine_status_val,
+        SearchEngineStatus::Ready { doc_count, .. } if doc_count > 0
+    );
     let has_results = !search_results.read().is_empty();
-    let show_empty_state = !engine_ready && !searching();
+    // Show empty state only when index is ready but has no documents
+    // Don't show empty state while loading (search card already indicates loading)
+    let show_empty_state = !engine_loading && !engine_ready_with_docs && !searching();
 
     // Compute result count text with proper pluralization
     let result_count_text = if !searching() && has_results {

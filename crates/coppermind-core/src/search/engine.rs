@@ -86,6 +86,10 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
     /// Rebuild indices from data in the store.
     async fn rebuild_from_store(store: S, embedding_dim: usize) -> Result<Self, SearchError> {
+        use instant::Instant;
+
+        let total_start = Instant::now();
+
         let mut engine = Self {
             vector_engine: VectorSearchEngine::new(embedding_dim),
             keyword_engine: KeywordSearchEngine::new(),
@@ -94,22 +98,50 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             manifest: IndexManifest::new(embedding_dim),
         };
 
-        // Load all embeddings from store and rebuild indices
+        // Load all embeddings from store
+        let load_start = Instant::now();
         let embeddings = engine
             .store
             .iter_embeddings()
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
+        let load_elapsed = load_start.elapsed();
+        debug!(
+            "Loaded {} embeddings from store in {:?}",
+            embeddings.len(),
+            load_elapsed
+        );
+
+        // Batch load all documents for BM25 (separate I/O from CPU work)
+        let docs_start = Instant::now();
+        let doc_ids: Vec<_> = embeddings.iter().map(|(id, _)| *id).collect();
+        let documents = engine
+            .store
+            .get_documents_batch(&doc_ids)
+            .await
+            .map_err(|e| SearchError::StorageError(e.to_string()))?;
+        // Build lookup map by doc_id (documents don't have doc_id field, so use index)
+        let doc_map: std::collections::HashMap<DocId, &DocumentRecord> = doc_ids
+            .iter()
+            .zip(documents.iter())
+            .map(|(id, doc)| (*id, doc))
+            .collect();
+        let docs_elapsed = docs_start.elapsed();
+        debug!(
+            "Loaded {} documents from store in {:?}",
+            documents.len(),
+            docs_elapsed
+        );
 
         // Track maximum ID to initialize the counter
         let mut max_id: u64 = 0;
         let mut doc_count = 0;
 
+        // Prepare validated data for index building
+        let mut valid_entries: Vec<(DocId, Vec<f32>, &DocumentRecord)> = Vec::new();
         for (doc_id, embedding) in embeddings {
-            // Track max ID
             max_id = max_id.max(doc_id.as_u64());
 
-            // Validate embedding dimension
             if embedding.len() != embedding_dim {
                 warn!(
                     "Skipping doc {} with wrong dimension: expected {}, got {}",
@@ -120,21 +152,8 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 continue;
             }
 
-            // Get document text for BM25
-            let doc_record = engine
-                .store
-                .get_document(doc_id)
-                .await
-                .map_err(|e| SearchError::StorageError(e.to_string()))?;
-
-            if let Some(record) = doc_record {
-                // Add to vector index
-                engine.vector_engine.add_document(doc_id, embedding)?;
-
-                // Add to keyword index
-                engine.keyword_engine.add_document(doc_id, record.text);
-
-                doc_count += 1;
+            if let Some(record) = doc_map.get(&doc_id) {
+                valid_entries.push((doc_id, embedding, record));
             } else {
                 warn!(
                     "Embedding for doc {} has no document record, skipping",
@@ -142,6 +161,37 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 );
             }
         }
+
+        // Build HNSW vector index (CPU-intensive)
+        let hnsw_start = Instant::now();
+        for (doc_id, embedding, _) in &valid_entries {
+            engine
+                .vector_engine
+                .add_document(*doc_id, embedding.clone())?;
+        }
+        let hnsw_elapsed = hnsw_start.elapsed();
+        debug!(
+            "Built HNSW index: {} vectors in {:?} ({:.2}ms/vector)",
+            valid_entries.len(),
+            hnsw_elapsed,
+            hnsw_elapsed.as_secs_f64() * 1000.0 / valid_entries.len().max(1) as f64
+        );
+
+        // Build BM25 keyword index (CPU-intensive)
+        let bm25_start = Instant::now();
+        for (doc_id, _, record) in &valid_entries {
+            engine
+                .keyword_engine
+                .add_document(*doc_id, record.text.clone());
+            doc_count += 1;
+        }
+        let bm25_elapsed = bm25_start.elapsed();
+        debug!(
+            "Built BM25 index: {} documents in {:?} ({:.2}ms/doc)",
+            doc_count,
+            bm25_elapsed,
+            bm25_elapsed.as_secs_f64() * 1000.0 / doc_count.max(1) as f64
+        );
 
         // Note: We don't load tombstones on reload because:
         // 1. Deleted documents/embeddings are removed from storage immediately
@@ -160,6 +210,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         // Clean up incomplete sources from previous session crashes
         // If a source has complete=false, it means the app crashed while indexing it.
         // Delete these partial sources so they can be re-indexed cleanly.
+        let cleanup_start = Instant::now();
         let sources = engine
             .store
             .list_sources()
@@ -184,6 +235,8 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 }
             }
         }
+        let cleanup_elapsed = cleanup_start.elapsed();
+        debug!("Source cleanup completed in {:?}", cleanup_elapsed);
 
         // Initialize DocId counter to continue after the highest loaded ID
         DocId::init_counter(max_id);
@@ -191,10 +244,16 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         // Update manifest
         engine.manifest.update(doc_count);
 
+        let total_elapsed = total_start.elapsed();
         info!(
-            "Rebuilt indices: {} documents, {} vectors",
+            "Rebuilt indices: {} documents in {:?} (embeddings: {:?}, docs: {:?}, HNSW: {:?}, BM25: {:?}, cleanup: {:?})",
             doc_count,
-            engine.vector_engine.len()
+            total_elapsed,
+            load_elapsed,
+            docs_elapsed,
+            hnsw_elapsed,
+            bm25_elapsed,
+            cleanup_elapsed
         );
 
         Ok(engine)
