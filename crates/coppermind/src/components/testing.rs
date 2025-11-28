@@ -264,7 +264,10 @@ pub fn DeveloperTesting() -> Element {
                                     } else {
                                         info!("✅ Search index cleared");
                                         status.set("✓ Search index cleared successfully".into());
-                                        engine_status.set(SearchEngineStatus::Ready { doc_count: 0 });
+                                        engine_status.set(SearchEngineStatus::Ready {
+                                            doc_count: 0,
+                                            total_tokens: 0,
+                                        });
                                     }
                                 } else {
                                     error!("❌ Search engine not initialized");

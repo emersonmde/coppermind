@@ -149,6 +149,80 @@ Export embeddings to Parquet for Python ecosystem compatibility (FAISS, Pinecone
 
 ---
 
+## Future Exploration
+
+Longer-term ideas that would significantly expand Coppermind's capabilities.
+
+### Retrieval Enhancement
+
+#### Speculative Retrieval with Re-ranking
+Two-stage retrieval: fast HNSW recall of top-k candidates, then cross-encoder re-ranking on-device with a small model. Improves precision without sacrificing latency for the initial recall phase.
+
+#### Learned Sparse Representations (SPLADE/ColBERT)
+Add learned sparse vectors alongside dense embeddings. SPLADE produces interpretable term-level weights with neural semantics, enabling hybrid retrieval that outperforms pure dense approaches.
+
+#### Query Expansion via Pseudo-Relevance Feedback
+Automatically expand queries using terms from top-k initial results (Rocchio algorithm) or LLM-generated synonyms. Classic IR technique that improves recall for ambiguous queries.
+
+#### Hypothetical Document Embeddings (HyDE)
+Generate a hypothetical answer to the query using an LLM, then embed that synthetic document to find similar real documents. Counter-intuitive technique that bridges the query-document vocabulary gap.
+
+#### Query Understanding / Intent Classification
+Route queries to different retrieval strategies based on detected intent (factual lookup vs. exploratory vs. navigational). Enables strategy-specific optimization.
+
+### On-Device Learning
+
+#### Contrastive Learning from Click Data
+Fine-tune embedding projections using implicit feedback from which results users click. On-device personalization that improves relevance without sending data anywhere.
+
+#### Active Learning for Relevance Feedback
+Let users mark results as relevant/irrelevant, use this signal to fine-tune embedding projections or train a lightweight re-ranker. Closes the loop between retrieval and user signal.
+
+### Index Types
+
+#### Graph Indexes (Knowledge Graph Construction)
+Automatically extract entities and relationships from crawled content to build a local knowledge graph alongside vector embeddings. Enables multi-hop reasoning queries and relationship-aware search.
+
+#### PageRank / Link Analysis
+Implement authority scoring for crawled web pages based on link structure, use as a signal in RRF fusion alongside BM25 and vector similarity.
+
+#### Incremental Index Updates with LSM-Tree Approach
+Log-structured merge for the HNSW index - new vectors go to a small "hot" index, periodically merged into the main index. Better handles frequent updates without full rebuilds.
+
+### LLM Integration
+
+#### MCP (Model Context Protocol) Server
+Expose Coppermind's search capabilities as an MCP server, allowing LLM agents to query the local semantic index. Enables integration with agentic workflows and AI assistants.
+
+#### Retrieval-Augmented Generation (RAG) Pipeline
+Add a local LLM (via Candle or llama.cpp bindings) that synthesizes answers from retrieved chunks. Full question-answering system running entirely on-device.
+
+#### LLM-Assisted Chunking/Categorization
+Use a small local LLM to intelligently segment documents at semantic boundaries and auto-generate metadata tags. Replaces heuristic chunking with learned preprocessing.
+
+### Scalability
+
+#### Embedding Quantization (Binary/Product Quantization)
+Compress 512D float vectors to binary or PQ codes, trading accuracy for ~32x memory reduction. Essential for scaling to large collections on memory-constrained devices.
+
+#### WebGPU Acceleration
+GPU-accelerated inference using WebGPU when available, with automatic fallback to CPU. Enables real ML workloads in-browser as WebGPU support matures.
+
+### Privacy & Distribution
+
+#### Federated Search Across Instances
+P2P protocol allowing multiple Coppermind instances to query each other's indexes without centralizing data. Privacy-preserving distributed search.
+
+#### Differential Privacy for Index Statistics
+Add DP noise to term frequencies and other index statistics before exposing them via APIs. Provides formal privacy guarantees for shared indexes.
+
+### Multimodal
+
+#### Multimodal Embeddings (Images + Text)
+Add CLIP-style embeddings for images found in crawled pages. Enables cross-modal queries like "find pages with diagrams similar to this screenshot."
+
+---
+
 ## References
 
 - [Candle](https://github.com/huggingface/candle) - Rust ML framework

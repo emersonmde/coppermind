@@ -271,12 +271,7 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
 
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
-        let doc_count = {
-            let search_engine = engine_lock.lock().await;
-            search_engine.len()
-        };
-
-        {
+        let (engine_doc_count, engine_total_tokens) = {
             let mut search_engine = engine_lock.lock().await;
             // rebuild_vector_index() is a no-op with rust-cv/hnsw (supports incremental updates)
             // Index is already up-to-date from incremental insertions
@@ -328,11 +323,18 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
             } else {
                 info!("💾 Index saved to persistent storage");
             }
-        }
+
+            // Get engine metrics for status update (while lock is held)
+            let (doc_count, tokens, _) = search_engine.get_index_metrics_sync();
+            (doc_count, tokens)
+        };
 
         // Update search engine status
-        engine_status.set(super::SearchEngineStatus::Ready { doc_count });
-        info!("✅ Search index ready with {} documents", doc_count);
+        engine_status.set(super::SearchEngineStatus::Ready {
+            doc_count: engine_doc_count,
+            total_tokens: engine_total_tokens,
+        });
+        info!("✅ Search index ready with {} documents", engine_doc_count);
     }
 
     // Calculate final batch metrics
@@ -544,12 +546,7 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
 
     // Finalize vector index (no rebuild needed - incremental HNSW)
     if let Some(engine_lock) = &engine {
-        let doc_count = {
-            let search_engine = engine_lock.lock().await;
-            search_engine.len()
-        };
-
-        {
+        let (engine_doc_count, engine_total_tokens) = {
             let mut search_engine = engine_lock.lock().await;
             // rebuild_vector_index() is a no-op with rust-cv/hnsw (supports incremental updates)
             // Index is already up-to-date from incremental insertions
@@ -601,11 +598,18 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
             } else {
                 info!("💾 Index saved to persistent storage");
             }
-        }
+
+            // Get engine metrics for status update (while lock is held)
+            let (doc_count, tokens, _) = search_engine.get_index_metrics_sync();
+            (doc_count, tokens)
+        };
 
         // Update search engine status
-        engine_status.set(super::SearchEngineStatus::Ready { doc_count });
-        info!("✅ Search index ready with {} documents", doc_count);
+        engine_status.set(super::SearchEngineStatus::Ready {
+            doc_count: engine_doc_count,
+            total_tokens: engine_total_tokens,
+        });
+        info!("✅ Search index ready with {} documents", engine_doc_count);
     }
 
     // Calculate final batch metrics

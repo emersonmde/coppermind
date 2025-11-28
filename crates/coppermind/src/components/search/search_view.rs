@@ -191,7 +191,7 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     };
 
     // Determine what to show
-    let engine_ready = matches!(engine_status.read().clone(), SearchEngineStatus::Ready { doc_count } if doc_count > 0);
+    let engine_ready = matches!(engine_status.read().clone(), SearchEngineStatus::Ready { doc_count, .. } if doc_count > 0);
     let has_results = !search_results.read().is_empty();
     let show_empty_state = !engine_ready && !searching();
 

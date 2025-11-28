@@ -105,7 +105,7 @@ pub fn AppBar(
                     span { class: "cm-status-chevron", "{chevron}" }
                 }
             },
-            SearchEngineStatus::Ready { doc_count } => {
+            SearchEngineStatus::Ready { doc_count, .. } => {
                 if doc_count == 0 {
                     rsx! {
                         button {

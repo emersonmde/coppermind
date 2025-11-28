@@ -11,12 +11,12 @@ pub fn SearchCard(
 ) -> Element {
     let engine_status = use_search_engine_status();
 
-    // Get doc count and token estimate from engine status
+    // Get doc count and token count from engine status
     let (doc_count, token_count) = match engine_status.read().clone() {
-        SearchEngineStatus::Ready { doc_count } => {
-            // Approximate token count (placeholder until Phase 5)
-            (doc_count, doc_count * 400)
-        }
+        SearchEngineStatus::Ready {
+            doc_count,
+            total_tokens,
+        } => (doc_count, total_tokens),
         _ => (0, 0),
     };
 

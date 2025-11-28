@@ -31,7 +31,10 @@ pub fn SettingsDialog(on_close: EventHandler<()>) -> Element {
                     match engine.clear_all().await {
                         Ok(()) => {
                             info!("Storage cleared successfully");
-                            engine_status.set(SearchEngineStatus::Ready { doc_count: 0 });
+                            engine_status.set(SearchEngineStatus::Ready {
+                                doc_count: 0,
+                                total_tokens: 0,
+                            });
                         }
                         Err(e) => {
                             error!("Failed to clear storage: {:?}", e);
@@ -51,7 +54,7 @@ pub fn SettingsDialog(on_close: EventHandler<()>) -> Element {
 
     // Get current doc count for display
     let doc_count = match engine_status.read().clone() {
-        SearchEngineStatus::Ready { doc_count } => doc_count,
+        SearchEngineStatus::Ready { doc_count, .. } => doc_count,
         _ => 0,
     };
 

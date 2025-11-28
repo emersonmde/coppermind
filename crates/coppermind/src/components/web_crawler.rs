@@ -110,9 +110,8 @@ mod desktop {
                     .crawl_with_progress(Some(progress_callback), Some(page_callback), Some(flag))
                     .await
                 {
-                    Ok(results) => {
-                        let total_crawled = results.len();
-                        info!("Crawl complete: {} pages crawled", total_crawled);
+                    Ok(_results) => {
+                        // Note: crawl engine already logs "Crawl complete: N pages crawled"
 
                         // Send any remaining pages in the buffer
                         let remaining: Vec<_> = batch_buffer.borrow_mut().drain(..).collect();

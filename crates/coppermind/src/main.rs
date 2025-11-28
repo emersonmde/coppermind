@@ -2,6 +2,7 @@ use coppermind::components::App as CoppermindApp;
 use dioxus::prelude::*;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
+const APPLE_TOUCH_ICON: Asset = asset!("/assets/favicon-192.png");
 const MAIN_CSS: Asset = asset!("/assets/coppermind.css");
 
 /// Initialize Chrome tracing for performance profiling.
@@ -102,6 +103,7 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
+        document::Link { rel: "apple-touch-icon", href: APPLE_TOUCH_ICON }
 
         // CSS loading: asset! macro has issues on desktop, use include_str! as workaround
         if cfg!(target_arch = "wasm32") {

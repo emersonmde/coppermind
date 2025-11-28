@@ -27,7 +27,7 @@
 //! // Check engine status
 //! let status = use_search_engine_status();
 //! match status.read().clone() {
-//!     SearchEngineStatus::Ready { doc_count } => { /* ... */ }
+//!     SearchEngineStatus::Ready { doc_count, total_tokens } => { /* ... */ }
 //!     SearchEngineStatus::Pending => { /* ... */ }
 //!     SearchEngineStatus::Failed(err) => { /* ... */ }
 //! }
@@ -136,7 +136,10 @@ type PlatformDocumentStore = crate::storage::InMemoryDocumentStore;
 #[derive(Clone)]
 pub enum SearchEngineStatus {
     Pending,
-    Ready { doc_count: usize },
+    Ready {
+        doc_count: usize,
+        total_tokens: usize,
+    },
     Failed(String),
 }
 
@@ -427,7 +430,7 @@ pub fn App() -> Element {
                 match create_platform_document_store().await {
                     Ok(store) => match initialize_search_engine(store).await {
                         Ok(engine) => {
-                            let doc_count = engine.len();
+                            let (doc_count, total_tokens, _) = engine.get_index_metrics_sync();
                             // Arc is single-threaded on WASM (no Send/Sync needed)
                             #[cfg(target_arch = "wasm32")]
                             #[allow(clippy::arc_with_non_send_sync)]
@@ -436,7 +439,10 @@ pub fn App() -> Element {
                             let arc_engine = Arc::new(Mutex::new(engine));
 
                             engine_signal.set(Some(arc_engine));
-                            status_signal.set(SearchEngineStatus::Ready { doc_count });
+                            status_signal.set(SearchEngineStatus::Ready {
+                                doc_count,
+                                total_tokens,
+                            });
                         }
                         Err(e) => {
                             error!("Failed to initialize search engine: {}", e);
