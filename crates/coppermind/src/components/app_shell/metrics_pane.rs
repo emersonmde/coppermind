@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{calculate_engine_metrics, use_batches, use_search_engine, BatchStatus};
+use crate::components::{use_batches, use_search_engine, BatchStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gpu::{get_scheduler, is_scheduler_initialized};
 use crate::metrics::global_metrics;
@@ -8,12 +8,22 @@ use crate::metrics::global_metrics;
 /// Cached index metrics to avoid flickering when lock is held during indexing
 #[derive(Clone, Default)]
 struct CachedIndexMetrics {
+    /// Number of documents (files, URLs) - user-facing
+    docs: usize,
+    /// Number of chunks in index
     chunks: usize,
-    tokens: usize,
-    avg_tokens: f64,
+    /// HNSW live entries (excludes tombstones)
+    hnsw_live: usize,
+    /// Number of tombstoned entries in HNSW
     tombstone_count: usize,
+    /// Ratio of tombstones to total (0.0 - 1.0)
     tombstone_ratio: f32,
+    /// Whether compaction is recommended (>30% tombstones)
     needs_compaction: bool,
+    /// Chunk-level BM25 index size
+    bm25_chunk_count: usize,
+    /// Document-level BM25 index size (for proper IDF)
+    bm25_doc_count: usize,
 }
 
 /// Collapsible metrics panel showing engine statistics
@@ -46,16 +56,24 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         if let Some(engine) = engine_lock.try_lock() {
             // Only update cache when not actively indexing to avoid flickering
             if !is_indexing {
-                let (chunks, tokens, avg) = engine.get_index_metrics_sync();
+                let (docs, chunks, _tokens, _avg) = engine.get_index_metrics_sync();
                 let (tombstones, _total, ratio) = engine.compaction_stats();
                 let needs_compact = engine.needs_compaction();
+
+                // Get individual index sizes
+                let hnsw_size = engine.vector_index_len();
+                let bm25_chunk_size = engine.keyword_index_len();
+                let bm25_doc_size = engine.document_keyword_index_len();
+
                 cached_metrics.set(CachedIndexMetrics {
+                    docs,
                     chunks,
-                    tokens,
-                    avg_tokens: avg,
+                    hnsw_live: hnsw_size,
                     tombstone_count: tombstones,
                     tombstone_ratio: ratio,
                     needs_compaction: needs_compact,
+                    bm25_chunk_count: bm25_chunk_size,
+                    bm25_doc_count: bm25_doc_size,
                 });
             }
         }
@@ -85,10 +103,10 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     #[cfg(target_arch = "wasm32")]
     let (gpu_queue_depth, gpu_requests_completed, gpu_models_loaded) = (0usize, 0u64, 0usize);
 
-    // Memory estimate: chunks × embedding_dim × 4 bytes (f32)
-    // Plus ~20% overhead for HNSW graph structure
+    // Memory estimate for HNSW: live_entries × embedding_dim × 4 bytes (f32)
+    // Plus ~20% overhead for HNSW graph structure (M=16 bidirectional links per node)
     let embedding_dim = 512usize;
-    let vector_memory_bytes = index_metrics.chunks * embedding_dim * 4;
+    let vector_memory_bytes = index_metrics.hnsw_live * embedding_dim * 4;
     let estimated_memory_bytes = (vector_memory_bytes as f64 * 1.2) as usize;
     let memory_display = if estimated_memory_bytes > 1_000_000 {
         format!("{:.1} MB", estimated_memory_bytes as f64 / 1_000_000.0)
@@ -98,13 +116,13 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         format!("{} B", estimated_memory_bytes)
     };
 
-    // Format values for display
-    let formatted_avg_tokens = format!("{:.0}", index_metrics.avg_tokens);
+    // Tombstone ratio as percentage and progress toward 30% compaction threshold
     let tombstone_pct = index_metrics.tombstone_ratio * 100.0;
+    // Show how close we are to the 30% threshold (capped at 100%)
+    let compaction_progress = ((index_metrics.tombstone_ratio / 0.30) * 100.0).min(100.0);
 
-    // Calculate aggregate engine metrics from all completed batches
-    // This is stable - only includes completed batches, not in-progress ones
-    let engine_metrics = calculate_engine_metrics(&batches_list);
+    // Note: batches_list is used only to check is_indexing status above
+    // All displayed metrics come from persisted index state via cached_metrics
 
     // Get rolling average metrics (60-second window) for stable performance display
     let perf_snapshot = global_metrics().snapshot();
@@ -120,13 +138,10 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     };
 
     // Use rolling averages for throughput metrics (stable, not per-chunk)
-    let tokens_per_sec =
-        perf_snapshot.embedding_throughput * (engine_metrics.avg_tokens_per_chunk as f64).max(1.0);
     let chunks_per_sec = perf_snapshot.embedding_throughput;
     let avg_chunk_time_ms = perf_snapshot.embedding_avg_ms.unwrap_or(0.0);
 
     // Format values for display
-    let formatted_tokens_per_sec = format!("{:.1}", tokens_per_sec);
     let formatted_chunks_per_sec = format!("{:.1}", chunks_per_sec);
     let formatted_chunk_time = format!("{:.0}", avg_chunk_time_ms);
 
@@ -187,34 +202,30 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 h2 { class: "cm-metrics-title", "Engine Metrics" }
             }
 
-            // Two-column layout for Aggregate Stats and GPU Scheduler
+            // Two-column layout for Index Summary and GPU Scheduler
             div { class: "cm-metrics-columns",
-                // Left column: Aggregate Statistics (from completed batches - stable)
+                // Left column: Index Summary (persisted metrics)
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
-                        h3 { class: "cm-metrics-section-title", "Aggregate" }
+                        h3 { class: "cm-metrics-section-title", "Index Summary" }
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Files" }
-                            div { class: "cm-metric-value", "{engine_metrics.total_docs}" }
+                            div { class: "cm-metric-label", "Documents" }
+                            div { class: "cm-metric-value", "{index_metrics.docs}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{engine_metrics.total_chunks}" }
+                            div { class: "cm-metric-value", "{index_metrics.chunks}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{engine_metrics.total_tokens}" }
-                        }
-                        div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Avg Tok/Chunk" }
-                            div { class: "cm-metric-value", "{engine_metrics.avg_tokens_per_chunk}" }
+                            div { class: "cm-metric-label", "Memory" }
+                            div { class: "cm-metric-value", "{memory_display}" }
                         }
                     }
                 }
 
-                // Right column: GPU Scheduler
+                // Right column: GPU Scheduler (desktop only, session metrics)
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "GPU Scheduler" }
@@ -242,61 +253,60 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
-            // Per-index metrics: HNSW and BM25 (from cached engine state - stable)
+            // Per-index metrics: HNSW and BM25
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-columns",
-                // HNSW Vector Index
+                // HNSW Vector Index (semantic search)
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
                         if index_metrics.needs_compaction {
                             span { class: "cm-metrics-state cm-metrics-state--warning",
-                                "Compaction Needed"
+                                "Compact Now"
                             }
                         }
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{index_metrics.chunks}" }
-                        }
-                        div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{index_metrics.tokens}" }
-                        }
-                        div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Memory" }
-                            div { class: "cm-metric-value", "{memory_display}" }
+                            div { class: "cm-metric-label", "Live Entries" }
+                            div { class: "cm-metric-value", "{index_metrics.hnsw_live}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Tombstones" }
                             div { class: "cm-metric-value",
                                 "{index_metrics.tombstone_count}",
-                                if index_metrics.tombstone_count > 0 {
-                                    span { class: "cm-metric-unit", " ({tombstone_pct:.0}%)" }
-                                }
+                                span { class: "cm-metric-unit", " ({tombstone_pct:.0}%)" }
+                            }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Compaction" }
+                            div { class: "cm-metric-value",
+                                "{compaction_progress:.0}",
+                                span { class: "cm-metric-unit", "% of 30%" }
                             }
                         }
                     }
                 }
 
-                // BM25 Keyword Index
+                // BM25 Keyword Indexes (chunk-level and document-level)
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Chunks" }
-                            div { class: "cm-metric-value", "{index_metrics.chunks}" }
+                            div { class: "cm-metric-label", "Chunk Index" }
+                            div { class: "cm-metric-value",
+                                "{index_metrics.bm25_chunk_count}",
+                                span { class: "cm-metric-unit", " entries" }
+                            }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Tokens" }
-                            div { class: "cm-metric-value", "{index_metrics.tokens}" }
-                        }
-                        div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Avg Tok/Chunk" }
-                            div { class: "cm-metric-value", "{formatted_avg_tokens}" }
+                            div { class: "cm-metric-label", "Doc Index" }
+                            div { class: "cm-metric-value",
+                                "{index_metrics.bm25_doc_count}",
+                                span { class: "cm-metric-unit", " entries" }
+                            }
                         }
                     }
                 }
@@ -313,10 +323,6 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
             }
             div { class: "cm-metrics-grid cm-metrics-grid--compact",
                 div { class: "cm-metric-card cm-metric-card--compact cm-metric-card--rate",
-                    div { class: "cm-metric-label", "Tokens / sec" }
-                    div { class: "cm-metric-value", "{formatted_tokens_per_sec}" }
-                }
-                div { class: "cm-metric-card cm-metric-card--compact cm-metric-card--rate",
                     div { class: "cm-metric-label", "Chunks / sec" }
                     div { class: "cm-metric-value", "{formatted_chunks_per_sec}" }
                 }
@@ -329,7 +335,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 "{state_caption}"
             }
 
-            // Rolling averages (60-second window)
+            // Rolling averages (60-second window) - only shown during/after indexing
             if has_rolling_data {
                 div { class: "cm-metrics-separator cm-metrics-separator--tight" }
                 div { class: "cm-metrics-section-header",

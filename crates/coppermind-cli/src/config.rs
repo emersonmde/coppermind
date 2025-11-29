@@ -142,8 +142,7 @@ mod tests {
         // This test assumes download-models.sh has been run
         let result = find_model_dir();
         // Don't fail the test if models aren't downloaded
-        if result.is_ok() {
-            let dir = result.unwrap();
+        if let Ok(dir) = result {
             assert!(dir.join(MODEL_FILENAME).exists());
             assert!(dir.join(TOKENIZER_FILENAME).exists());
         }

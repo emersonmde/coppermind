@@ -272,6 +272,7 @@ async fn populate_store(store: &InMemoryDocumentStore, size: usize) {
         let chunk_id = ChunkId::from_u64(i as u64);
         let record = ChunkRecord {
             id: chunk_id,
+            document_id: None,
             text: sample_text(i as u64),
             metadata: ChunkSourceMetadata {
                 filename: Some(format!("doc_{}.txt", i)),

@@ -423,8 +423,8 @@ async fn test_full_search_pipeline() {
     }
 
     // Verify index state
-    let (doc_count, _tokens, _avg) = engine.get_index_metrics_sync();
-    assert!(doc_count > 0, "Should have indexed documents");
+    let (_doc_count, chunk_count, _tokens, _avg) = engine.get_index_metrics_sync();
+    assert!(chunk_count > 0, "Should have indexed chunks");
 
     // Test semantic search for "memory safety"
     let query = "memory safety and borrow checker";

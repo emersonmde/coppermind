@@ -18,7 +18,7 @@
 //! ## IndexedDB (Web)
 //!
 //! Browser-native storage with zero bundle cost:
-//! - **O(1) key lookups**: Direct access by DocId
+//! - **O(1) key lookups**: Direct access by ChunkId
 //! - **Persistent**: Survives page refreshes
 //! - **Structured storage**: Separate object stores for documents, embeddings, sources
 //!

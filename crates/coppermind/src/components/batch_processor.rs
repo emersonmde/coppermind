@@ -221,7 +221,7 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
                     batches[batch_idx].files[file_idx].metrics = Some(chunk_result.metrics);
                 }
 
-                // Index chunks in search engine with source tracking
+                // Index chunks in search engine with source and document tracking
                 if let Some(engine_lock) = &engine {
                     match index_chunks(
                         engine_lock.clone(),
@@ -229,6 +229,7 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
                         file_name,
                         &source_id,
                         &content_hash,
+                        contents, // Pass full text for document-level BM25 (ADR-008)
                     )
                     .await
                     {
@@ -325,7 +326,7 @@ async fn process_batch_inner<S: DocumentStore + Send + Sync + 'static>(
             }
 
             // Get engine metrics for status update (while lock is held)
-            let (doc_count, tokens, _) = search_engine.get_index_metrics_sync();
+            let (doc_count, _chunk_count, tokens, _avg) = search_engine.get_index_metrics_sync();
             (doc_count, tokens)
         };
 
@@ -496,7 +497,7 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
                     batches[batch_idx].files[file_idx].metrics = Some(chunk_result.metrics);
                 }
 
-                // Index chunks in search engine with source tracking
+                // Index chunks in search engine with source and document tracking
                 if let Some(engine_lock) = &engine {
                     match index_chunks(
                         engine_lock.clone(),
@@ -504,6 +505,7 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
                         file_name,
                         &source_id,
                         &content_hash,
+                        contents, // Pass full text for document-level BM25 (ADR-008)
                     )
                     .await
                     {
@@ -600,7 +602,7 @@ async fn process_batch_inner<S: DocumentStore + 'static>(
             }
 
             // Get engine metrics for status update (while lock is held)
-            let (doc_count, tokens, _) = search_engine.get_index_metrics_sync();
+            let (doc_count, _chunk_count, tokens, _avg) = search_engine.get_index_metrics_sync();
             (doc_count, tokens)
         };
 

@@ -472,7 +472,8 @@ pub fn App() -> Element {
                 match create_platform_document_store().await {
                     Ok(store) => match initialize_search_engine(store).await {
                         Ok(engine) => {
-                            let (doc_count, total_tokens, _) = engine.get_index_metrics_sync();
+                            let (doc_count, _chunk_count, total_tokens, _avg) =
+                                engine.get_index_metrics_sync();
                             // Arc is single-threaded on WASM (no Send/Sync needed)
                             #[cfg(target_arch = "wasm32")]
                             #[allow(clippy::arc_with_non_send_sync)]

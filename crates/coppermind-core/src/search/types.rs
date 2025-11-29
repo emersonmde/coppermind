@@ -80,11 +80,6 @@ impl ChunkId {
     }
 }
 
-/// Type alias for backward compatibility during migration.
-/// Deprecated: Use `ChunkId` instead.
-#[deprecated(since = "0.2.0", note = "Use ChunkId instead - see ADR-008")]
-pub type DocId = ChunkId;
-
 // ============================================================================
 // Document-Level Types (ADR-008: Multi-Level Indexing)
 // ============================================================================
@@ -248,11 +243,6 @@ pub struct Chunk {
     pub metadata: ChunkSourceMetadata,
 }
 
-/// Type alias for backward compatibility during migration.
-/// Deprecated: Use `Chunk` instead.
-#[deprecated(since = "0.2.0", note = "Use Chunk instead - see ADR-008")]
-pub type Document = Chunk;
-
 /// Chunk source metadata.
 ///
 /// Contains optional filename, source information, and creation timestamp.
@@ -280,14 +270,6 @@ impl Default for ChunkSourceMetadata {
     }
 }
 
-/// Type alias for backward compatibility during migration.
-/// Deprecated: Use `ChunkSourceMetadata` instead.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use ChunkSourceMetadata instead - see ADR-008"
-)]
-pub type DocumentMetadata = ChunkSourceMetadata;
-
 /// Stored chunk record with assigned ID.
 ///
 /// Internal representation of a chunk after it's been indexed.
@@ -299,18 +281,17 @@ pub type DocumentMetadata = ChunkSourceMetadata;
 pub struct ChunkRecord {
     /// Unique chunk identifier
     pub id: ChunkId,
+    /// Parent document ID (for document-level search - ADR-008)
+    ///
+    /// `None` for legacy chunks indexed before ADR-008.
+    /// New chunks indexed via `add_chunk_to_document()` will have this set.
+    #[serde(default)]
+    pub document_id: Option<DocumentId>,
     /// Chunk text content
     pub text: String,
     /// Chunk source metadata
     pub metadata: ChunkSourceMetadata,
 }
-
-/// Type alias for backward compatibility during migration.
-/// Deprecated: Use `ChunkRecord` instead.
-/// Note: The old `DocumentRecord` was renamed to `ChunkRecord`. There's now a new
-/// `DocumentRecord` struct for document-level storage. Use `ChunkRecord` for chunk data.
-#[deprecated(since = "0.2.0", note = "Use ChunkRecord instead - see ADR-008")]
-pub type OldDocumentRecord = ChunkRecord;
 
 /// Search result with relevance scores.
 ///
@@ -355,6 +336,39 @@ pub struct FileSearchResult {
     pub chunks: Vec<SearchResult>,
     /// Timestamp from first indexed chunk
     pub created_at: u64,
+}
+
+impl From<DocumentSearchResult> for FileSearchResult {
+    /// Convert a DocumentSearchResult to a FileSearchResult for UI compatibility.
+    ///
+    /// Maps document-level metadata to file-level fields used by the UI.
+    fn from(doc: DocumentSearchResult) -> Self {
+        // Extract file name from source_id (last component of path)
+        let file_name = doc
+            .metadata
+            .source_id
+            .rsplit('/')
+            .next()
+            .unwrap_or(&doc.metadata.source_id)
+            .to_string();
+
+        // Use the title as file name if available, otherwise use extracted name
+        let display_name = if doc.metadata.title.is_empty() {
+            file_name.clone()
+        } else {
+            doc.metadata.title.clone()
+        };
+
+        FileSearchResult {
+            file_path: doc.metadata.source_id.clone(),
+            file_name: display_name,
+            score: doc.score,
+            vector_score: doc.best_chunk_score,
+            keyword_score: doc.doc_keyword_score,
+            chunks: doc.chunks,
+            created_at: doc.metadata.created_at,
+        }
+    }
 }
 
 /// Error types for search operations.
@@ -425,7 +439,8 @@ impl From<String> for SearchError {
 /// Increment this when making breaking changes to the persistence format.
 /// The version history:
 /// - v1: Initial format (documents.json + embeddings.bin + manifest.json)
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+/// - v2: ADR-008 multi-level indexing (document_count renamed to chunk_count)
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Index manifest containing version and metadata.
 ///
@@ -441,11 +456,15 @@ pub struct IndexManifest {
     pub created_at: String,
     /// ISO 8601 timestamp of last modification
     pub last_modified: String,
-    /// Number of documents in the index
-    pub document_count: usize,
+    /// Number of documents in the index (files, URLs - user-facing metric)
+    #[serde(default)]
+    pub doc_count: usize,
+    /// Number of chunks in the index (renamed from document_count in v2)
+    #[serde(alias = "document_count")]
+    pub chunk_count: usize,
     /// Embedding dimension (e.g., 512 for JinaBERT)
     pub embedding_dimension: usize,
-    /// Total tokens across all documents (for metrics display)
+    /// Total tokens across all chunks (for metrics display)
     #[serde(default)]
     pub total_tokens: usize,
 }
@@ -456,24 +475,25 @@ impl IndexManifest {
         let now = Self::current_timestamp();
         Self {
             schema_version: CURRENT_SCHEMA_VERSION,
-            min_compatible_version: 1, // v1 can read v1
+            min_compatible_version: 1, // v2 can read v1 with serde alias
             created_at: now.clone(),
             last_modified: now,
-            document_count: 0,
+            doc_count: 0,
+            chunk_count: 0,
             embedding_dimension,
             total_tokens: 0,
         }
     }
 
-    /// Updates the manifest after documents are added/removed.
-    pub fn update(&mut self, document_count: usize) {
-        self.document_count = document_count;
+    /// Updates the manifest after chunks are added/removed.
+    pub fn update(&mut self, chunk_count: usize) {
+        self.chunk_count = chunk_count;
         self.last_modified = Self::current_timestamp();
     }
 
     /// Updates the manifest with token count.
-    pub fn update_with_tokens(&mut self, document_count: usize, total_tokens: usize) {
-        self.document_count = document_count;
+    pub fn update_with_tokens(&mut self, chunk_count: usize, total_tokens: usize) {
+        self.chunk_count = chunk_count;
         self.total_tokens = total_tokens;
         self.last_modified = Self::current_timestamp();
     }
@@ -537,11 +557,6 @@ impl Default for PersistedChunks {
         Self::new()
     }
 }
-
-/// Type alias for backward compatibility during migration.
-/// Deprecated: Use `PersistedChunks` instead.
-#[deprecated(since = "0.2.0", note = "Use PersistedChunks instead - see ADR-008")]
-pub type PersistedDocuments = PersistedChunks;
 
 /// Result of loading a persisted index.
 #[derive(Debug)]

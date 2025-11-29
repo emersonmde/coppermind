@@ -1,6 +1,17 @@
 //! File-level aggregation for search results.
 //!
 //! Groups chunk-level search results by source file for cleaner UX.
+//!
+//! # Note on ADR-008
+//!
+//! With ADR-008 document-level indexing, the recommended approach is to use
+//! [`HybridSearchEngine::search_documents`](super::HybridSearchEngine::search_documents)
+//! which returns [`DocumentSearchResult`](super::types::DocumentSearchResult) with built-in
+//! file grouping. However, this module remains useful for:
+//!
+//! - Legacy code using chunk-level [`search()`](super::HybridSearchEngine::search)
+//! - Converting chunk results to file-level UI display
+//! - Custom aggregation needs where document-level search isn't appropriate
 
 use super::types::{FileSearchResult, SearchResult};
 use std::collections::HashMap;

@@ -763,6 +763,7 @@ mod tests {
     fn make_test_chunk(id: u64, text: &str) -> ChunkRecord {
         ChunkRecord {
             id: ChunkId::from_u64(id),
+            document_id: None,
             text: text.to_string(),
             metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),

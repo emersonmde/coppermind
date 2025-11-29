@@ -174,11 +174,60 @@ pub async fn check_source_update<S: DocumentStore>(
     }
 }
 
-/// Indexes embedding chunks in the search engine with source tracking.
+/// Prepared chunk data ready for indexing.
+///
+/// Contains the chunk, its embedding, original index, and token count.
+/// Used by both desktop and web [`index_chunks`] implementations.
+type PreparedChunk = (Chunk, Vec<f32>, usize, usize);
+
+/// Prepares chunks for indexing from embedding results.
+///
+/// Converts [`ChunkEmbeddingResult`] items into [`Chunk`] objects with proper metadata.
+/// This is a shared helper used by both platform-specific [`index_chunks`] implementations.
+///
+/// # Arguments
+///
+/// * `embedding_results` - Slice of embedding results from the embedding pipeline
+/// * `file_label` - Display label for the file (used in chunk metadata)
+/// * `source_id` - Stable source identifier (path or URL)
+/// * `timestamp` - Unix timestamp for chunk creation time
+fn prepare_chunks_for_indexing(
+    embedding_results: &[ChunkEmbeddingResult],
+    file_label: &str,
+    source_id: &str,
+    timestamp: u64,
+) -> Vec<PreparedChunk> {
+    embedding_results
+        .iter()
+        .map(|chunk_result| {
+            let chunk = Chunk {
+                text: chunk_result.text.clone(),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!(
+                        "{} (chunk {})",
+                        file_label,
+                        chunk_result.chunk_index + 1
+                    )),
+                    source: Some(source_id.to_string()),
+                    created_at: timestamp,
+                },
+            };
+            (
+                chunk,
+                chunk_result.embedding.clone(),
+                chunk_result.chunk_index,
+                chunk_result.token_count,
+            )
+        })
+        .collect()
+}
+
+/// Indexes embedding chunks in the search engine with source and document tracking.
 ///
 /// Takes embedding results (which include the decoded text for each chunk)
-/// and indexes them in the search engine, registering them with a source
-/// for future update detection.
+/// and indexes them in the search engine, registering them with both:
+/// - **Source tracking**: For update detection (content hash-based)
+/// - **Document-level indexing**: For document-level BM25 search (ADR-008)
 ///
 /// # Type Parameters
 ///
@@ -191,15 +240,30 @@ pub async fn check_source_update<S: DocumentStore>(
 /// * `file_label` - Label for the file (used in metadata)
 /// * `source_id` - Stable identifier for the source (path on desktop, web:{filename} on web)
 /// * `content_hash` - SHA-256 hash of the source content
+/// * `full_text` - Complete text content of the file (for document-level BM25)
 ///
 /// # Returns
 ///
 /// Number of successfully indexed chunks, or an error if indexing fails.
 ///
-/// # Platform-Specific Behavior
+/// # Platform-Specific Implementations
 ///
-/// - **Web**: Uses `instant::SystemTime` for timestamps
-/// - **Desktop**: Uses `std::time::SystemTime`
+/// This function has two implementations with identical logic but different async handling:
+///
+/// - **Desktop** (`cfg(not(target_arch = "wasm32"))`): Uses `run_blocking` to offload
+///   CPU-intensive indexing to a blocking thread pool. The async engine calls use
+///   `futures::executor::block_on` from within the blocking context. Requires `Send + Sync`.
+///
+/// - **Web** (`cfg(target_arch = "wasm32")`): Uses native async/await directly since
+///   WASM is single-threaded. No `Send + Sync` bounds required.
+///
+/// The logic duplication is intentional - extracting a common async function would require
+/// either complex trait bounds or macros. The two implementations are kept in sync manually.
+/// Key shared behaviors verified by [`prepare_chunks_for_indexing`]:
+/// - Chunk preparation (metadata, timestamps)
+/// - Source registration and completion
+/// - Document creation and finalization (ADR-008)
+/// - Metrics recording
 ///
 /// # Examples
 ///
@@ -210,6 +274,7 @@ pub async fn check_source_update<S: DocumentStore>(
 ///     "example.txt",
 ///     "/path/to/example.txt",
 ///     "abc123...",
+///     &file_content,
 /// ).await?;
 /// println!("Indexed {} chunks", indexed);
 /// ```
@@ -222,36 +287,17 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
     file_label: &str,
     source_id: &str,
     content_hash: &str,
+    full_text: &str,
 ) -> Result<usize, FileProcessingError> {
-    // Prepare chunks outside the lock
+    // Prepare chunks outside the lock using shared helper
     let timestamp = get_current_timestamp();
-    let file_label_owned = file_label.to_string();
+    let chunks = prepare_chunks_for_indexing(embedding_results, file_label, source_id, timestamp);
+
+    // Clone owned strings for move into blocking closure
     let source_id_owned = source_id.to_string();
     let content_hash_owned = content_hash.to_string();
-
-    let chunks: Vec<(Chunk, Vec<f32>, usize, usize)> = embedding_results
-        .iter()
-        .map(|chunk_result| {
-            let chunk = Chunk {
-                text: chunk_result.text.clone(),
-                metadata: ChunkSourceMetadata {
-                    filename: Some(format!(
-                        "{} (chunk {})",
-                        file_label_owned,
-                        chunk_result.chunk_index + 1
-                    )),
-                    source: Some(source_id_owned.clone()),
-                    created_at: timestamp,
-                },
-            };
-            (
-                chunk,
-                chunk_result.embedding.clone(),
-                chunk_result.chunk_index,
-                chunk_result.token_count,
-            )
-        })
-        .collect();
+    let full_text_owned = full_text.to_string();
+    let file_label_owned = file_label.to_string();
 
     // Move all CPU-intensive indexing to blocking thread pool
     let index_start = Instant::now();
@@ -260,7 +306,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
         // Use futures::executor::block_on for the lock acquisition
         let mut search_engine = futures::executor::block_on(engine.lock());
 
-        // Register the source before adding documents
+        // Register the source before adding documents (for update detection)
         if let Err(e) = futures::executor::block_on(
             search_engine.register_source(&source_id_owned, content_hash_owned.clone()),
         ) {
@@ -270,21 +316,37 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
             )));
         }
 
+        // Create document for document-level BM25 (ADR-008)
+        let document_id = match futures::executor::block_on(search_engine.create_document(
+            &source_id_owned,
+            &file_label_owned,
+            &content_hash_owned,
+            &full_text_owned,
+        )) {
+            Ok(id) => id,
+            Err(e) => {
+                return Err(FileProcessingError::IndexingFailed(format!(
+                    "Failed to create document: {:?}",
+                    e
+                )));
+            }
+        };
+
         let mut indexed_count = 0;
         let mut total_index_time_ms = 0.0;
 
         for (chunk, embedding, chunk_index, token_count) in chunks {
             let insert_start = Instant::now();
 
-            // add_chunk_with_tokens is async but doesn't do any actual async work
-            // We can safely block_on it in the blocking thread
-            match futures::executor::block_on(search_engine.add_chunk_with_tokens(
+            // Use document-aware chunk indexing with token tracking (ADR-008)
+            match futures::executor::block_on(search_engine.add_chunk_to_document_with_tokens(
+                document_id,
                 chunk,
                 embedding,
                 token_count,
             )) {
                 Ok(chunk_id) => {
-                    // Track this chunk as part of the source
+                    // Also track in legacy source system for update detection
                     if let Err(e) = futures::executor::block_on(
                         search_engine.add_chunk_to_source(&source_id_owned, chunk_id),
                     ) {
@@ -310,6 +372,14 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
                     )));
                 }
             }
+        }
+
+        // Finalize document (update chunk count)
+        if let Err(e) = futures::executor::block_on(search_engine.finalize_document(document_id)) {
+            return Err(FileProcessingError::IndexingFailed(format!(
+                "Failed to finalize document: {:?}",
+                e
+            )));
         }
 
         // Mark the source as complete (all chunks successfully added)
@@ -344,45 +414,30 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     file_label: &str,
     source_id: &str,
     content_hash: &str,
+    full_text: &str,
 ) -> Result<usize, FileProcessingError> {
-    // Prepare chunks outside the lock
+    // Prepare chunks outside the lock using shared helper
     let timestamp = get_current_timestamp();
-    let file_label_owned = file_label.to_string();
-
-    let chunks: Vec<(Chunk, Vec<f32>, usize, usize)> = embedding_results
-        .iter()
-        .map(|chunk_result| {
-            let chunk = Chunk {
-                text: chunk_result.text.clone(),
-                metadata: ChunkSourceMetadata {
-                    filename: Some(format!(
-                        "{} (chunk {})",
-                        file_label_owned,
-                        chunk_result.chunk_index + 1
-                    )),
-                    source: Some(source_id.to_string()),
-                    created_at: timestamp,
-                },
-            };
-            (
-                chunk,
-                chunk_result.embedding.clone(),
-                chunk_result.chunk_index,
-                chunk_result.token_count,
-            )
-        })
-        .collect();
+    let chunks = prepare_chunks_for_indexing(embedding_results, file_label, source_id, timestamp);
 
     // Web is single-threaded, so we can index directly without blocking thread pool
     let index_start = Instant::now();
     let mut search_engine = engine.lock().await;
 
-    // Register the source before adding documents
+    // Register the source before adding documents (for update detection)
     search_engine
         .register_source(source_id, content_hash.to_string())
         .await
         .map_err(|e| {
             FileProcessingError::IndexingFailed(format!("Failed to register source: {:?}", e))
+        })?;
+
+    // Create document for document-level BM25 (ADR-008)
+    let document_id = search_engine
+        .create_document(source_id, file_label, content_hash, full_text)
+        .await
+        .map_err(|e| {
+            FileProcessingError::IndexingFailed(format!("Failed to create document: {:?}", e))
         })?;
 
     let mut indexed_count = 0;
@@ -391,12 +446,13 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     for (chunk, embedding, chunk_index, token_count) in chunks {
         let insert_start = Instant::now();
 
+        // Use document-aware chunk indexing with token tracking (ADR-008)
         match search_engine
-            .add_chunk_with_tokens(chunk, embedding, token_count)
+            .add_chunk_to_document_with_tokens(document_id, chunk, embedding, token_count)
             .await
         {
             Ok(chunk_id) => {
-                // Track this chunk as part of the source
+                // Also track in legacy source system for update detection
                 search_engine
                     .add_chunk_to_source(source_id, chunk_id)
                     .await
@@ -424,6 +480,14 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
             }
         }
     }
+
+    // Finalize document (update chunk count)
+    search_engine
+        .finalize_document(document_id)
+        .await
+        .map_err(|e| {
+            FileProcessingError::IndexingFailed(format!("Failed to finalize document: {:?}", e))
+        })?;
 
     // Mark the source as complete (all chunks successfully added)
     search_engine
