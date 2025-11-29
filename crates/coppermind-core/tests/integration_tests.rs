@@ -12,7 +12,7 @@ use coppermind_core::chunking::{create_chunker, detect_file_type, FileType};
 use coppermind_core::config;
 use coppermind_core::embedding::{Embedder, JinaBertConfig, JinaBertEmbedder, TokenizerHandle};
 use coppermind_core::processing::IndexingPipeline;
-use coppermind_core::search::{Document, DocumentMetadata, HybridSearchEngine};
+use coppermind_core::search::{Chunk, ChunkSourceMetadata, HybridSearchEngine};
 use coppermind_core::storage::InMemoryDocumentStore;
 use std::sync::Arc;
 
@@ -105,19 +105,19 @@ fn get_static_tokenizer() -> &'static tokenizers::Tokenizer {
     })
 }
 
-/// Helper to create a Document from text
-fn make_document(text: &str) -> Document {
-    Document {
+/// Helper to create a Chunk from text
+fn make_chunk(text: &str) -> Chunk {
+    Chunk {
         text: text.to_string(),
-        metadata: DocumentMetadata::default(),
+        metadata: ChunkSourceMetadata::default(),
     }
 }
 
-/// Helper to create a Document with source info
-fn make_document_with_source(text: &str, source: &str) -> Document {
-    Document {
+/// Helper to create a Chunk with source info
+fn make_chunk_with_source(text: &str, source: &str) -> Chunk {
+    Chunk {
         text: text.to_string(),
-        metadata: DocumentMetadata {
+        metadata: ChunkSourceMetadata {
             source: Some(source.to_string()),
             ..Default::default()
         },
@@ -414,9 +414,9 @@ async fn test_full_search_pipeline() {
             .expect("Indexing should succeed");
 
         for chunk in result.chunks {
-            let doc = make_document_with_source(&chunk.chunk.text, source);
+            let doc = make_chunk_with_source(&chunk.chunk.text, source);
             engine
-                .add_document(doc, chunk.embedding)
+                .add_chunk(doc, chunk.embedding)
                 .await
                 .expect("Adding document should succeed");
         }
@@ -450,7 +450,7 @@ async fn test_full_search_pipeline() {
     );
 
     // Verify we can retrieve the document
-    let doc_record = engine.get_document(&top_result.doc_id).await.unwrap();
+    let doc_record = engine.get_chunk(&top_result.chunk_id).await.unwrap();
     assert!(doc_record.is_some(), "Should be able to retrieve document");
 }
 
@@ -472,8 +472,8 @@ async fn test_search_with_keyword_boost() {
             .expect("Indexing should succeed");
 
         for chunk in result.chunks {
-            let doc = make_document(&chunk.chunk.text);
-            engine.add_document(doc, chunk.embedding).await.unwrap();
+            let doc = make_chunk(&chunk.chunk.text);
+            engine.add_chunk(doc, chunk.embedding).await.unwrap();
         }
     }
 
@@ -512,8 +512,8 @@ async fn test_search_semantic_similarity() {
             .expect("Indexing should succeed");
 
         for chunk in result.chunks {
-            let doc = make_document(&chunk.chunk.text);
-            engine.add_document(doc, chunk.embedding).await.unwrap();
+            let doc = make_chunk(&chunk.chunk.text);
+            engine.add_chunk(doc, chunk.embedding).await.unwrap();
         }
     }
 
@@ -552,8 +552,8 @@ async fn test_search_empty_query() {
     let text = "test document about programming";
     let tokens = tokenizer.tokenize(text).unwrap();
     let embedding = embedder.embed_tokens(tokens.clone()).unwrap();
-    let doc = make_document(text);
-    engine.add_document(doc, embedding.clone()).await.unwrap();
+    let doc = make_chunk(text);
+    engine.add_chunk(doc, embedding.clone()).await.unwrap();
 
     // Search with empty query text - should fall back to vector-only search
     // Note: The engine may reject empty queries, so we use the embedding
@@ -588,8 +588,8 @@ async fn test_search_result_ordering() {
     for text in &docs {
         let tokens = tokenizer.tokenize(text).unwrap();
         let embedding = embedder.embed_tokens(tokens).unwrap();
-        let doc = make_document(text);
-        engine.add_document(doc, embedding).await.unwrap();
+        let doc = make_chunk(text);
+        engine.add_chunk(doc, embedding).await.unwrap();
     }
 
     // Query about Rust memory safety
@@ -638,9 +638,9 @@ async fn test_source_deletion_and_search() {
     let doc1_text = "Rust programming language";
     let tokens1 = tokenizer.tokenize(doc1_text).unwrap();
     let emb1 = embedder.embed_tokens(tokens1).unwrap();
-    let doc1 = make_document_with_source(doc1_text, source1);
-    let id1 = engine.add_document(doc1, emb1.clone()).await.unwrap();
-    engine.add_doc_to_source(source1, id1).await.unwrap();
+    let doc1 = make_chunk_with_source(doc1_text, source1);
+    let id1 = engine.add_chunk(doc1, emb1.clone()).await.unwrap();
+    engine.add_chunk_to_source(source1, id1).await.unwrap();
     engine.complete_source(source1).await.unwrap();
 
     // Register and add second source
@@ -653,9 +653,9 @@ async fn test_source_deletion_and_search() {
     let doc2_text = "Python programming language";
     let tokens2 = tokenizer.tokenize(doc2_text).unwrap();
     let emb2 = embedder.embed_tokens(tokens2).unwrap();
-    let doc2 = make_document_with_source(doc2_text, source2);
-    let id2 = engine.add_document(doc2, emb2).await.unwrap();
-    engine.add_doc_to_source(source2, id2).await.unwrap();
+    let doc2 = make_chunk_with_source(doc2_text, source2);
+    let id2 = engine.add_chunk(doc2, emb2).await.unwrap();
+    engine.add_chunk_to_source(source2, id2).await.unwrap();
     engine.complete_source(source2).await.unwrap();
 
     // Delete first source
@@ -694,9 +694,9 @@ async fn test_source_tracking() {
     let text = "content";
     let tokens = tokenizer.tokenize(text).unwrap();
     let embedding = embedder.embed_tokens(tokens).unwrap();
-    let doc = make_document_with_source(text, source);
-    let doc_id = engine.add_document(doc, embedding).await.unwrap();
-    engine.add_doc_to_source(source, doc_id).await.unwrap();
+    let doc = make_chunk_with_source(text, source);
+    let doc_id = engine.add_chunk(doc, embedding).await.unwrap();
+    engine.add_chunk_to_source(source, doc_id).await.unwrap();
     engine.complete_source(source).await.unwrap();
 
     // Verify source tracking
@@ -748,9 +748,9 @@ async fn test_index_compaction() {
         let text = format!("document {} content", i);
         let tokens = tokenizer.tokenize(&text).unwrap();
         let embedding = embedder.embed_tokens(tokens).unwrap();
-        let doc = make_document_with_source(&text, source);
-        let doc_id = engine.add_document(doc, embedding).await.unwrap();
-        engine.add_doc_to_source(source, doc_id).await.unwrap();
+        let doc = make_chunk_with_source(&text, source);
+        let doc_id = engine.add_chunk(doc, embedding).await.unwrap();
+        engine.add_chunk_to_source(source, doc_id).await.unwrap();
     }
     engine.complete_source(source).await.unwrap();
 
@@ -937,14 +937,14 @@ async fn test_complete_index_and_search_workflow() {
             .expect("Processing should succeed");
 
         for chunk in result.chunks {
-            let doc = Document {
+            let doc = Chunk {
                 text: chunk.chunk.text.clone(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some(filename.to_string()),
                     ..Default::default()
                 },
             };
-            engine.add_document(doc, chunk.embedding).await.unwrap();
+            engine.add_chunk(doc, chunk.embedding).await.unwrap();
             total_chunks += 1;
         }
     }

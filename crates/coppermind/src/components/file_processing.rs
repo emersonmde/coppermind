@@ -12,7 +12,7 @@ use crate::error::FileProcessingError;
 use crate::metrics::global_metrics;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::platform::run_blocking;
-use crate::search::types::{get_current_timestamp, Document, DocumentMetadata};
+use crate::search::types::{get_current_timestamp, Chunk, ChunkSourceMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::DocumentStore;
 #[cfg(feature = "desktop")]
@@ -147,7 +147,7 @@ pub async fn check_source_update<S: DocumentStore>(
                 // Source exists with different hash - need to update
                 match engine.get_source(source_id).await {
                     Ok(Some(record)) => Ok(SourceUpdateAction::Update {
-                        old_chunk_count: record.doc_ids.len(),
+                        old_chunk_count: record.chunk_ids.len(),
                     }),
                     Ok(None) => {
                         // Race condition: source was deleted between checks
@@ -223,18 +223,18 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
     source_id: &str,
     content_hash: &str,
 ) -> Result<usize, FileProcessingError> {
-    // Prepare documents outside the lock
+    // Prepare chunks outside the lock
     let timestamp = get_current_timestamp();
     let file_label_owned = file_label.to_string();
     let source_id_owned = source_id.to_string();
     let content_hash_owned = content_hash.to_string();
 
-    let docs: Vec<(Document, Vec<f32>, usize, usize)> = embedding_results
+    let chunks: Vec<(Chunk, Vec<f32>, usize, usize)> = embedding_results
         .iter()
         .map(|chunk_result| {
-            let doc = Document {
+            let chunk = Chunk {
                 text: chunk_result.text.clone(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some(format!(
                         "{} (chunk {})",
                         file_label_owned,
@@ -245,7 +245,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
                 },
             };
             (
-                doc,
+                chunk,
                 chunk_result.embedding.clone(),
                 chunk_result.chunk_index,
                 chunk_result.token_count,
@@ -273,20 +273,20 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
         let mut indexed_count = 0;
         let mut total_index_time_ms = 0.0;
 
-        for (doc, embedding, chunk_index, token_count) in docs {
+        for (chunk, embedding, chunk_index, token_count) in chunks {
             let insert_start = Instant::now();
 
-            // add_document_with_tokens is async but doesn't do any actual async work
+            // add_chunk_with_tokens is async but doesn't do any actual async work
             // We can safely block_on it in the blocking thread
-            match futures::executor::block_on(search_engine.add_document_with_tokens(
-                doc,
+            match futures::executor::block_on(search_engine.add_chunk_with_tokens(
+                chunk,
                 embedding,
                 token_count,
             )) {
-                Ok(doc_id) => {
+                Ok(chunk_id) => {
                     // Track this chunk as part of the source
                     if let Err(e) = futures::executor::block_on(
-                        search_engine.add_doc_to_source(&source_id_owned, doc_id),
+                        search_engine.add_chunk_to_source(&source_id_owned, chunk_id),
                     ) {
                         return Err(FileProcessingError::IndexingFailed(format!(
                             "Failed to track chunk {} in source: {:?}",
@@ -345,16 +345,16 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     source_id: &str,
     content_hash: &str,
 ) -> Result<usize, FileProcessingError> {
-    // Prepare documents outside the lock
+    // Prepare chunks outside the lock
     let timestamp = get_current_timestamp();
     let file_label_owned = file_label.to_string();
 
-    let docs: Vec<(Document, Vec<f32>, usize, usize)> = embedding_results
+    let chunks: Vec<(Chunk, Vec<f32>, usize, usize)> = embedding_results
         .iter()
         .map(|chunk_result| {
-            let doc = Document {
+            let chunk = Chunk {
                 text: chunk_result.text.clone(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some(format!(
                         "{} (chunk {})",
                         file_label_owned,
@@ -365,7 +365,7 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
                 },
             };
             (
-                doc,
+                chunk,
                 chunk_result.embedding.clone(),
                 chunk_result.chunk_index,
                 chunk_result.token_count,
@@ -388,17 +388,17 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
     let mut indexed_count = 0;
     let mut total_index_time_ms = 0.0;
 
-    for (doc, embedding, chunk_index, token_count) in docs {
+    for (chunk, embedding, chunk_index, token_count) in chunks {
         let insert_start = Instant::now();
 
         match search_engine
-            .add_document_with_tokens(doc, embedding, token_count)
+            .add_chunk_with_tokens(chunk, embedding, token_count)
             .await
         {
-            Ok(doc_id) => {
+            Ok(chunk_id) => {
                 // Track this chunk as part of the source
                 search_engine
-                    .add_doc_to_source(source_id, doc_id)
+                    .add_chunk_to_source(source_id, chunk_id)
                     .await
                     .map_err(|e| {
                         FileProcessingError::IndexingFailed(format!(

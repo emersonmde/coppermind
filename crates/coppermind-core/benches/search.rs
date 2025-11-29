@@ -17,7 +17,7 @@
 use coppermind_core::config::EMBEDDING_DIM;
 use coppermind_core::search::fusion::reciprocal_rank_fusion;
 use coppermind_core::search::keyword::KeywordSearchEngine;
-use coppermind_core::search::types::{DocId, Document, DocumentMetadata};
+use coppermind_core::search::types::{Chunk, ChunkId, ChunkSourceMetadata};
 use coppermind_core::search::vector::VectorSearchEngine;
 use coppermind_core::search::HybridSearchEngine;
 use coppermind_core::storage::InMemoryDocumentStore;
@@ -111,11 +111,11 @@ fn sample_text(id: u64) -> String {
     )
 }
 
-/// Create a test document
-fn create_document(id: u64) -> Document {
-    Document {
+/// Create a test chunk
+fn create_chunk(id: u64) -> Chunk {
+    Chunk {
         text: sample_text(id),
-        metadata: DocumentMetadata {
+        metadata: ChunkSourceMetadata {
             filename: Some(format!("doc_{}.txt", id)),
             source: Some(format!("/test/doc_{}.txt", id)),
             created_at: 1700000000 + id,
@@ -127,7 +127,7 @@ fn create_document(id: u64) -> Document {
 fn build_vector_engine(size: usize) -> VectorSearchEngine {
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..size {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
     engine
 }
@@ -136,7 +136,7 @@ fn build_vector_engine(size: usize) -> VectorSearchEngine {
 fn build_keyword_engine(size: usize) -> KeywordSearchEngine {
     let mut engine = KeywordSearchEngine::new();
     for i in 0..size {
-        engine.add_document(DocId::from_u64(i as u64), sample_text(i as u64));
+        engine.add_chunk(ChunkId::from_u64(i as u64), sample_text(i as u64));
     }
     engine
 }
@@ -252,7 +252,7 @@ fn build_hybrid_engine(
         .unwrap();
 
     for i in 0..size {
-        rt.block_on(engine.add_document(create_document(i as u64), seeded_embedding(i as u64)))
+        rt.block_on(engine.add_chunk(create_chunk(i as u64), seeded_embedding(i as u64)))
             .unwrap();
     }
     engine
@@ -373,12 +373,12 @@ fn bench_rrf_fusion(c: &mut Criterion) {
     for size in [10, 50, 100, 200] {
         // Create mock rankings
         let vector_results: Vec<_> = (0..size)
-            .map(|i| (DocId::from_u64(i as u64), 1.0 - (i as f32 / size as f32)))
+            .map(|i| (ChunkId::from_u64(i as u64), 1.0 - (i as f32 / size as f32)))
             .collect();
 
         let keyword_results: Vec<_> = (0..size)
             .rev()
-            .map(|i| (DocId::from_u64(i as u64), 1.0 - (i as f32 / size as f32)))
+            .map(|i| (ChunkId::from_u64(i as u64), 1.0 - (i as f32 / size as f32)))
             .collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
@@ -419,13 +419,13 @@ fn bench_search_modality_comparison(c: &mut Criterion) {
         .unwrap();
 
     for i in 0..size {
-        let doc_id = DocId::from_u64(i as u64);
+        let doc_id = ChunkId::from_u64(i as u64);
         let embedding = seeded_embedding(i as u64);
         let text = sample_text(i as u64);
 
-        let _ = vector_engine.add_document(doc_id, embedding.clone());
-        keyword_engine.add_document(doc_id, text.clone());
-        rt.block_on(hybrid_engine.add_document(create_document(i as u64), embedding))
+        let _ = vector_engine.add_chunk(doc_id, embedding.clone());
+        keyword_engine.add_chunk(doc_id, text.clone());
+        rt.block_on(hybrid_engine.add_chunk(create_chunk(i as u64), embedding))
             .unwrap();
     }
 
@@ -484,7 +484,7 @@ fn bench_query_complexity(c: &mut Criterion) {
         .unwrap();
 
     for i in 0..size {
-        rt.block_on(engine.add_document(create_document(i as u64), seeded_embedding(i as u64)))
+        rt.block_on(engine.add_chunk(create_chunk(i as u64), seeded_embedding(i as u64)))
             .unwrap();
     }
 
@@ -576,7 +576,7 @@ fn bench_dimension_sensitivity(c: &mut Criterion) {
         // Build index
         let mut engine = VectorSearchEngine::new(dim);
         for (i, embedding) in embeddings.iter().enumerate() {
-            let _ = engine.add_document(DocId::from_u64(i as u64), embedding.clone());
+            let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
         }
 
         // Query embedding
@@ -637,7 +637,7 @@ fn bench_dimension_build_time(c: &mut Criterion) {
             b.iter(|| {
                 let mut engine = VectorSearchEngine::new(dim);
                 for (i, embedding) in embeddings.iter().enumerate() {
-                    let _ = engine.add_document(DocId::from_u64(i as u64), embedding.clone());
+                    let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
                 }
                 engine
             });

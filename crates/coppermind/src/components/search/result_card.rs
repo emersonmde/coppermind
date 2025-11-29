@@ -146,7 +146,7 @@ pub fn ResultCard(
                     div { class: "cm-detail-bars",
                         for (idx, chunk) in file_result.chunks.iter().enumerate() {
                             ChunkPreview {
-                                key: "{chunk.doc_id.as_u64()}",
+                                key: "{chunk.chunk_id.as_u64()}",
                                 chunk_number: idx + 1,
                                 chunk: chunk.clone()
                             }

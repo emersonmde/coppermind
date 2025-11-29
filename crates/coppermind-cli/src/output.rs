@@ -167,7 +167,7 @@ fn indent_text(text: &str, indent: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use coppermind_core::search::{DocId, DocumentMetadata, SearchResult};
+    use coppermind_core::search::{ChunkId, ChunkSourceMetadata, SearchResult};
 
     fn make_file_result(file_path: &str, text: &str, score: f32) -> FileSearchResult {
         FileSearchResult {
@@ -182,12 +182,12 @@ mod tests {
             keyword_score: Some(score * 0.8),
             created_at: 0,
             chunks: vec![SearchResult {
-                doc_id: DocId::from_u64(1),
+                chunk_id: ChunkId::from_u64(1),
                 score,
                 vector_score: Some(score * 0.9),
                 keyword_score: Some(score * 0.8),
                 text: text.to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some(format!("{} (chunk 1)", file_path)),
                     source: Some(file_path.to_string()),
                     created_at: 0,

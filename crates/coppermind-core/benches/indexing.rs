@@ -16,7 +16,7 @@
 
 use coppermind_core::config::EMBEDDING_DIM;
 use coppermind_core::search::keyword::KeywordSearchEngine;
-use coppermind_core::search::types::{DocId, Document, DocumentMetadata, DocumentRecord};
+use coppermind_core::search::types::{Chunk, ChunkId, ChunkRecord, ChunkSourceMetadata};
 use coppermind_core::search::vector::VectorSearchEngine;
 use coppermind_core::search::HybridSearchEngine;
 use coppermind_core::storage::{DocumentStore, InMemoryDocumentStore};
@@ -104,11 +104,11 @@ fn sample_text(id: u64) -> String {
     )
 }
 
-/// Create a test document
-fn create_document(id: u64) -> Document {
-    Document {
+/// Create a test chunk
+fn create_chunk(id: u64) -> Chunk {
+    Chunk {
         text: sample_text(id),
-        metadata: DocumentMetadata {
+        metadata: ChunkSourceMetadata {
             filename: Some(format!("doc_{}.txt", id)),
             source: Some(format!("/test/doc_{}.txt", id)),
             created_at: 1700000000 + id,
@@ -139,17 +139,15 @@ fn bench_hnsw_single_insert(c: &mut Criterion) {
                         // Setup: create engine with base_size documents
                         let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
                         for i in 0..base_size {
-                            let _ = engine.add_document(
-                                DocId::from_u64(i as u64),
-                                seeded_embedding(i as u64),
-                            );
+                            let _ = engine
+                                .add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
                         }
                         engine
                     },
                     |mut engine| {
                         // Benchmark: insert one more document
-                        let _ = engine.add_document(
-                            DocId::from_u64(base_size as u64),
+                        let _ = engine.add_chunk(
+                            ChunkId::from_u64(base_size as u64),
                             black_box(seeded_embedding(base_size as u64)),
                         );
                         engine
@@ -180,7 +178,7 @@ fn bench_hnsw_batch_insert(c: &mut Criterion) {
             b.iter(|| {
                 let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
                 for (i, embedding) in embeddings.iter().enumerate() {
-                    let _ = engine.add_document(DocId::from_u64(i as u64), embedding.clone());
+                    let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
                 }
                 engine
             });
@@ -210,7 +208,7 @@ fn bench_bm25_batch_insert(c: &mut Criterion) {
             b.iter(|| {
                 let mut engine = KeywordSearchEngine::new();
                 for (i, text) in texts.iter().enumerate() {
-                    engine.add_document(DocId::from_u64(i as u64), text.clone());
+                    engine.add_chunk(ChunkId::from_u64(i as u64), text.clone());
                 }
                 engine
             });
@@ -240,7 +238,7 @@ fn bench_hybrid_add_document(c: &mut Criterion) {
             .unwrap();
 
         for i in 0..base_size {
-            rt.block_on(engine.add_document(create_document(i as u64), seeded_embedding(i as u64)))
+            rt.block_on(engine.add_chunk(create_chunk(i as u64), seeded_embedding(i as u64)))
                 .unwrap();
         }
 
@@ -253,8 +251,8 @@ fn bench_hybrid_add_document(c: &mut Criterion) {
                     // Benchmark: add one document
                     rt.block_on(async {
                         engine
-                            .add_document(
-                                create_document(counter as u64),
+                            .add_chunk(
+                                create_chunk(counter as u64),
                                 black_box(seeded_embedding(counter as u64)),
                             )
                             .await
@@ -268,14 +266,14 @@ fn bench_hybrid_add_document(c: &mut Criterion) {
     group.finish();
 }
 
-/// Helper: populate a store with test data (documents + embeddings)
+/// Helper: populate a store with test data (chunks + embeddings)
 async fn populate_store(store: &InMemoryDocumentStore, size: usize) {
     for i in 0..size {
-        let doc_id = DocId::from_u64(i as u64);
-        let record = DocumentRecord {
-            id: doc_id,
+        let chunk_id = ChunkId::from_u64(i as u64);
+        let record = ChunkRecord {
+            id: chunk_id,
             text: sample_text(i as u64),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some(format!("doc_{}.txt", i)),
                 source: Some(format!("/test/doc_{}.txt", i)),
                 created_at: 1700000000 + i as u64,
@@ -283,8 +281,8 @@ async fn populate_store(store: &InMemoryDocumentStore, size: usize) {
         };
         let embedding = seeded_embedding(i as u64);
 
-        store.put_document(doc_id, &record).await.unwrap();
-        store.put_embedding(doc_id, &embedding).await.unwrap();
+        store.put_chunk(chunk_id, &record).await.unwrap();
+        store.put_embedding(chunk_id, &embedding).await.unwrap();
     }
 }
 
@@ -338,7 +336,7 @@ fn bench_hnsw_compaction(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             // Pre-generate embeddings with DocIds
             let entries: Vec<_> = (0..size)
-                .map(|i| (DocId::from_u64(i as u64), seeded_embedding(i as u64)))
+                .map(|i| (ChunkId::from_u64(i as u64), seeded_embedding(i as u64)))
                 .collect();
 
             b.iter_batched(
@@ -346,7 +344,7 @@ fn bench_hnsw_compaction(c: &mut Criterion) {
                     // Setup: create index and mark ~30% as tombstones
                     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
                     for (doc_id, embedding) in &entries {
-                        let _ = engine.add_document(*doc_id, embedding.clone());
+                        let _ = engine.add_chunk(*doc_id, embedding.clone());
                     }
 
                     // Mark every 3rd document as tombstone

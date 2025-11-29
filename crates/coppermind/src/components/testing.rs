@@ -1,6 +1,6 @@
 use crate::embedding::format_embedding_summary;
 use crate::processing::embed_text;
-use crate::search::types::{Document, DocumentMetadata};
+use crate::search::types::{Chunk, ChunkSourceMetadata};
 use crate::search::HybridSearchEngine;
 use crate::storage::InMemoryDocumentStore;
 use dioxus::logger::tracing::{error, info};
@@ -146,21 +146,21 @@ pub fn DeveloperTesting() -> Element {
                                 for (i, (text, mut embedding)) in docs.into_iter().enumerate() {
                                     embedding.resize(512, 0.0);
 
-                                    let doc = Document {
+                                    let chunk = Chunk {
                                         text: text.to_string(),
-                                        metadata: DocumentMetadata {
-                                            filename: Some(format!("doc{}.txt", i + 1)),
+                                        metadata: ChunkSourceMetadata {
+                                            filename: Some(format!("chunk{}.txt", i + 1)),
                                             source: None,
                                             created_at: i as u64,
                                         },
                                     };
 
-                                    match engine.add_document(doc, embedding).await {
-                                        Ok(doc_id) => {
-                                            info!("✓ Added document {}: {:?}", doc_id.as_u64(), text);
+                                    match engine.add_chunk(chunk, embedding).await {
+                                        Ok(chunk_id) => {
+                                            info!("✓ Added chunk {}: {:?}", chunk_id.as_u64(), text);
                                         }
                                         Err(e) => {
-                                            error!("❌ Failed to add document: {:?}", e);
+                                            error!("❌ Failed to add chunk: {:?}", e);
                                         }
                                     }
                                 }
@@ -209,7 +209,7 @@ pub fn DeveloperTesting() -> Element {
                             div { class: "search-results-list",
                                 for (idx, result) in search_results.read().iter().enumerate() {
                                     div {
-                                        key: "{result.doc_id.as_u64()}",
+                                        key: "{result.chunk_id.as_u64()}",
                                         class: "search-result-item",
                                         div { class: "search-result-header",
                                             span { class: "search-result-rank", "#{idx + 1}" }

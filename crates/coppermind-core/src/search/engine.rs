@@ -3,9 +3,9 @@
 use super::fusion::{reciprocal_rank_fusion, RRF_K};
 use super::keyword::KeywordSearchEngine;
 #[cfg(test)]
-use super::types::DocumentMetadata;
+use super::types::ChunkSourceMetadata;
 use super::types::{
-    validate_dimension, DocId, Document, DocumentRecord, IndexManifest, SearchError, SearchResult,
+    validate_dimension, Chunk, ChunkId, ChunkRecord, IndexManifest, SearchError, SearchResult,
 };
 use super::vector::VectorSearchEngine;
 use crate::storage::{DocumentStore, StoreError};
@@ -69,17 +69,17 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
     /// - If no existing index: creates empty engine
     /// - If index exists: loads and rebuilds indices from store
     pub async fn try_load_or_new(store: S, embedding_dim: usize) -> Result<Self, SearchError> {
-        // Check if there's existing data by counting documents
-        let doc_count = store
-            .document_count()
+        // Check if there's existing data by counting chunks
+        let chunk_count = store
+            .chunk_count()
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
-        if doc_count == 0 {
+        if chunk_count == 0 {
             info!("No existing index found, creating new engine");
             Self::new(store, embedding_dim).await
         } else {
-            info!("Loading existing index with {} documents", doc_count);
+            info!("Loading existing index with {} chunks", chunk_count);
             Self::rebuild_from_store(store, embedding_dim).await
         }
     }
@@ -112,25 +112,25 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             load_elapsed
         );
 
-        // Batch load all documents for BM25 (separate I/O from CPU work)
-        let docs_start = Instant::now();
-        let doc_ids: Vec<_> = embeddings.iter().map(|(id, _)| *id).collect();
-        let documents = engine
+        // Batch load all chunks for BM25 (separate I/O from CPU work)
+        let chunks_start = Instant::now();
+        let chunk_ids: Vec<_> = embeddings.iter().map(|(id, _)| *id).collect();
+        let chunks = engine
             .store
-            .get_documents_batch(&doc_ids)
+            .get_chunks_batch(&chunk_ids)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
-        // Build lookup map by doc_id (documents don't have doc_id field, so use index)
-        let doc_map: std::collections::HashMap<DocId, &DocumentRecord> = doc_ids
+        // Build lookup map by chunk_id (chunks don't have chunk_id field, so use index)
+        let chunk_map: std::collections::HashMap<ChunkId, &ChunkRecord> = chunk_ids
             .iter()
-            .zip(documents.iter())
-            .map(|(id, doc)| (*id, doc))
+            .zip(chunks.iter())
+            .map(|(id, chunk)| (*id, chunk))
             .collect();
-        let docs_elapsed = docs_start.elapsed();
+        let chunks_elapsed = chunks_start.elapsed();
         debug!(
-            "Loaded {} documents from store in {:?}",
-            documents.len(),
-            docs_elapsed
+            "Loaded {} chunks from store in {:?}",
+            chunks.len(),
+            chunks_elapsed
         );
 
         // Track maximum ID to initialize the counter
@@ -138,34 +138,34 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
         // Prepare validated data for index building
         // We need owned data for the parallel threads
-        let mut valid_embeddings: Vec<(DocId, Vec<f32>)> = Vec::new();
-        let mut valid_texts: Vec<(DocId, String)> = Vec::new();
+        let mut valid_embeddings: Vec<(ChunkId, Vec<f32>)> = Vec::new();
+        let mut valid_texts: Vec<(ChunkId, String)> = Vec::new();
 
-        for (doc_id, embedding) in embeddings {
-            max_id = max_id.max(doc_id.as_u64());
+        for (chunk_id, embedding) in embeddings {
+            max_id = max_id.max(chunk_id.as_u64());
 
             if embedding.len() != embedding_dim {
                 warn!(
-                    "Skipping doc {} with wrong dimension: expected {}, got {}",
-                    doc_id.as_u64(),
+                    "Skipping chunk {} with wrong dimension: expected {}, got {}",
+                    chunk_id.as_u64(),
                     embedding_dim,
                     embedding.len()
                 );
                 continue;
             }
 
-            if let Some(record) = doc_map.get(&doc_id) {
-                valid_embeddings.push((doc_id, embedding));
-                valid_texts.push((doc_id, record.text.clone()));
+            if let Some(record) = chunk_map.get(&chunk_id) {
+                valid_embeddings.push((chunk_id, embedding));
+                valid_texts.push((chunk_id, record.text.clone()));
             } else {
                 warn!(
-                    "Embedding for doc {} has no document record, skipping",
-                    doc_id.as_u64()
+                    "Embedding for chunk {} has no chunk record, skipping",
+                    chunk_id.as_u64()
                 );
             }
         }
 
-        let doc_count = valid_embeddings.len();
+        let chunk_count = valid_embeddings.len();
 
         // Build indices - parallel on native, sequential on WASM
         // HNSW takes ~10s, BM25 takes ~0.5s - parallelizing saves ~0.5s but more
@@ -177,8 +177,8 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 let hnsw_handle = s.spawn(|| {
                     let start = Instant::now();
                     let mut ve = VectorSearchEngine::new(embedding_dim);
-                    for (doc_id, embedding) in &valid_embeddings {
-                        let _ = ve.add_document(*doc_id, embedding.clone());
+                    for (chunk_id, embedding) in &valid_embeddings {
+                        let _ = ve.add_chunk(*chunk_id, embedding.clone());
                     }
                     let elapsed = start.elapsed();
                     debug!(
@@ -194,12 +194,12 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 let bm25_handle = s.spawn(|| {
                     let start = Instant::now();
                     let mut ke = KeywordSearchEngine::new();
-                    for (doc_id, text) in &valid_texts {
-                        ke.add_document(*doc_id, text.clone());
+                    for (chunk_id, text) in &valid_texts {
+                        ke.add_chunk(*chunk_id, text.clone());
                     }
                     let elapsed = start.elapsed();
                     debug!(
-                        "Built BM25 index: {} documents in {:?} ({:.2}ms/doc)",
+                        "Built BM25 index: {} chunks in {:?} ({:.2}ms/chunk)",
                         valid_texts.len(),
                         elapsed,
                         elapsed.as_secs_f64() * 1000.0 / valid_texts.len().max(1) as f64
@@ -221,8 +221,8 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             // Build HNSW index
             let hnsw_start = Instant::now();
             let mut vector_engine = VectorSearchEngine::new(embedding_dim);
-            for (doc_id, embedding) in &valid_embeddings {
-                let _ = vector_engine.add_document(*doc_id, embedding.clone());
+            for (chunk_id, embedding) in &valid_embeddings {
+                let _ = vector_engine.add_chunk(*chunk_id, embedding.clone());
             }
             let hnsw_elapsed = hnsw_start.elapsed();
             debug!(
@@ -235,12 +235,12 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             // Build BM25 index
             let bm25_start = Instant::now();
             let mut keyword_engine = KeywordSearchEngine::new();
-            for (doc_id, text) in &valid_texts {
-                keyword_engine.add_document(*doc_id, text.clone());
+            for (chunk_id, text) in &valid_texts {
+                keyword_engine.add_chunk(*chunk_id, text.clone());
             }
             let bm25_elapsed = bm25_start.elapsed();
             debug!(
-                "Built BM25 index: {} documents in {:?} ({:.2}ms/doc)",
+                "Built BM25 index: {} chunks in {:?} ({:.2}ms/chunk)",
                 valid_texts.len(),
                 bm25_elapsed,
                 bm25_elapsed.as_secs_f64() * 1000.0 / valid_texts.len().max(1) as f64
@@ -283,12 +283,12 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                     warn!(
                         "Cleaning up incomplete source '{}' from previous session ({} partial chunks)",
                         source_id,
-                        record.doc_ids.len()
+                        record.chunk_ids.len()
                     );
-                    // Delete the partial documents and embeddings
-                    for doc_id in &record.doc_ids {
-                        let _ = engine.store.delete_document(*doc_id).await;
-                        let _ = engine.store.delete_embedding(*doc_id).await;
+                    // Delete the partial chunks and embeddings
+                    for chunk_id in &record.chunk_ids {
+                        let _ = engine.store.delete_chunk(*chunk_id).await;
+                        let _ = engine.store.delete_embedding(*chunk_id).await;
                     }
                     // Delete the source record
                     let _ = engine.store.delete_source(&source_id).await;
@@ -298,19 +298,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         let cleanup_elapsed = cleanup_start.elapsed();
         debug!("Source cleanup completed in {:?}", cleanup_elapsed);
 
-        // Initialize DocId counter to continue after the highest loaded ID
-        DocId::init_counter(max_id);
+        // Initialize ChunkId counter to continue after the highest loaded ID
+        ChunkId::init_counter(max_id);
 
         // Update manifest
-        engine.manifest.update(doc_count);
+        engine.manifest.update(chunk_count);
 
         let total_elapsed = total_start.elapsed();
         info!(
-            "Rebuilt indices: {} documents in {:?} (embeddings: {:?}, docs: {:?}, HNSW: {:?}, BM25: {:?}, cleanup: {:?})",
-            doc_count,
+            "Rebuilt indices: {} chunks in {:?} (embeddings: {:?}, chunks: {:?}, HNSW: {:?}, BM25: {:?}, cleanup: {:?})",
+            chunk_count,
             total_elapsed,
             load_elapsed,
-            docs_elapsed,
+            chunks_elapsed,
             hnsw_elapsed,
             bm25_elapsed,
             cleanup_elapsed
@@ -354,137 +354,136 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         &self.manifest
     }
 
-    /// Add a document to the index.
+    /// Add a chunk to the index.
     ///
-    /// The document is immediately persisted to the store.
+    /// The chunk is immediately persisted to the store.
     ///
     /// # Arguments
-    /// * `doc` - Document containing text and metadata
-    /// * `embedding` - Pre-computed embedding vector for the document
+    /// * `chunk` - Chunk containing text and metadata
+    /// * `embedding` - Pre-computed embedding vector for the chunk
     ///
-    /// Returns the assigned DocId
-    #[must_use = "Document ID should be stored or errors handled"]
-    #[instrument(skip_all, fields(text_len = doc.text.len()))]
-    pub async fn add_document(
+    /// Returns the assigned ChunkId
+    #[must_use = "Chunk ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = chunk.text.len()))]
+    pub async fn add_chunk(
         &mut self,
-        doc: Document,
+        chunk: Chunk,
         embedding: Vec<f32>,
-    ) -> Result<DocId, SearchError> {
-        self.add_document_with_tokens(doc, embedding, 0).await
+    ) -> Result<ChunkId, SearchError> {
+        self.add_chunk_with_tokens(chunk, embedding, 0).await
     }
 
-    /// Add a document to the index with token count for metrics tracking.
+    /// Add a chunk to the index with token count for metrics tracking.
     ///
-    /// The document is immediately persisted to the store.
+    /// The chunk is immediately persisted to the store.
     ///
     /// # Arguments
-    /// * `doc` - Document containing text and metadata
-    /// * `embedding` - Pre-computed embedding vector for the document
+    /// * `chunk` - Chunk containing text and metadata
+    /// * `embedding` - Pre-computed embedding vector for the chunk
     /// * `token_count` - Number of tokens in this chunk (for metrics)
     ///
-    /// Returns the assigned DocId
-    #[must_use = "Document ID should be stored or errors handled"]
-    #[instrument(skip_all, fields(text_len = doc.text.len(), token_count))]
-    pub async fn add_document_with_tokens(
+    /// Returns the assigned ChunkId
+    #[must_use = "Chunk ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = chunk.text.len(), token_count))]
+    pub async fn add_chunk_with_tokens(
         &mut self,
-        doc: Document,
+        chunk: Chunk,
         embedding: Vec<f32>,
         token_count: usize,
-    ) -> Result<DocId, SearchError> {
+    ) -> Result<ChunkId, SearchError> {
         // Validate embedding dimension
         validate_dimension(self.embedding_dim, embedding.len())?;
 
         // Generate unique ID
-        let doc_id = DocId::new();
+        let chunk_id = ChunkId::new();
 
-        // Create document record
-        let record = DocumentRecord {
-            id: doc_id,
-            text: doc.text.clone(),
-            metadata: doc.metadata,
+        // Create chunk record
+        let record = ChunkRecord {
+            id: chunk_id,
+            text: chunk.text.clone(),
+            metadata: chunk.metadata,
         };
 
         // Persist to store first (fail fast if storage fails)
         self.store
-            .put_document(doc_id, &record)
+            .put_chunk(chunk_id, &record)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
         self.store
-            .put_embedding(doc_id, &embedding)
+            .put_embedding(chunk_id, &embedding)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
         // Add to in-memory indices
-        self.vector_engine.add_document(doc_id, embedding)?;
-        self.keyword_engine.add_document(doc_id, record.text);
+        self.vector_engine.add_chunk(chunk_id, embedding)?;
+        self.keyword_engine.add_chunk(chunk_id, record.text);
 
         // Update manifest with token count
         self.manifest.update(self.manifest.document_count + 1);
         self.manifest.add_tokens(token_count);
 
-        Ok(doc_id)
+        Ok(chunk_id)
     }
 
-    /// Add a document without rebuilding vector index (for batch operations).
+    /// Add a chunk without rebuilding vector index (for batch operations).
     ///
-    /// Call rebuild_vector_index() once after all documents are added.
-    #[must_use = "Document ID should be stored or errors handled"]
-    #[instrument(skip_all, fields(text_len = doc.text.len()))]
-    pub async fn add_document_deferred(
+    /// Call rebuild_vector_index() once after all chunks are added.
+    #[must_use = "Chunk ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = chunk.text.len()))]
+    pub async fn add_chunk_deferred(
         &mut self,
-        doc: Document,
+        chunk: Chunk,
         embedding: Vec<f32>,
-    ) -> Result<DocId, SearchError> {
-        self.add_document_deferred_with_tokens(doc, embedding, 0)
+    ) -> Result<ChunkId, SearchError> {
+        self.add_chunk_deferred_with_tokens(chunk, embedding, 0)
             .await
     }
 
-    /// Add a document without rebuilding vector index, with token count for metrics.
+    /// Add a chunk without rebuilding vector index, with token count for metrics.
     ///
-    /// Call rebuild_vector_index() once after all documents are added.
-    #[must_use = "Document ID should be stored or errors handled"]
-    #[instrument(skip_all, fields(text_len = doc.text.len(), token_count))]
-    pub async fn add_document_deferred_with_tokens(
+    /// Call rebuild_vector_index() once after all chunks are added.
+    #[must_use = "Chunk ID should be stored or errors handled"]
+    #[instrument(skip_all, fields(text_len = chunk.text.len(), token_count))]
+    pub async fn add_chunk_deferred_with_tokens(
         &mut self,
-        doc: Document,
+        chunk: Chunk,
         embedding: Vec<f32>,
         token_count: usize,
-    ) -> Result<DocId, SearchError> {
+    ) -> Result<ChunkId, SearchError> {
         // Validate embedding dimension
         validate_dimension(self.embedding_dim, embedding.len())?;
 
         // Generate unique ID
-        let doc_id = DocId::new();
+        let chunk_id = ChunkId::new();
 
-        // Create document record
-        let record = DocumentRecord {
-            id: doc_id,
-            text: doc.text.clone(),
-            metadata: doc.metadata,
+        // Create chunk record
+        let record = ChunkRecord {
+            id: chunk_id,
+            text: chunk.text.clone(),
+            metadata: chunk.metadata,
         };
 
         // Persist to store first
         self.store
-            .put_document(doc_id, &record)
+            .put_chunk(chunk_id, &record)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
         self.store
-            .put_embedding(doc_id, &embedding)
+            .put_embedding(chunk_id, &embedding)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
         // Add to in-memory indices (deferred rebuild for vector)
-        self.vector_engine
-            .add_document_deferred(doc_id, embedding)?;
-        self.keyword_engine.add_document(doc_id, record.text);
+        self.vector_engine.add_chunk_deferred(chunk_id, embedding)?;
+        self.keyword_engine.add_chunk(chunk_id, record.text);
 
         // Update manifest with token count
         self.manifest.update(self.manifest.document_count + 1);
         self.manifest.add_tokens(token_count);
 
-        Ok(doc_id)
+        Ok(chunk_id)
     }
 
     /// Rebuild the vector search index after batch operations.
@@ -545,31 +544,31 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         let fused_results = reciprocal_rank_fusion(&vector_results, &keyword_results, RRF_K);
 
         // Build maps of individual scores for lookup
-        let vector_scores: HashMap<DocId, f32> = vector_results.into_iter().collect();
-        let keyword_scores: HashMap<DocId, f32> = keyword_results.into_iter().collect();
+        let vector_scores: HashMap<ChunkId, f32> = vector_results.into_iter().collect();
+        let keyword_scores: HashMap<ChunkId, f32> = keyword_results.into_iter().collect();
 
-        // Fetch document details from store and build SearchResults
+        // Fetch chunk details from store and build SearchResults
         let mut search_results = Vec::with_capacity(k);
 
-        for (doc_id, score) in fused_results.into_iter().take(k) {
-            // Fetch document from store
-            match self.store.get_document(doc_id).await {
+        for (chunk_id, score) in fused_results.into_iter().take(k) {
+            // Fetch chunk from store
+            match self.store.get_chunk(chunk_id).await {
                 Ok(Some(record)) => {
                     search_results.push(SearchResult {
-                        doc_id,
+                        chunk_id,
                         score,
-                        vector_score: vector_scores.get(&doc_id).copied(),
-                        keyword_score: keyword_scores.get(&doc_id).copied(),
+                        vector_score: vector_scores.get(&chunk_id).copied(),
+                        keyword_score: keyword_scores.get(&chunk_id).copied(),
                         text: record.text,
                         metadata: record.metadata,
                     });
                 }
                 Ok(None) => {
-                    // Document not found in store - skip (may have been deleted)
-                    warn!("Document {} not found in store, skipping", doc_id.as_u64());
+                    // Chunk not found in store - skip (may have been deleted)
+                    warn!("Chunk {} not found in store, skipping", chunk_id.as_u64());
                 }
                 Err(e) => {
-                    warn!("Error fetching document {}: {}", doc_id.as_u64(), e);
+                    warn!("Error fetching chunk {}: {}", chunk_id.as_u64(), e);
                 }
             }
         }
@@ -620,13 +619,10 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         self.keyword_engine.len()
     }
 
-    /// Get a document by ID.
-    pub async fn get_document(
-        &self,
-        doc_id: &DocId,
-    ) -> Result<Option<DocumentRecord>, SearchError> {
+    /// Get a chunk by ID.
+    pub async fn get_chunk(&self, chunk_id: &ChunkId) -> Result<Option<ChunkRecord>, SearchError> {
         self.store
-            .get_document(*doc_id)
+            .get_chunk(*chunk_id)
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))
     }
@@ -692,13 +688,13 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         Ok(())
     }
 
-    /// Add a document ID to a source's chunk list.
+    /// Add a chunk ID to a source's chunk list.
     ///
     /// Call this after adding each chunk from a source.
-    pub async fn add_doc_to_source(
+    pub async fn add_chunk_to_source(
         &self,
         source_id: &str,
-        doc_id: DocId,
+        chunk_id: ChunkId,
     ) -> Result<(), SearchError> {
         let mut record = self
             .store
@@ -707,7 +703,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .map_err(|e| SearchError::StorageError(e.to_string()))?
             .ok_or(SearchError::NotFound)?;
 
-        record.doc_ids.push(doc_id);
+        record.chunk_ids.push(chunk_id);
 
         self.store
             .put_source(source_id, &record)
@@ -738,7 +734,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         info!(
             "Completed source: {} ({} chunks)",
             source_id,
-            record.doc_ids.len()
+            record.chunk_ids.len()
         );
         Ok(())
     }
@@ -762,18 +758,18 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             Err(e) => return Err(SearchError::StorageError(e.to_string())),
         };
 
-        let chunk_count = record.doc_ids.len();
+        let chunk_count = record.chunk_ids.len();
 
-        // Tombstone each document in the vector index
-        for doc_id in &record.doc_ids {
-            // Find the index position for this doc_id
-            if let Some(idx) = self.vector_engine.find_index(*doc_id) {
+        // Tombstone each chunk in the vector index
+        for chunk_id in &record.chunk_ids {
+            // Find the index position for this chunk_id
+            if let Some(idx) = self.vector_engine.find_index(*chunk_id) {
                 self.vector_engine.mark_tombstone(idx);
             }
 
-            // Delete from storage (documents and embeddings)
-            let _ = self.store.delete_document(*doc_id).await;
-            let _ = self.store.delete_embedding(*doc_id).await;
+            // Delete from storage (chunks and embeddings)
+            let _ = self.store.delete_chunk(*chunk_id).await;
+            let _ = self.store.delete_embedding(*chunk_id).await;
         }
 
         // Delete the source record
@@ -883,21 +879,21 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         // Load embeddings from storage for live entries
         let mut entries_with_embeddings = Vec::with_capacity(live_entries.len());
 
-        for (_idx, doc_id) in live_entries {
-            match self.store.get_embedding(doc_id).await {
+        for (_idx, chunk_id) in live_entries {
+            match self.store.get_embedding(chunk_id).await {
                 Ok(Some(embedding)) => {
-                    entries_with_embeddings.push((doc_id, embedding));
+                    entries_with_embeddings.push((chunk_id, embedding));
                 }
                 Ok(None) => {
                     warn!(
-                        "Embedding not found for doc_id {} during compaction, skipping",
-                        doc_id.as_u64()
+                        "Embedding not found for chunk_id {} during compaction, skipping",
+                        chunk_id.as_u64()
                     );
                 }
                 Err(e) => {
                     warn!(
-                        "Failed to load embedding for doc_id {} during compaction: {}",
-                        doc_id.as_u64(),
+                        "Failed to load embedding for chunk_id {} during compaction: {}",
+                        chunk_id.as_u64(),
                         e
                     );
                 }
@@ -974,7 +970,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         ));
         output.push('\n');
 
-        // Load a sample of documents
+        // Load a sample of chunks
         let embeddings = self
             .store
             .iter_embeddings()
@@ -984,19 +980,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         if embeddings.is_empty() {
             output.push_str("(empty index)\n");
         } else {
-            output.push_str("Documents (first 10):\n");
-            for (idx, (doc_id, _)) in embeddings.iter().take(10).enumerate() {
-                if let Ok(Some(doc)) = self.store.get_document(*doc_id).await {
-                    output.push_str(&format!("\n[{}] DocId: {}\n", idx + 1, doc_id.as_u64()));
-                    output.push_str(&format!("  Filename: {:?}\n", doc.metadata.filename));
-                    output.push_str(&format!("  Source: {:?}\n", doc.metadata.source));
-                    if doc.text.len() > DEBUG_TEXT_PREVIEW_LEN {
+            output.push_str("Chunks (first 10):\n");
+            for (idx, (chunk_id, _)) in embeddings.iter().take(10).enumerate() {
+                if let Ok(Some(chunk)) = self.store.get_chunk(*chunk_id).await {
+                    output.push_str(&format!("\n[{}] ChunkId: {}\n", idx + 1, chunk_id.as_u64()));
+                    output.push_str(&format!("  Filename: {:?}\n", chunk.metadata.filename));
+                    output.push_str(&format!("  Source: {:?}\n", chunk.metadata.source));
+                    if chunk.text.len() > DEBUG_TEXT_PREVIEW_LEN {
                         output.push_str(&format!(
                             "  Text: {}...\n",
-                            &doc.text[..DEBUG_TEXT_PREVIEW_LEN]
+                            &chunk.text[..DEBUG_TEXT_PREVIEW_LEN]
                         ));
                     } else {
-                        output.push_str(&format!("  Text: {}\n", &doc.text));
+                        output.push_str(&format!("  Text: {}\n", &chunk.text));
                     }
                 }
             }
@@ -1024,34 +1020,28 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add documents
-        let doc1 = Document {
+        // Add chunks
+        let chunk1 = Chunk {
             text: "machine learning algorithms".to_string(),
-            metadata: DocumentMetadata {
-                filename: Some("doc1.txt".to_string()),
+            metadata: ChunkSourceMetadata {
+                filename: Some("chunk1.txt".to_string()),
                 source: None,
                 created_at: 0,
             },
         };
 
-        let doc2 = Document {
+        let chunk2 = Chunk {
             text: "deep neural networks".to_string(),
-            metadata: DocumentMetadata {
-                filename: Some("doc2.txt".to_string()),
+            metadata: ChunkSourceMetadata {
+                filename: Some("chunk2.txt".to_string()),
                 source: None,
                 created_at: 1,
             },
         };
 
         // Dummy embeddings (in practice, these come from JinaBERT)
-        engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
-            .await
-            .unwrap();
-        engine
-            .add_document(doc2, vec![0.9, 0.1, 0.0])
-            .await
-            .unwrap();
+        engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk2, vec![0.9, 0.1, 0.0]).await.unwrap();
 
         // Search
         let results = engine
@@ -1064,21 +1054,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_document_dimension_mismatch() {
+    async fn test_add_chunk_dimension_mismatch() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
+        let chunk = Chunk {
             text: "test".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),
                 source: None,
                 created_at: 0,
             },
         };
 
-        // Try to add document with wrong embedding dimension
-        let result = engine.add_document(doc, vec![1.0, 0.0]).await; // 2D instead of 3D
+        // Try to add chunk with wrong embedding dimension
+        let result = engine.add_chunk(chunk, vec![1.0, 0.0]).await; // 2D instead of 3D
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1106,12 +1096,12 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
-            text: "test document".to_string(),
-            metadata: DocumentMetadata::default(),
+        let chunk = Chunk {
+            text: "test chunk".to_string(),
+            metadata: ChunkSourceMetadata::default(),
         };
 
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         // Try to search with wrong dimension
         let result = engine.search(&[1.0, 0.0], "query", 10).await; // 2D instead of 3D
@@ -1131,19 +1121,19 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add multiple documents without rebuilding index each time
+        // Add multiple chunks without rebuilding index each time
         for i in 0..5 {
-            let doc = Document {
-                text: format!("document {}", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("doc{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("chunk {}", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("chunk{}.txt", i)),
                     source: None,
                     created_at: i as u64,
                 },
             };
 
             engine
-                .add_document_deferred(doc, vec![i as f32, 0.0, 0.0])
+                .add_chunk_deferred(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
         }
@@ -1151,15 +1141,12 @@ mod tests {
         // Rebuild index once
         engine.rebuild_vector_index().await.unwrap();
 
-        // Verify all documents are indexed
+        // Verify all chunks are indexed
         assert_eq!(engine.len(), 5);
         assert_eq!(engine.vector_index_len(), 5);
 
         // Search should work after rebuild
-        let results = engine
-            .search(&[2.0, 0.0, 0.0], "document 2", 3)
-            .await
-            .unwrap();
+        let results = engine.search(&[2.0, 0.0, 0.0], "chunk 2", 3).await.unwrap();
         assert!(!results.is_empty());
     }
 
@@ -1174,24 +1161,18 @@ mod tests {
         assert_eq!(tokens, 0);
         assert_eq!(avg, 0.0);
 
-        // Add documents
-        let doc1 = Document {
+        // Add chunks
+        let chunk1 = Chunk {
             text: "one two three".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        let doc2 = Document {
+        let chunk2 = Chunk {
             text: "four five".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
 
-        engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
-            .await
-            .unwrap();
-        engine
-            .add_document(doc2, vec![0.0, 1.0, 0.0])
-            .await
-            .unwrap();
+        engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk2, vec![0.0, 1.0, 0.0]).await.unwrap();
 
         let (chunks, _, _) = engine.get_index_metrics().await.unwrap();
         assert_eq!(chunks, 2);
@@ -1202,14 +1183,14 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add documents
+        // Add chunks
         for i in 0..3 {
-            let doc = Document {
-                text: format!("document {}", i),
-                metadata: DocumentMetadata::default(),
+            let chunk = Chunk {
+                text: format!("chunk {}", i),
+                metadata: ChunkSourceMetadata::default(),
             };
             engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
         }
@@ -1225,12 +1206,12 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add documents
-        let doc = Document {
-            text: "test document".to_string(),
-            metadata: DocumentMetadata::default(),
+        // Add chunks
+        let chunk = Chunk {
+            text: "test chunk".to_string(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         assert_eq!(engine.len(), 1);
 
@@ -1241,45 +1222,45 @@ mod tests {
         assert!(engine.is_empty());
         assert_eq!(engine.vector_index_len(), 0);
 
-        // Should be able to add documents after clear
-        let doc2 = Document {
-            text: "new document".to_string(),
-            metadata: DocumentMetadata::default(),
+        // Should be able to add chunks after clear
+        let chunk2 = Chunk {
+            text: "new chunk".to_string(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        let result = engine.add_document(doc2, vec![1.0, 0.0, 0.0]).await;
+        let result = engine.add_chunk(chunk2, vec![1.0, 0.0, 0.0]).await;
         assert!(result.is_ok());
         assert_eq!(engine.len(), 1);
     }
 
     #[tokio::test]
-    async fn test_get_document() {
+    async fn test_get_chunk() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
-            text: "test document".to_string(),
-            metadata: DocumentMetadata {
+        let chunk = Chunk {
+            text: "test chunk".to_string(),
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),
                 source: Some("manual".to_string()),
                 created_at: 12345,
             },
         };
 
-        let doc_id = engine
-            .add_document(doc.clone(), vec![1.0, 0.0, 0.0])
+        let chunk_id = engine
+            .add_chunk(chunk.clone(), vec![1.0, 0.0, 0.0])
             .await
             .unwrap();
 
-        // Get document by ID
-        let retrieved = engine.get_document(&doc_id).await.unwrap();
+        // Get chunk by ID
+        let retrieved = engine.get_chunk(&chunk_id).await.unwrap();
         assert!(retrieved.is_some());
 
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.id, doc_id);
-        assert_eq!(retrieved.text, doc.text);
-        assert_eq!(retrieved.metadata.filename, doc.metadata.filename);
-        assert_eq!(retrieved.metadata.source, doc.metadata.source);
-        assert_eq!(retrieved.metadata.created_at, doc.metadata.created_at);
+        assert_eq!(retrieved.id, chunk_id);
+        assert_eq!(retrieved.text, chunk.text);
+        assert_eq!(retrieved.metadata.filename, chunk.metadata.filename);
+        assert_eq!(retrieved.metadata.source, chunk.metadata.source);
+        assert_eq!(retrieved.metadata.created_at, chunk.metadata.created_at);
     }
 
     #[tokio::test]
@@ -1291,16 +1272,16 @@ mod tests {
         let dump = engine.debug_dump();
         assert!(dump.contains("Total documents: 0"));
 
-        // Add document
-        let doc = Document {
-            text: "This is a test document with some content".to_string(),
-            metadata: DocumentMetadata {
+        // Add chunk
+        let chunk = Chunk {
+            text: "This is a test chunk with some content".to_string(),
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),
                 source: Some("test".to_string()),
                 created_at: 123,
             },
         };
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         let dump = engine.debug_dump();
         assert!(dump.contains("Total documents: 1"));
@@ -1311,23 +1292,20 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add 10 documents
+        // Add 10 chunks
         for i in 0..10 {
-            let doc = Document {
-                text: format!("document number {}", i),
-                metadata: DocumentMetadata::default(),
+            let chunk = Chunk {
+                text: format!("chunk number {}", i),
+                metadata: ChunkSourceMetadata::default(),
             };
             engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
         }
 
         // Request top 3
-        let results = engine
-            .search(&[5.0, 0.0, 0.0], "document", 3)
-            .await
-            .unwrap();
+        let results = engine.search(&[5.0, 0.0, 0.0], "chunk", 3).await.unwrap();
 
         // Should return at most 3 results
         assert!(results.len() <= 3);
@@ -1343,9 +1321,9 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
+        let chunk = Chunk {
             text: "semantic search test".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("search.txt".to_string()),
                 source: None,
                 created_at: 999,
@@ -1353,7 +1331,7 @@ mod tests {
         };
 
         engine
-            .add_document(doc.clone(), vec![1.0, 0.5, 0.2])
+            .add_chunk(chunk.clone(), vec![1.0, 0.5, 0.2])
             .await
             .unwrap();
 
@@ -1369,9 +1347,9 @@ mod tests {
         assert!(result.score > 0.0); // RRF fused score
         assert!(result.vector_score.is_some()); // Vector search score
         assert!(result.keyword_score.is_some()); // BM25 score
-        assert_eq!(result.text, doc.text);
-        assert_eq!(result.metadata.filename, doc.metadata.filename);
-        assert_eq!(result.metadata.created_at, doc.metadata.created_at);
+        assert_eq!(result.text, chunk.text);
+        assert_eq!(result.metadata.filename, chunk.metadata.filename);
+        assert_eq!(result.metadata.created_at, chunk.metadata.created_at);
     }
 
     #[tokio::test]
@@ -1379,11 +1357,11 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
-            text: "test document".to_string(),
-            metadata: DocumentMetadata::default(),
+        let chunk = Chunk {
+            text: "test chunk".to_string(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         // Empty query text should return InvalidQuery error
         let result = engine.search(&[1.0, 0.0, 0.0], "", 10).await;
@@ -1399,11 +1377,11 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
-            text: "test document".to_string(),
-            metadata: DocumentMetadata::default(),
+        let chunk = Chunk {
+            text: "test chunk".to_string(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         // k=0 should return InvalidQuery error
         let result = engine.search(&[1.0, 0.0, 0.0], "test", 0).await;
@@ -1416,24 +1394,24 @@ mod tests {
 
         let store = Arc::new(InMemoryDocumentStore::new());
 
-        // Create engine and add document
-        let doc_id = {
+        // Create engine and add chunk
+        let chunk_id = {
             let mut engine = HybridSearchEngine::new(Arc::clone(&store), 3)
                 .await
                 .unwrap();
 
-            let doc = Document {
-                text: "persistent document".to_string(),
-                metadata: DocumentMetadata {
+            let chunk = Chunk {
+                text: "persistent chunk".to_string(),
+                metadata: ChunkSourceMetadata {
                     filename: Some("persist.txt".to_string()),
                     source: None,
                     created_at: 42,
                 },
             };
 
-            let doc_id = engine.add_document(doc, vec![1.0, 2.0, 3.0]).await.unwrap();
+            let chunk_id = engine.add_chunk(chunk, vec![1.0, 2.0, 3.0]).await.unwrap();
             engine.save().await.unwrap();
-            doc_id
+            chunk_id
         };
 
         // Reload from store (simulating app restart with same underlying store)
@@ -1441,11 +1419,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify document is present
+        // Verify chunk is present
         assert_eq!(engine.len(), 1);
-        let retrieved = engine.get_document(&doc_id).await.unwrap();
+        let retrieved = engine.get_chunk(&chunk_id).await.unwrap();
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().text, "persistent document");
+        assert_eq!(retrieved.unwrap().text, "persistent chunk");
 
         // Search should work
         let results = engine
@@ -1480,11 +1458,11 @@ mod tests {
         let record = engine.get_source(source_id).await.unwrap().unwrap();
         assert_eq!(record.content_hash, content_hash);
         assert!(!record.complete);
-        assert!(record.doc_ids.is_empty());
+        assert!(record.chunk_ids.is_empty());
     }
 
     #[tokio::test]
-    async fn test_source_document_tracking() {
+    async fn test_source_chunk_tracking() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
@@ -1497,34 +1475,34 @@ mod tests {
             .await
             .unwrap();
 
-        // Add documents and track them
-        let doc1 = Document {
+        // Add chunks and track them
+        let chunk1 = Chunk {
             text: "First chunk".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt (chunk 1)".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 100,
             },
         };
-        let doc_id1 = engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
+        let chunk_id1 = engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id1)
             .await
             .unwrap();
-        engine.add_doc_to_source(source_id, doc_id1).await.unwrap();
 
-        let doc2 = Document {
+        let chunk2 = Chunk {
             text: "Second chunk".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt (chunk 2)".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 100,
             },
         };
-        let doc_id2 = engine
-            .add_document(doc2, vec![0.0, 1.0, 0.0])
+        let chunk_id2 = engine.add_chunk(chunk2, vec![0.0, 1.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id2)
             .await
             .unwrap();
-        engine.add_doc_to_source(source_id, doc_id2).await.unwrap();
 
         // Complete the source
         engine.complete_source(source_id).await.unwrap();
@@ -1532,9 +1510,9 @@ mod tests {
         // Verify source record
         let record = engine.get_source(source_id).await.unwrap().unwrap();
         assert!(record.complete);
-        assert_eq!(record.doc_ids.len(), 2);
-        assert!(record.doc_ids.contains(&doc_id1));
-        assert!(record.doc_ids.contains(&doc_id2));
+        assert_eq!(record.chunk_ids.len(), 2);
+        assert!(record.chunk_ids.contains(&chunk_id1));
+        assert!(record.chunk_ids.contains(&chunk_id2));
     }
 
     #[tokio::test]
@@ -1578,43 +1556,43 @@ mod tests {
 
         let source_id = "web:delete-test.txt";
 
-        // Register and add documents
+        // Register and add chunks
         engine
             .register_source(source_id, "hash".to_string())
             .await
             .unwrap();
 
-        let doc1 = Document {
+        let chunk1 = Chunk {
             text: "Chunk to delete".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("delete-test.txt".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 0,
             },
         };
-        let doc_id1 = engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
+        let chunk_id1 = engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id1)
             .await
             .unwrap();
-        engine.add_doc_to_source(source_id, doc_id1).await.unwrap();
 
-        let doc2 = Document {
+        let chunk2 = Chunk {
             text: "Another chunk".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("delete-test.txt".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 0,
             },
         };
-        let doc_id2 = engine
-            .add_document(doc2, vec![0.0, 1.0, 0.0])
+        let chunk_id2 = engine.add_chunk(chunk2, vec![0.0, 1.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id2)
             .await
             .unwrap();
-        engine.add_doc_to_source(source_id, doc_id2).await.unwrap();
 
         engine.complete_source(source_id).await.unwrap();
 
-        // Verify documents are searchable
+        // Verify chunks are searchable
         assert_eq!(engine.len(), 2);
 
         // Delete the source
@@ -1624,7 +1602,7 @@ mod tests {
         // Source should be gone
         assert!(engine.get_source(source_id).await.unwrap().is_none());
 
-        // Documents should be tombstoned (excluded from search)
+        // Chunks should be tombstoned (excluded from search)
         let results = engine
             .search(&[1.0, 0.0, 0.0], "chunk delete", 10)
             .await
@@ -1672,14 +1650,14 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add 5 documents
+        // Add 5 chunks
         for i in 0..5 {
-            let doc = Document {
-                text: format!("document {}", i),
-                metadata: DocumentMetadata::default(),
+            let chunk = Chunk {
+                text: format!("chunk {}", i),
+                metadata: ChunkSourceMetadata::default(),
             };
             engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
         }
@@ -1697,7 +1675,7 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add source with 5 documents
+        // Add source with 5 chunks
         let source_id = "test-source";
         engine
             .register_source(source_id, "hash1".to_string())
@@ -1705,19 +1683,22 @@ mod tests {
             .unwrap();
 
         for i in 0..5 {
-            let doc = Document {
-                text: format!("document {}", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("doc{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("chunk {}", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("chunk{}.txt", i)),
                     source: Some(source_id.to_string()),
                     created_at: i as u64,
                 },
             };
-            let doc_id = engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+            let chunk_id = engine
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
-            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+            engine
+                .add_chunk_to_source(source_id, chunk_id)
+                .await
+                .unwrap();
         }
         engine.complete_source(source_id).await.unwrap();
 
@@ -1747,7 +1728,7 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add 10 documents
+        // Add 10 chunks
         let source_id = "test-source";
         engine
             .register_source(source_id, "hash1".to_string())
@@ -1755,19 +1736,22 @@ mod tests {
             .unwrap();
 
         for i in 0..10 {
-            let doc = Document {
-                text: format!("document {}", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("doc{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("chunk {}", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("chunk{}.txt", i)),
                     source: Some(source_id.to_string()),
                     created_at: i as u64,
                 },
             };
-            let doc_id = engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+            let chunk_id = engine
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
-            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+            engine
+                .add_chunk_to_source(source_id, chunk_id)
+                .await
+                .unwrap();
         }
         engine.complete_source(source_id).await.unwrap();
 
@@ -1789,7 +1773,7 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add source1 with 3 documents
+        // Add source1 with 3 chunks
         let source1 = "source1";
         engine
             .register_source(source1, "hash1".to_string())
@@ -1797,23 +1781,23 @@ mod tests {
             .unwrap();
 
         for i in 0..3 {
-            let doc = Document {
-                text: format!("source1 document {}", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("s1-doc{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("source1 chunk {}", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("s1-chunk{}.txt", i)),
                     source: Some(source1.to_string()),
                     created_at: i as u64,
                 },
             };
-            let doc_id = engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+            let chunk_id = engine
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
-            engine.add_doc_to_source(source1, doc_id).await.unwrap();
+            engine.add_chunk_to_source(source1, chunk_id).await.unwrap();
         }
         engine.complete_source(source1).await.unwrap();
 
-        // Add source2 with 2 documents
+        // Add source2 with 2 chunks
         let source2 = "source2";
         engine
             .register_source(source2, "hash2".to_string())
@@ -1821,19 +1805,19 @@ mod tests {
             .unwrap();
 
         for i in 0..2 {
-            let doc = Document {
-                text: format!("source2 document {}", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("s2-doc{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("source2 chunk {}", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("s2-chunk{}.txt", i)),
                     source: Some(source2.to_string()),
                     created_at: (i + 100) as u64,
                 },
             };
-            let doc_id = engine
-                .add_document(doc, vec![(i + 10) as f32, 0.0, 0.0])
+            let chunk_id = engine
+                .add_chunk(chunk, vec![(i + 10) as f32, 0.0, 0.0])
                 .await
                 .unwrap();
-            engine.add_doc_to_source(source2, doc_id).await.unwrap();
+            engine.add_chunk_to_source(source2, chunk_id).await.unwrap();
         }
         engine.complete_source(source2).await.unwrap();
 
@@ -1844,9 +1828,9 @@ mod tests {
 
         // Compact
         let compacted_count = engine.compact().await.unwrap();
-        assert_eq!(compacted_count, 2); // Only source2's documents remain
+        assert_eq!(compacted_count, 2); // Only source2's chunks remain
 
-        // source2 documents should still be searchable
+        // source2 chunks should still be searchable
         let results = engine
             .search(&[10.0, 0.0, 0.0], "source2", 10)
             .await
@@ -1858,13 +1842,13 @@ mod tests {
     // Integration Tests for 1.0 Release
     // =========================================================================
 
-    /// End-to-end test: add documents, search, verify results contain expected content
+    /// End-to-end test: add chunks, search, verify results contain expected content
     #[tokio::test]
     async fn test_integration_add_search_retrieve() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add documents about different topics
+        // Add chunks about different topics
         let topics = [
             (
                 "rust",
@@ -1884,23 +1868,23 @@ mod tests {
         ];
 
         for (topic, embedding, text) in topics {
-            let doc = Document {
+            let chunk = Chunk {
                 text: text.to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some(format!("{}.md", topic)),
                     source: Some(format!("/docs/{}.md", topic)),
                     created_at: 0,
                 },
             };
-            engine.add_document(doc, embedding).await.unwrap();
+            engine.add_chunk(chunk, embedding).await.unwrap();
         }
 
-        // Search for "rust" - should find the Rust document via keyword match
+        // Search for "rust" - should find the Rust chunk via keyword match
         let results = engine.search(&[0.5, 0.5, 0.5], "rust", 3).await.unwrap();
         assert!(!results.is_empty());
         assert!(results[0].text.contains("Rust"));
 
-        // Search for "programming" - should find Rust document
+        // Search for "programming" - should find Rust chunk
         let results = engine
             .search(&[0.5, 0.5, 0.5], "programming", 3)
             .await
@@ -1921,64 +1905,64 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add two documents with similar embeddings but different text
-        let doc1 = Document {
+        // Add two chunks with similar embeddings but different text
+        let chunk1 = Chunk {
             text: "The quick brown fox jumps over the lazy dog".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        let doc2 = Document {
+        let chunk2 = Chunk {
             text: "A speedy russet fox leaps across a sleepy canine".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
 
+        engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
         engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
-            .await
-            .unwrap();
-        engine
-            .add_document(doc2, vec![1.0, 0.1, 0.0]) // Very similar embedding
+            .add_chunk(chunk2, vec![1.0, 0.1, 0.0]) // Very similar embedding
             .await
             .unwrap();
 
-        // Search with keyword "quick" - should rank doc1 higher despite similar embeddings
+        // Search with keyword "quick" - should rank chunk1 higher despite similar embeddings
         let results = engine.search(&[1.0, 0.05, 0.0], "quick", 2).await.unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].text.contains("quick"));
     }
 
-    /// Test that deleted documents don't appear in search results
+    /// Test that deleted chunks don't appear in search results
     #[tokio::test]
-    async fn test_deleted_docs_not_in_results() {
+    async fn test_deleted_chunks_not_in_results() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add source with documents
+        // Add source with chunks
         let source_id = "test_source";
         engine
             .register_source(source_id, "hash".to_string())
             .await
             .unwrap();
 
-        let doc = Document {
-            text: "This document will be deleted".to_string(),
-            metadata: DocumentMetadata {
+        let chunk = Chunk {
+            text: "This chunk will be deleted".to_string(),
+            metadata: ChunkSourceMetadata {
                 filename: Some("deleted.txt".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 0,
             },
         };
-        let doc_id = engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
-        engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        let chunk_id = engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id)
+            .await
+            .unwrap();
         engine.complete_source(source_id).await.unwrap();
 
-        // Verify document is searchable
+        // Verify chunk is searchable
         let results = engine.search(&[1.0, 0.0, 0.0], "deleted", 5).await.unwrap();
         assert_eq!(results.len(), 1);
 
         // Delete the source
         engine.delete_source(source_id).await.unwrap();
 
-        // Document should no longer appear in results
+        // Chunk should no longer appear in results
         let results = engine.search(&[1.0, 0.0, 0.0], "deleted", 5).await.unwrap();
         assert!(results.is_empty());
     }
@@ -1999,16 +1983,19 @@ mod tests {
                 .await
                 .unwrap();
 
-            let doc = Document {
+            let chunk = Chunk {
                 text: "This data should persist".to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some("persistent.txt".to_string()),
                     source: Some(source_id.to_string()),
                     created_at: 42,
                 },
             };
-            let doc_id = engine.add_document(doc, vec![0.5, 0.5, 0.0]).await.unwrap();
-            engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+            let chunk_id = engine.add_chunk(chunk, vec![0.5, 0.5, 0.0]).await.unwrap();
+            engine
+                .add_chunk_to_source(source_id, chunk_id)
+                .await
+                .unwrap();
             engine.complete_source(source_id).await.unwrap();
 
             // Save to store
@@ -2046,16 +2033,19 @@ mod tests {
             .await
             .unwrap();
 
-        let doc = Document {
+        let chunk = Chunk {
             text: "Initial content".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("file.txt".to_string()),
                 source: Some(source_id.to_string()),
                 created_at: 0,
             },
         };
-        let doc_id = engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
-        engine.add_doc_to_source(source_id, doc_id).await.unwrap();
+        let chunk_id = engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine
+            .add_chunk_to_source(source_id, chunk_id)
+            .await
+            .unwrap();
         engine.complete_source(source_id).await.unwrap();
 
         // Check if source needs update with same hash (should not)
@@ -2077,39 +2067,33 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add 50 documents (enough to test pagination without hitting HNSW limits)
+        // Add 50 chunks (enough to test pagination without hitting HNSW limits)
         for i in 0..50 {
-            let doc = Document {
-                text: format!("Document number {} with unique content", i),
-                metadata: DocumentMetadata {
-                    filename: Some(format!("doc_{}.txt", i)),
-                    source: Some(format!("/batch/doc_{}.txt", i)),
+            let chunk = Chunk {
+                text: format!("Chunk number {} with unique content", i),
+                metadata: ChunkSourceMetadata {
+                    filename: Some(format!("chunk_{}.txt", i)),
+                    source: Some(format!("/batch/chunk_{}.txt", i)),
                     created_at: i,
                 },
             };
             // Spread embeddings across the space
-            let angle = (i as f32) * 0.1256; // ~7.2 degrees per doc
+            let angle = (i as f32) * 0.1256; // ~7.2 degrees per chunk
             let embedding = vec![angle.cos(), angle.sin(), 0.0];
-            engine.add_document(doc, embedding).await.unwrap();
+            engine.add_chunk(chunk, embedding).await.unwrap();
         }
 
         // Search for top 10
-        let results = engine
-            .search(&[1.0, 0.0, 0.0], "Document", 10)
-            .await
-            .unwrap();
+        let results = engine.search(&[1.0, 0.0, 0.0], "Chunk", 10).await.unwrap();
         assert_eq!(results.len(), 10);
 
         // Search for top 20
-        let results = engine
-            .search(&[1.0, 0.0, 0.0], "Document", 20)
-            .await
-            .unwrap();
+        let results = engine.search(&[1.0, 0.0, 0.0], "Chunk", 20).await.unwrap();
         assert_eq!(results.len(), 20);
 
-        // All results should have "Document" in their text
+        // All results should have "Chunk" in their text
         for result in &results {
-            assert!(result.text.contains("Document"));
+            assert!(result.text.contains("Chunk"));
         }
     }
 
@@ -2119,11 +2103,11 @@ mod tests {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        let doc = Document {
+        let chunk = Chunk {
             text: "Function foo() returns bar; use foo->bar syntax".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine.add_document(doc, vec![1.0, 0.0, 0.0]).await.unwrap();
+        engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
 
         // Search with parentheses
         let results = engine.search(&[1.0, 0.0, 0.0], "foo()", 5).await.unwrap();
@@ -2148,24 +2132,21 @@ mod tests {
         let store = Arc::new(InMemoryDocumentStore::new());
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add initial documents
+        // Add initial chunks
         for i in 0..10 {
-            let doc = Document {
-                text: format!("Initial document {}", i),
-                metadata: DocumentMetadata::default(),
+            let chunk = Chunk {
+                text: format!("Initial chunk {}", i),
+                metadata: ChunkSourceMetadata::default(),
             };
             engine
-                .add_document(doc, vec![i as f32, 0.0, 0.0])
+                .add_chunk(chunk, vec![i as f32, 0.0, 0.0])
                 .await
                 .unwrap();
         }
 
         // Perform multiple searches
         for _ in 0..5 {
-            let results = engine
-                .search(&[5.0, 0.0, 0.0], "document", 5)
-                .await
-                .unwrap();
+            let results = engine.search(&[5.0, 0.0, 0.0], "chunk", 5).await.unwrap();
             assert!(results.len() <= 5);
         }
 
@@ -2173,40 +2154,34 @@ mod tests {
         assert_eq!(engine.len(), 10);
     }
 
-    /// Test document text handling and search accuracy
+    /// Test chunk text handling and search accuracy
     #[tokio::test]
-    async fn test_document_text_search() {
+    async fn test_chunk_text_search() {
         let store = InMemoryDocumentStore::new();
         let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
 
-        // Add document with specific keyword
-        let doc1 = Document {
+        // Add chunk with specific keyword
+        let chunk1 = Chunk {
             text: "Alpha bravo charlie information".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine
-            .add_document(doc1, vec![1.0, 0.0, 0.0])
-            .await
-            .unwrap();
+        engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
 
-        // Add document with different content
-        let doc2 = Document {
+        // Add chunk with different content
+        let chunk2 = Chunk {
             text: "Delta echo foxtrot data".to_string(),
-            metadata: DocumentMetadata::default(),
+            metadata: ChunkSourceMetadata::default(),
         };
-        engine
-            .add_document(doc2, vec![0.0, 1.0, 0.0])
-            .await
-            .unwrap();
+        engine.add_chunk(chunk2, vec![0.0, 1.0, 0.0]).await.unwrap();
 
         // Hybrid search combines keyword + vector results
-        // Both documents may appear in results, but the one with keyword match should rank higher
+        // Both chunks may appear in results, but the one with keyword match should rank higher
         let results = engine.search(&[0.5, 0.5, 0.0], "Alpha", 5).await.unwrap();
         assert!(!results.is_empty());
         // The first result should contain the keyword match
         assert!(results[0].text.contains("Alpha"));
 
-        // Search with embedding closer to doc2 and keyword "Delta"
+        // Search with embedding closer to chunk2 and keyword "Delta"
         let results = engine.search(&[0.0, 1.0, 0.0], "Delta", 5).await.unwrap();
         assert!(!results.is_empty());
         // The first result should contain "Delta" (keyword + vector agreement)

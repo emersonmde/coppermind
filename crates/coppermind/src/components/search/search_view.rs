@@ -1,5 +1,5 @@
 use crate::processing::embed_text;
-use crate::search::types::{DocId, DocumentMetadata, SearchResult};
+use crate::search::types::{ChunkId, ChunkSourceMetadata, SearchResult};
 use crate::search::{aggregate_chunks_by_file, types::FileSearchResult};
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
@@ -25,7 +25,7 @@ fn create_easter_egg_result() -> FileSearchResult {
     const FIRST_COMMIT_TIMESTAMP: u64 = 1761887800;
 
     let chunk = SearchResult {
-        doc_id: DocId::from_u64(u64::MAX), // Special ID to avoid conflicts
+        chunk_id: ChunkId::from_u64(u64::MAX), // Special ID to avoid conflicts
         score: 1.0,
         vector_score: Some(1.0),
         keyword_score: Some(1.0),
@@ -35,7 +35,7 @@ fn create_easter_egg_result() -> FileSearchResult {
                on your device with no cloud dependencies. The search engine uses HNSW for fast \
                approximate nearest neighbor search and provides detailed fusion scores for transparency."
             .to_string(),
-        metadata: DocumentMetadata {
+        metadata: ChunkSourceMetadata {
             filename: Some("welcome.md (chunk 1)".to_string()),
             source: Some("welcome.md".to_string()),
             created_at: FIRST_COMMIT_TIMESTAMP,

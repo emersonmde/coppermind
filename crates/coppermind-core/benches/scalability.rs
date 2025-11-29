@@ -20,7 +20,7 @@
 
 use coppermind_core::config::EMBEDDING_DIM;
 use coppermind_core::search::keyword::KeywordSearchEngine;
-use coppermind_core::search::types::DocId;
+use coppermind_core::search::types::ChunkId;
 use coppermind_core::search::vector::VectorSearchEngine;
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, PlotConfiguration,
@@ -108,7 +108,7 @@ fn sample_text(id: u64) -> String {
 fn build_vector_engine(size: usize) -> VectorSearchEngine {
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..size {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
     engine
 }
@@ -116,7 +116,7 @@ fn build_vector_engine(size: usize) -> VectorSearchEngine {
 fn build_keyword_engine(size: usize) -> KeywordSearchEngine {
     let mut engine = KeywordSearchEngine::new();
     for i in 0..size {
-        engine.add_document(DocId::from_u64(i as u64), sample_text(i as u64));
+        engine.add_chunk(ChunkId::from_u64(i as u64), sample_text(i as u64));
     }
     engine
 }
@@ -181,8 +181,8 @@ fn bench_hnsw_insert_scalability(c: &mut Criterion) {
                 },
                 |mut engine| {
                     // Benchmark: insert one more document
-                    let _ = engine.add_document(
-                        DocId::from_u64(size as u64),
+                    let _ = engine.add_chunk(
+                        ChunkId::from_u64(size as u64),
                         black_box(seeded_embedding(size as u64)),
                     );
                     engine
@@ -217,7 +217,7 @@ fn bench_hnsw_build_scalability(c: &mut Criterion) {
             b.iter(|| {
                 let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
                 for (i, embedding) in embeddings.iter().enumerate() {
-                    let _ = engine.add_document(DocId::from_u64(i as u64), embedding.clone());
+                    let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
                 }
                 engine
             });

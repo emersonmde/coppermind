@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! - `types`: Core types (DocId, Document, SearchResult, FileSearchResult, SearchError)
+//! - `types`: Core types (ChunkId, Chunk, SearchResult, FileSearchResult, SearchError)
 //! - `engine`: HybridSearchEngine orchestrating vector + keyword search
 //! - `vector`: HNSW-based semantic similarity search
 //! - `keyword`: BM25 full-text keyword search
@@ -17,20 +17,20 @@
 //! # Usage
 //!
 //! ```ignore
-//! use coppermind_core::search::{HybridSearchEngine, Document, DocumentMetadata};
+//! use coppermind_core::search::{HybridSearchEngine, Chunk, ChunkSourceMetadata};
 //! use coppermind_core::storage::InMemoryDocumentStore;
 //!
 //! // Create search engine with a document store
 //! let store = InMemoryDocumentStore::new();
 //! let mut engine = HybridSearchEngine::new(store, 512).await?;
 //!
-//! // Index documents with pre-computed embeddings
-//! let doc = Document {
+//! // Index chunks with pre-computed embeddings
+//! let chunk = Chunk {
 //!     text: "Rust is a systems programming language".to_string(),
-//!     metadata: DocumentMetadata::default(),
+//!     metadata: ChunkSourceMetadata::default(),
 //! };
 //! let embedding = vec![0.1; 512]; // From embedding model
-//! engine.add_document(doc, embedding).await?;
+//! engine.add_chunk(chunk, embedding).await?;
 //!
 //! // Search (combines vector + keyword + RRF fusion)
 //! let query_embedding = vec![0.1; 512];
@@ -87,8 +87,8 @@ pub mod vector;
 // Re-export main types (public API)
 #[allow(unused_imports)]
 pub use types::{
-    validate_dimension, ChunkMetadata, CompactionStats, DocId, Document, DocumentMetadata,
-    DocumentRecord, FileSearchResult, SearchError, SearchResult, SourceRecord,
+    validate_dimension, Chunk, ChunkId, ChunkMetadata, ChunkRecord, ChunkSourceMetadata,
+    CompactionStats, FileSearchResult, SearchError, SearchResult, SourceRecord,
 };
 
 // Re-export search engine and aggregation

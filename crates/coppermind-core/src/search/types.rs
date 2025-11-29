@@ -15,31 +15,35 @@ pub fn get_current_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-/// Unique document identifier.
+/// Unique chunk identifier.
 ///
 /// IDs are generated atomically to ensure uniqueness across threads.
-/// Use `DocId::new()` to generate a new unique ID.
+/// Use `ChunkId::new()` to generate a new unique ID.
+///
+/// Note: In Coppermind, "chunks" are segments of documents (files/URLs).
+/// A single document may have multiple chunks. This was previously called
+/// `DocId` but was renamed in ADR-008 to clarify the distinction.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let id = DocId::new();  // Generates unique ID (e.g., 0)
-/// let another = DocId::new();  // Generates next ID (e.g., 1)
+/// let id = ChunkId::new();  // Generates unique ID (e.g., 0)
+/// let another = ChunkId::new();  // Generates next ID (e.g., 1)
 /// assert_ne!(id, another);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct DocId(u64);
+pub struct ChunkId(u64);
 
-/// Global counter for generating unique document IDs.
-/// Must be initialized with `init_counter` after loading existing documents.
-static DOC_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Global counter for generating unique chunk IDs.
+/// Must be initialized with `init_counter` after loading existing chunks.
+static CHUNK_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-impl DocId {
-    /// Generates a new unique document ID.
+impl ChunkId {
+    /// Generates a new unique chunk ID.
     ///
     /// Uses an atomic counter to ensure IDs are unique across threads.
-    /// The counter should be initialized via `DocId::init_counter()` after
-    /// loading existing documents to prevent ID collisions.
+    /// The counter should be initialized via `ChunkId::init_counter()` after
+    /// loading existing chunks to prevent ID collisions.
     ///
     /// Note: Default trait is intentionally NOT implemented because it would
     /// be misleading - calling default() multiple times would generate different
@@ -47,22 +51,22 @@ impl DocId {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         use std::sync::atomic::Ordering;
-        Self(DOC_ID_COUNTER.fetch_add(1, Ordering::SeqCst))
+        Self(CHUNK_ID_COUNTER.fetch_add(1, Ordering::SeqCst))
     }
 
     /// Initialize the ID counter to start after the given maximum ID.
     ///
-    /// Call this after loading existing documents to ensure new IDs don't
+    /// Call this after loading existing chunks to ensure new IDs don't
     /// collide with existing ones. Only updates if the new value is higher.
     pub fn init_counter(max_existing_id: u64) {
         use std::sync::atomic::Ordering;
         // Set counter to max_id + 1, but only if it's higher than current
         // This handles the case where multiple loads might happen
         let next_id = max_existing_id.saturating_add(1);
-        DOC_ID_COUNTER.fetch_max(next_id, Ordering::SeqCst);
+        CHUNK_ID_COUNTER.fetch_max(next_id, Ordering::SeqCst);
     }
 
-    /// Creates a DocId from a raw u64 value.
+    /// Creates a ChunkId from a raw u64 value.
     ///
     /// Useful for deserialization or testing. Be careful not to create
     /// duplicate IDs when using this method.
@@ -76,23 +80,41 @@ impl DocId {
     }
 }
 
-/// Document with text content and metadata.
+/// Type alias for backward compatibility during migration.
+/// Deprecated: Use `ChunkId` instead.
+#[deprecated(since = "0.2.0", note = "Use ChunkId instead - see ADR-008")]
+pub type DocId = ChunkId;
+
+/// Chunk of text with metadata.
 ///
-/// Represents a document to be indexed for search. The text field contains
-/// the searchable content, while metadata provides additional context.
+/// Represents a chunk (segment) of a document to be indexed for search.
+/// A document may be split into multiple chunks for better search granularity.
+/// The text field contains the searchable content, while metadata provides context.
+///
+/// Note: This was previously called `Document` but was renamed in ADR-008
+/// to clarify that this represents a chunk, not a full document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Document {
-    /// Document text content (will be tokenized for search)
+pub struct Chunk {
+    /// Chunk text content (will be tokenized for search)
     pub text: String,
     /// Associated metadata (filename, source, timestamp)
-    pub metadata: DocumentMetadata,
+    pub metadata: ChunkSourceMetadata,
 }
 
-/// Document metadata.
+/// Type alias for backward compatibility during migration.
+/// Deprecated: Use `Chunk` instead.
+#[deprecated(since = "0.2.0", note = "Use Chunk instead - see ADR-008")]
+pub type Document = Chunk;
+
+/// Chunk source metadata.
 ///
 /// Contains optional filename, source information, and creation timestamp.
+/// This metadata is stored per-chunk and identifies where the chunk came from.
+///
+/// Note: This was previously called `DocumentMetadata` but was renamed in ADR-008
+/// to clarify that this is metadata about a chunk's source, not a full document.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DocumentMetadata {
+pub struct ChunkSourceMetadata {
     /// Original filename if available
     pub filename: Option<String>,
     /// Source path or URL
@@ -101,7 +123,7 @@ pub struct DocumentMetadata {
     pub created_at: u64,
 }
 
-impl Default for DocumentMetadata {
+impl Default for ChunkSourceMetadata {
     fn default() -> Self {
         Self {
             filename: None,
@@ -111,40 +133,56 @@ impl Default for DocumentMetadata {
     }
 }
 
-/// Stored document record with assigned ID.
+/// Type alias for backward compatibility during migration.
+/// Deprecated: Use `ChunkSourceMetadata` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use ChunkSourceMetadata instead - see ADR-008"
+)]
+pub type DocumentMetadata = ChunkSourceMetadata;
+
+/// Stored chunk record with assigned ID.
 ///
-/// Internal representation of a document after it's been indexed.
-/// Contains the assigned DocId plus the original document and metadata.
+/// Internal representation of a chunk after it's been indexed.
+/// Contains the assigned ChunkId plus the original chunk text and metadata.
+///
+/// Note: This was previously called `DocumentRecord` but was renamed in ADR-008
+/// to clarify that this represents a chunk, not a full document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocumentRecord {
-    /// Unique document identifier
-    pub id: DocId,
-    /// Document text content
+pub struct ChunkRecord {
+    /// Unique chunk identifier
+    pub id: ChunkId,
+    /// Chunk text content
     pub text: String,
-    /// Document metadata
-    pub metadata: DocumentMetadata,
+    /// Chunk source metadata
+    pub metadata: ChunkSourceMetadata,
 }
+
+/// Type alias for backward compatibility during migration.
+/// Deprecated: Use `ChunkRecord` instead.
+#[deprecated(since = "0.2.0", note = "Use ChunkRecord instead - see ADR-008")]
+pub type DocumentRecord = ChunkRecord;
 
 /// Search result with relevance scores.
 ///
-/// Returned by the hybrid search engine, containing both the document
+/// Returned by the hybrid search engine, containing both the chunk
 /// and relevance scores from different ranking algorithms.
 ///
 /// Represents a single chunk from the search index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
-    /// Document identifier
-    pub doc_id: DocId,
+    /// Chunk identifier
+    pub chunk_id: ChunkId,
     /// Final fused relevance score (from RRF algorithm)
     pub score: f32,
     /// Semantic similarity score (from vector search, if available)
     pub vector_score: Option<f32>,
     /// Keyword match score (from BM25, if available)
     pub keyword_score: Option<f32>,
-    /// Document text content
+    /// Chunk text content
     pub text: String,
-    /// Document metadata
-    pub metadata: DocumentMetadata,
+    /// Chunk source metadata
+    pub metadata: ChunkSourceMetadata,
 }
 
 /// File-level search result aggregating multiple chunks from the same source.
@@ -321,34 +359,40 @@ impl IndexManifest {
     }
 }
 
-/// Persisted index data (documents only, embeddings stored separately).
+/// Persisted index data (chunks only, embeddings stored separately).
 ///
 /// The actual HNSW and BM25 indices are rebuilt on load from this data.
+///
+/// Note: This was previously called `PersistedDocuments` but the semantics
+/// remain the same - it stores chunk records, not full documents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedDocuments {
-    /// All document records in insertion order
-    pub documents: Vec<DocumentRecord>,
+pub struct PersistedChunks {
+    /// All chunk records in insertion order
+    pub chunks: Vec<ChunkRecord>,
 }
 
-impl PersistedDocuments {
-    /// Creates an empty persisted documents collection.
+impl PersistedChunks {
+    /// Creates an empty persisted chunks collection.
     pub fn new() -> Self {
-        Self {
-            documents: Vec::new(),
-        }
+        Self { chunks: Vec::new() }
     }
 
-    /// Creates from a list of document records.
-    pub fn from_documents(documents: Vec<DocumentRecord>) -> Self {
-        Self { documents }
+    /// Creates from a list of chunk records.
+    pub fn from_chunks(chunks: Vec<ChunkRecord>) -> Self {
+        Self { chunks }
     }
 }
 
-impl Default for PersistedDocuments {
+impl Default for PersistedChunks {
     fn default() -> Self {
         Self::new()
     }
 }
+
+/// Type alias for backward compatibility during migration.
+/// Deprecated: Use `PersistedChunks` instead.
+#[deprecated(since = "0.2.0", note = "Use PersistedChunks instead - see ADR-008")]
+pub type PersistedDocuments = PersistedChunks;
 
 /// Result of loading a persisted index.
 #[derive(Debug)]
@@ -356,7 +400,7 @@ pub enum LoadResult {
     /// Successfully loaded existing index
     Loaded {
         manifest: IndexManifest,
-        documents: PersistedDocuments,
+        chunks: PersistedChunks,
         embeddings: Vec<Vec<f32>>,
     },
     /// No existing index found (fresh start)
@@ -382,8 +426,8 @@ pub struct SourceRecord {
     pub version: u32,
     /// SHA-256 hash of the source content
     pub content_hash: String,
-    /// DocIds of all chunks from this source
-    pub doc_ids: Vec<DocId>,
+    /// ChunkIds of all chunks from this source
+    pub chunk_ids: Vec<ChunkId>,
     /// Whether all chunks have been indexed (false during indexing, true when complete)
     pub complete: bool,
 }
@@ -397,17 +441,17 @@ impl SourceRecord {
         Self {
             version: Self::CURRENT_VERSION,
             content_hash,
-            doc_ids: Vec::new(),
+            chunk_ids: Vec::new(),
             complete: false,
         }
     }
 
     /// Creates a complete source record with all chunk IDs
-    pub fn new_complete(content_hash: String, doc_ids: Vec<DocId>) -> Self {
+    pub fn new_complete(content_hash: String, chunk_ids: Vec<ChunkId>) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             content_hash,
-            doc_ids,
+            chunk_ids,
             complete: true,
         }
     }
@@ -417,9 +461,9 @@ impl SourceRecord {
         self.complete = true;
     }
 
-    /// Adds a chunk DocId to this source
-    pub fn add_chunk(&mut self, doc_id: DocId) {
-        self.doc_ids.push(doc_id);
+    /// Adds a chunk ChunkId to this source
+    pub fn add_chunk(&mut self, chunk_id: ChunkId) {
+        self.chunk_ids.push(chunk_id);
     }
 }
 

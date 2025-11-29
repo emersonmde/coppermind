@@ -23,7 +23,7 @@
 //! A throughput of 95 means 95% recall.
 
 use coppermind_core::config::EMBEDDING_DIM;
-use coppermind_core::search::types::DocId;
+use coppermind_core::search::types::ChunkId;
 use coppermind_core::search::vector::VectorSearchEngine;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::HashSet;
@@ -82,12 +82,12 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Compute exact k-nearest neighbors via brute-force search.
 ///
 /// This is O(n) and used as ground truth for measuring HNSW recall.
-fn brute_force_knn(query: &[f32], corpus: &[(DocId, Vec<f32>)], k: usize) -> Vec<DocId> {
+fn brute_force_knn(query: &[f32], corpus: &[(ChunkId, Vec<f32>)], k: usize) -> Vec<ChunkId> {
     let mut scored: Vec<_> = corpus
         .iter()
-        .map(|(doc_id, embedding)| {
+        .map(|(chunk_id, embedding)| {
             let sim = cosine_similarity(query, embedding);
-            (*doc_id, sim)
+            (*chunk_id, sim)
         })
         .collect();
 
@@ -98,7 +98,7 @@ fn brute_force_knn(query: &[f32], corpus: &[(DocId, Vec<f32>)], k: usize) -> Vec
 }
 
 /// Calculate recall: fraction of ground truth results found by HNSW.
-fn calculate_recall(hnsw_results: &[DocId], ground_truth: &[DocId]) -> f64 {
+fn calculate_recall(hnsw_results: &[ChunkId], ground_truth: &[ChunkId]) -> f64 {
     if ground_truth.is_empty() {
         return 1.0;
     }
@@ -129,13 +129,13 @@ fn bench_recall_at_k(c: &mut Criterion) {
 
     // Pre-build corpus
     let corpus: Vec<_> = (0..corpus_size)
-        .map(|i| (DocId::from_u64(i as u64), seeded_embedding(i as u64)))
+        .map(|i| (ChunkId::from_u64(i as u64), seeded_embedding(i as u64)))
         .collect();
 
     // Build HNSW index
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for (doc_id, embedding) in &corpus {
-        let _ = engine.add_document(*doc_id, embedding.clone());
+        let _ = engine.add_chunk(*doc_id, embedding.clone());
     }
 
     // Generate query embeddings
@@ -192,13 +192,13 @@ fn bench_recall_vs_size(c: &mut Criterion) {
     for &corpus_size in RECALL_CORPUS_SIZES {
         // Build corpus
         let corpus: Vec<_> = (0..corpus_size)
-            .map(|i| (DocId::from_u64(i as u64), seeded_embedding(i as u64)))
+            .map(|i| (ChunkId::from_u64(i as u64), seeded_embedding(i as u64)))
             .collect();
 
         // Build HNSW index
         let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
         for (doc_id, embedding) in &corpus {
-            let _ = engine.add_document(*doc_id, embedding.clone());
+            let _ = engine.add_chunk(*doc_id, embedding.clone());
         }
 
         // Generate queries and ground truth
@@ -254,12 +254,12 @@ fn bench_recall_distribution(c: &mut Criterion) {
 
     // Build corpus and index
     let corpus: Vec<_> = (0..corpus_size)
-        .map(|i| (DocId::from_u64(i as u64), seeded_embedding(i as u64)))
+        .map(|i| (ChunkId::from_u64(i as u64), seeded_embedding(i as u64)))
         .collect();
 
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for (doc_id, embedding) in &corpus {
-        let _ = engine.add_document(*doc_id, embedding.clone());
+        let _ = engine.add_chunk(*doc_id, embedding.clone());
     }
 
     // Generate queries

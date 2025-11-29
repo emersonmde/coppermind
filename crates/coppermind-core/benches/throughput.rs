@@ -16,7 +16,7 @@
 
 use coppermind_core::config::EMBEDDING_DIM;
 use coppermind_core::search::keyword::KeywordSearchEngine;
-use coppermind_core::search::types::{DocId, Document, DocumentMetadata};
+use coppermind_core::search::types::{Chunk, ChunkId, ChunkSourceMetadata};
 use coppermind_core::search::vector::VectorSearchEngine;
 use coppermind_core::search::HybridSearchEngine;
 use coppermind_core::storage::InMemoryDocumentStore;
@@ -76,15 +76,15 @@ fn sample_text(id: u64) -> String {
 fn build_vector_engine(size: usize) -> VectorSearchEngine {
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..size {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
     engine
 }
 
-fn create_document(id: u64) -> Document {
-    Document {
+fn create_chunk(id: u64) -> Chunk {
+    Chunk {
         text: sample_text(id),
-        metadata: DocumentMetadata {
+        metadata: ChunkSourceMetadata {
             filename: Some(format!("doc_{}.txt", id)),
             source: Some(format!("/test/doc_{}.txt", id)),
             created_at: 1700000000 + id,
@@ -105,7 +105,7 @@ fn bench_hnsw_qps_sequential(c: &mut Criterion) {
     // Build index
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..CORPUS_SIZE {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
 
     // Pre-generate queries
@@ -136,7 +136,7 @@ fn bench_bm25_qps_sequential(c: &mut Criterion) {
     // Build index
     let mut engine = KeywordSearchEngine::new();
     for i in 0..CORPUS_SIZE {
-        engine.add_document(DocId::from_u64(i as u64), sample_text(i as u64));
+        engine.add_chunk(ChunkId::from_u64(i as u64), sample_text(i as u64));
     }
 
     // Pre-generate queries (varying to avoid caching effects)
@@ -239,7 +239,7 @@ fn bench_hnsw_latency_percentiles(c: &mut Criterion) {
     // Build index
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..CORPUS_SIZE {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
 
     // Pre-generate queries
@@ -300,7 +300,7 @@ fn bench_hybrid_qps(c: &mut Criterion) {
         .unwrap();
 
     for i in 0..hybrid_corpus_size {
-        rt.block_on(engine.add_document(create_document(i as u64), seeded_embedding(i as u64)))
+        rt.block_on(engine.add_chunk(create_chunk(i as u64), seeded_embedding(i as u64)))
             .unwrap();
     }
 
@@ -349,7 +349,7 @@ fn bench_sustained_load(c: &mut Criterion) {
     // Build index
     let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
     for i in 0..CORPUS_SIZE {
-        let _ = engine.add_document(DocId::from_u64(i as u64), seeded_embedding(i as u64));
+        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
     }
 
     // Generate many unique queries to avoid caching

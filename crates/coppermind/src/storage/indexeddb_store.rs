@@ -1,16 +1,16 @@
 //! IndexedDB-backed document store for web platform.
 //!
 //! Uses [rexie](https://github.com/devashishdxt/rexie) - a futures-based IndexedDB wrapper.
-//! Provides O(1) key lookups for documents, embeddings, and source records.
+//! Provides O(1) key lookups for chunks, embeddings, and source records.
 //!
 //! # Object Stores
 //!
-//! - `documents`: DocId (u64 as string) -> DocumentRecord (JSON)
-//! - `embeddings`: DocId (u64 as string) -> ArrayBuffer (raw f32 bytes)
+//! - `documents`: ChunkId (u64 as string) -> ChunkRecord (JSON) [store name kept for backward compat]
+//! - `embeddings`: ChunkId (u64 as string) -> ArrayBuffer (raw f32 bytes)
 //! - `sources`: source_id (string) -> SourceRecord (JSON)
 //! - `metadata`: key (string) -> value (JSON) - stores tombstones, etc.
 
-use coppermind_core::search::types::{DocId, DocumentRecord, SourceRecord};
+use coppermind_core::search::types::{ChunkId, ChunkRecord, SourceRecord};
 use coppermind_core::storage::{DocumentStore, StoreError};
 use rexie::{ObjectStore, Rexie, TransactionMode};
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ const TOMBSTONES_KEY: &str = "tombstones";
 
 /// IndexedDB-backed document store for web platform.
 ///
-/// Provides efficient O(1) access to documents, embeddings, and source records
+/// Provides efficient O(1) access to chunks, embeddings, and source records
 /// using IndexedDB object stores.
 ///
 /// # Example
@@ -38,7 +38,7 @@ const TOMBSTONES_KEY: &str = "tombstones";
 /// use coppermind::storage::IndexedDbDocumentStore;
 ///
 /// let store = IndexedDbDocumentStore::open().await?;
-/// store.put_document(doc_id, &doc).await?;
+/// store.put_chunk(chunk_id, &chunk).await?;
 /// ```
 pub struct IndexedDbDocumentStore {
     db: Rexie,
@@ -62,27 +62,27 @@ impl IndexedDbDocumentStore {
         Ok(Self { db })
     }
 
-    /// Converts a DocId to a string key for IndexedDB.
-    fn doc_id_to_key(id: DocId) -> String {
+    /// Converts a ChunkId to a string key for IndexedDB.
+    fn chunk_id_to_key(id: ChunkId) -> String {
         id.as_u64().to_string()
     }
 
-    /// Converts a string key back to a DocId.
-    fn key_to_doc_id(key: &str) -> Option<DocId> {
-        key.parse::<u64>().ok().map(DocId::from_u64)
+    /// Converts a string key back to a ChunkId.
+    fn key_to_chunk_id(key: &str) -> Option<ChunkId> {
+        key.parse::<u64>().ok().map(ChunkId::from_u64)
     }
 
-    /// Serializes a DocumentRecord to a JsValue.
-    fn serialize_document(doc: &DocumentRecord) -> Result<JsValue, StoreError> {
-        serde_wasm_bindgen::to_value(doc).map_err(|e| {
-            StoreError::SerializationError(format!("Failed to serialize document: {}", e))
+    /// Serializes a ChunkRecord to a JsValue.
+    fn serialize_chunk(chunk: &ChunkRecord) -> Result<JsValue, StoreError> {
+        serde_wasm_bindgen::to_value(chunk).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to serialize chunk: {}", e))
         })
     }
 
-    /// Deserializes a DocumentRecord from a JsValue.
-    fn deserialize_document(value: JsValue) -> Result<DocumentRecord, StoreError> {
+    /// Deserializes a ChunkRecord from a JsValue.
+    fn deserialize_chunk(value: JsValue) -> Result<ChunkRecord, StoreError> {
         serde_wasm_bindgen::from_value(value).map_err(|e| {
-            StoreError::SerializationError(format!("Failed to deserialize document: {}", e))
+            StoreError::SerializationError(format!("Failed to deserialize chunk: {}", e))
         })
     }
 
@@ -142,10 +142,10 @@ impl IndexedDbDocumentStore {
 #[async_trait::async_trait(?Send)]
 impl DocumentStore for IndexedDbDocumentStore {
     // =========================================================================
-    // Document Operations
+    // Chunk Operations
     // =========================================================================
 
-    async fn get_document(&self, id: DocId) -> Result<Option<DocumentRecord>, StoreError> {
+    async fn get_chunk(&self, id: ChunkId) -> Result<Option<ChunkRecord>, StoreError> {
         let tx = self
             .db
             .transaction(&[DOCUMENTS_STORE], TransactionMode::ReadOnly)
@@ -157,21 +157,21 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(DOCUMENTS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
         match store.get(key.clone()).await {
             Ok(Some(value)) => {
-                let doc = Self::deserialize_document(value)?;
-                Ok(Some(doc))
+                let chunk = Self::deserialize_chunk(value)?;
+                Ok(Some(chunk))
             }
             Ok(None) => Ok(None),
             Err(e) => Err(StoreError::DatabaseError(format!(
-                "Failed to get document: {:?}",
+                "Failed to get chunk: {:?}",
                 e
             ))),
         }
     }
 
-    async fn put_document(&self, id: DocId, doc: &DocumentRecord) -> Result<(), StoreError> {
+    async fn put_chunk(&self, id: ChunkId, chunk: &ChunkRecord) -> Result<(), StoreError> {
         let tx = self
             .db
             .transaction(&[DOCUMENTS_STORE], TransactionMode::ReadWrite)
@@ -183,13 +183,13 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(DOCUMENTS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
-        let value = Self::serialize_document(doc)?;
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
+        let value = Self::serialize_chunk(chunk)?;
 
         store
             .put(&value, Some(&key))
             .await
-            .map_err(|e| StoreError::DatabaseError(format!("Failed to put document: {:?}", e)))?;
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to put chunk: {:?}", e)))?;
 
         tx.done()
             .await
@@ -198,7 +198,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         Ok(())
     }
 
-    async fn delete_document(&self, id: DocId) -> Result<(), StoreError> {
+    async fn delete_chunk(&self, id: ChunkId) -> Result<(), StoreError> {
         let tx = self
             .db
             .transaction(&[DOCUMENTS_STORE], TransactionMode::ReadWrite)
@@ -210,11 +210,12 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(DOCUMENTS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
 
-        store.delete(key).await.map_err(|e| {
-            StoreError::DatabaseError(format!("Failed to delete document: {:?}", e))
-        })?;
+        store
+            .delete(key)
+            .await
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to delete chunk: {:?}", e)))?;
 
         tx.done()
             .await
@@ -223,7 +224,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         Ok(())
     }
 
-    async fn get_documents_batch(&self, ids: &[DocId]) -> Result<Vec<DocumentRecord>, StoreError> {
+    async fn get_chunks_batch(&self, ids: &[ChunkId]) -> Result<Vec<ChunkRecord>, StoreError> {
         let tx = self
             .db
             .transaction(&[DOCUMENTS_STORE], TransactionMode::ReadOnly)
@@ -235,24 +236,24 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(DOCUMENTS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let mut docs = Vec::with_capacity(ids.len());
+        let mut chunks = Vec::with_capacity(ids.len());
         for id in ids {
-            let key = JsValue::from_str(&Self::doc_id_to_key(*id));
+            let key = JsValue::from_str(&Self::chunk_id_to_key(*id));
             if let Ok(Some(value)) = store.get(key.clone()).await {
-                if let Ok(doc) = Self::deserialize_document(value) {
-                    docs.push(doc);
+                if let Ok(chunk) = Self::deserialize_chunk(value) {
+                    chunks.push(chunk);
                 }
             }
         }
 
-        Ok(docs)
+        Ok(chunks)
     }
 
     // =========================================================================
     // Embedding Operations
     // =========================================================================
 
-    async fn get_embedding(&self, id: DocId) -> Result<Option<Vec<f32>>, StoreError> {
+    async fn get_embedding(&self, id: ChunkId) -> Result<Option<Vec<f32>>, StoreError> {
         let tx = self
             .db
             .transaction(&[EMBEDDINGS_STORE], TransactionMode::ReadOnly)
@@ -264,7 +265,7 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(EMBEDDINGS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
         match store.get(key.clone()).await {
             Ok(Some(value)) => {
                 let embedding = Self::deserialize_embedding(value)?;
@@ -278,7 +279,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         }
     }
 
-    async fn put_embedding(&self, id: DocId, embedding: &[f32]) -> Result<(), StoreError> {
+    async fn put_embedding(&self, id: ChunkId, embedding: &[f32]) -> Result<(), StoreError> {
         let tx = self
             .db
             .transaction(&[EMBEDDINGS_STORE], TransactionMode::ReadWrite)
@@ -290,7 +291,7 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(EMBEDDINGS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
         let value = Self::serialize_embedding(embedding);
 
         store
@@ -305,7 +306,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         Ok(())
     }
 
-    async fn delete_embedding(&self, id: DocId) -> Result<(), StoreError> {
+    async fn delete_embedding(&self, id: ChunkId) -> Result<(), StoreError> {
         let tx = self
             .db
             .transaction(&[EMBEDDINGS_STORE], TransactionMode::ReadWrite)
@@ -317,7 +318,7 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(EMBEDDINGS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let key = JsValue::from_str(&Self::chunk_id_to_key(id));
 
         store.delete(key).await.map_err(|e| {
             StoreError::DatabaseError(format!("Failed to delete embedding: {:?}", e))
@@ -330,7 +331,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         Ok(())
     }
 
-    async fn iter_embeddings(&self) -> Result<Vec<(DocId, Vec<f32>)>, StoreError> {
+    async fn iter_embeddings(&self) -> Result<Vec<(ChunkId, Vec<f32>)>, StoreError> {
         let tx = self
             .db
             .transaction(&[EMBEDDINGS_STORE], TransactionMode::ReadOnly)
@@ -350,9 +351,9 @@ impl DocumentStore for IndexedDbDocumentStore {
         let mut embeddings = Vec::new();
         for (key, value) in entries {
             if let Some(key_str) = key.as_string() {
-                if let Some(doc_id) = Self::key_to_doc_id(&key_str) {
+                if let Some(chunk_id) = Self::key_to_chunk_id(&key_str) {
                     if let Ok(embedding) = Self::deserialize_embedding(value) {
-                        embeddings.push((doc_id, embedding));
+                        embeddings.push((chunk_id, embedding));
                     }
                 }
             }
@@ -525,7 +526,7 @@ impl DocumentStore for IndexedDbDocumentStore {
     // Utility Operations
     // =========================================================================
 
-    async fn document_count(&self) -> Result<usize, StoreError> {
+    async fn chunk_count(&self) -> Result<usize, StoreError> {
         let tx = self
             .db
             .transaction(&[DOCUMENTS_STORE], TransactionMode::ReadOnly)
@@ -537,9 +538,10 @@ impl DocumentStore for IndexedDbDocumentStore {
             .store(DOCUMENTS_STORE)
             .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
 
-        let count = store.count(None).await.map_err(|e| {
-            StoreError::DatabaseError(format!("Failed to count documents: {:?}", e))
-        })?;
+        let count = store
+            .count(None)
+            .await
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to count chunks: {:?}", e)))?;
 
         Ok(count as usize)
     }

@@ -154,42 +154,42 @@ fn extract_file_name(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::types::{DocId, DocumentMetadata};
+    use crate::search::types::{ChunkId, ChunkSourceMetadata};
 
     #[test]
     fn test_aggregate_chunks_by_file() {
         let chunks = vec![
             SearchResult {
-                doc_id: DocId::from_u64(1),
+                chunk_id: ChunkId::from_u64(1),
                 score: 0.9,
                 vector_score: Some(0.85),
                 keyword_score: Some(0.75),
                 text: "High scoring chunk from foo.md".to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some("foo.md (chunk 2)".to_string()),
                     source: Some("foo.md".to_string()),
                     created_at: 100,
                 },
             },
             SearchResult {
-                doc_id: DocId::from_u64(2),
+                chunk_id: ChunkId::from_u64(2),
                 score: 0.7,
                 vector_score: Some(0.65),
                 keyword_score: Some(0.55),
                 text: "Lower scoring chunk from foo.md".to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some("foo.md (chunk 1)".to_string()),
                     source: Some("foo.md".to_string()),
                     created_at: 100,
                 },
             },
             SearchResult {
-                doc_id: DocId::from_u64(3),
+                chunk_id: ChunkId::from_u64(3),
                 score: 0.8,
                 vector_score: Some(0.75),
                 keyword_score: Some(0.65),
                 text: "Chunk from bar.md".to_string(),
-                metadata: DocumentMetadata {
+                metadata: ChunkSourceMetadata {
                     filename: Some("bar.md (chunk 1)".to_string()),
                     source: Some("bar.md".to_string()),
                     created_at: 200,
@@ -246,12 +246,12 @@ mod tests {
     #[test]
     fn test_chunks_without_source() {
         let chunks = vec![SearchResult {
-            doc_id: DocId::from_u64(1),
+            chunk_id: ChunkId::from_u64(1),
             score: 0.9,
             vector_score: Some(0.85),
             keyword_score: Some(0.75),
             text: "Chunk without source".to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),
                 source: None, // No source
                 created_at: 100,

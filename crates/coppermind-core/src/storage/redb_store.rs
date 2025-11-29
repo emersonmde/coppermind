@@ -1,18 +1,18 @@
 //! Redb-backed document store for desktop platforms.
 //!
 //! Uses [redb](https://github.com/cberner/redb) - a pure Rust, ACID-compliant,
-//! embedded B-tree database. Provides O(log n) lookups for documents, embeddings,
+//! embedded B-tree database. Provides O(log n) lookups for chunks, embeddings,
 //! and source records.
 //!
 //! # Tables
 //!
-//! - `documents`: DocId (u64) -> DocumentRecord (JSON)
-//! - `embeddings`: DocId (u64) -> Vec<f32> (raw bytes, little-endian)
+//! - `documents`: ChunkId (u64) -> ChunkRecord (JSON) [table name kept for backward compat]
+//! - `embeddings`: ChunkId (u64) -> Vec<f32> (raw bytes, little-endian)
 //! - `sources`: source_id (string) -> SourceRecord (JSON)
 //! - `metadata`: key (string) -> value (JSON) - stores tombstones, etc.
 
 use super::{DocumentStore, StoreError};
-use crate::search::types::{DocId, DocumentRecord, SourceRecord};
+use crate::search::types::{ChunkId, ChunkRecord, SourceRecord};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::collections::HashSet;
 use std::path::Path;
@@ -30,7 +30,7 @@ const TOMBSTONES_KEY: &str = "tombstones";
 
 /// Redb-backed document store for native platforms.
 ///
-/// Provides efficient O(log n) access to documents, embeddings, and source records
+/// Provides efficient O(log n) access to chunks, embeddings, and source records
 /// using redb's B-tree tables. All operations are ACID-compliant.
 ///
 /// # Example
@@ -39,7 +39,7 @@ const TOMBSTONES_KEY: &str = "tombstones";
 /// use coppermind_core::storage::RedbDocumentStore;
 ///
 /// let store = RedbDocumentStore::open("./data/index.redb")?;
-/// store.put_document(doc_id, &doc).await?;
+/// store.put_chunk(chunk_id, &chunk).await?;
 /// ```
 pub struct RedbDocumentStore {
     db: Arc<Database>,
@@ -81,17 +81,17 @@ impl RedbDocumentStore {
         Ok(Self { db: Arc::new(db) })
     }
 
-    /// Serializes a DocumentRecord to JSON bytes.
-    fn serialize_document(doc: &DocumentRecord) -> Result<Vec<u8>, StoreError> {
-        serde_json::to_vec(doc).map_err(|e| {
-            StoreError::SerializationError(format!("Failed to serialize document: {}", e))
+    /// Serializes a ChunkRecord to JSON bytes.
+    fn serialize_chunk(chunk: &ChunkRecord) -> Result<Vec<u8>, StoreError> {
+        serde_json::to_vec(chunk).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to serialize chunk: {}", e))
         })
     }
 
-    /// Deserializes a DocumentRecord from JSON bytes.
-    fn deserialize_document(bytes: &[u8]) -> Result<DocumentRecord, StoreError> {
+    /// Deserializes a ChunkRecord from JSON bytes.
+    fn deserialize_chunk(bytes: &[u8]) -> Result<ChunkRecord, StoreError> {
         serde_json::from_slice(bytes).map_err(|e| {
-            StoreError::SerializationError(format!("Failed to deserialize document: {}", e))
+            StoreError::SerializationError(format!("Failed to deserialize chunk: {}", e))
         })
     }
 
@@ -154,10 +154,10 @@ impl RedbDocumentStore {
 #[async_trait::async_trait(?Send)]
 impl DocumentStore for RedbDocumentStore {
     // =========================================================================
-    // Document Operations
+    // Chunk Operations
     // =========================================================================
 
-    async fn get_document(&self, id: DocId) -> Result<Option<DocumentRecord>, StoreError> {
+    async fn get_chunk(&self, id: ChunkId) -> Result<Option<ChunkRecord>, StoreError> {
         let read_txn = self.db.begin_read().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
@@ -169,19 +169,19 @@ impl DocumentStore for RedbDocumentStore {
         match table.get(id.as_u64()) {
             Ok(Some(guard)) => {
                 let bytes = guard.value();
-                let doc = Self::deserialize_document(bytes)?;
-                Ok(Some(doc))
+                let chunk = Self::deserialize_chunk(bytes)?;
+                Ok(Some(chunk))
             }
             Ok(None) => Ok(None),
             Err(e) => Err(StoreError::DatabaseError(format!(
-                "Failed to get document: {}",
+                "Failed to get chunk: {}",
                 e
             ))),
         }
     }
 
-    async fn put_document(&self, id: DocId, doc: &DocumentRecord) -> Result<(), StoreError> {
-        let bytes = Self::serialize_document(doc)?;
+    async fn put_chunk(&self, id: ChunkId, chunk: &ChunkRecord) -> Result<(), StoreError> {
+        let bytes = Self::serialize_chunk(chunk)?;
 
         let write_txn = self.db.begin_write().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
@@ -192,19 +192,19 @@ impl DocumentStore for RedbDocumentStore {
                 StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
             })?;
 
-            table.insert(id.as_u64(), bytes.as_slice()).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to insert document: {}", e))
-            })?;
+            table
+                .insert(id.as_u64(), bytes.as_slice())
+                .map_err(|e| StoreError::DatabaseError(format!("Failed to insert chunk: {}", e)))?;
         }
 
         write_txn
             .commit()
-            .map_err(|e| StoreError::DatabaseError(format!("Failed to commit document: {}", e)))?;
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to commit chunk: {}", e)))?;
 
         Ok(())
     }
 
-    async fn delete_document(&self, id: DocId) -> Result<(), StoreError> {
+    async fn delete_chunk(&self, id: ChunkId) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
         })?;
@@ -215,19 +215,19 @@ impl DocumentStore for RedbDocumentStore {
             })?;
 
             // Remove returns Ok(None) if key didn't exist, which is fine
-            table.remove(id.as_u64()).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to delete document: {}", e))
-            })?;
+            table
+                .remove(id.as_u64())
+                .map_err(|e| StoreError::DatabaseError(format!("Failed to delete chunk: {}", e)))?;
         }
 
         write_txn.commit().map_err(|e| {
-            StoreError::DatabaseError(format!("Failed to commit document deletion: {}", e))
+            StoreError::DatabaseError(format!("Failed to commit chunk deletion: {}", e))
         })?;
 
         Ok(())
     }
 
-    async fn get_documents_batch(&self, ids: &[DocId]) -> Result<Vec<DocumentRecord>, StoreError> {
+    async fn get_chunks_batch(&self, ids: &[ChunkId]) -> Result<Vec<ChunkRecord>, StoreError> {
         let read_txn = self.db.begin_read().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
@@ -236,23 +236,23 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
         })?;
 
-        let mut docs = Vec::with_capacity(ids.len());
+        let mut chunks = Vec::with_capacity(ids.len());
         for id in ids {
             if let Ok(Some(guard)) = table.get(id.as_u64()) {
-                if let Ok(doc) = Self::deserialize_document(guard.value()) {
-                    docs.push(doc);
+                if let Ok(chunk) = Self::deserialize_chunk(guard.value()) {
+                    chunks.push(chunk);
                 }
             }
         }
 
-        Ok(docs)
+        Ok(chunks)
     }
 
     // =========================================================================
     // Embedding Operations
     // =========================================================================
 
-    async fn get_embedding(&self, id: DocId) -> Result<Option<Vec<f32>>, StoreError> {
+    async fn get_embedding(&self, id: ChunkId) -> Result<Option<Vec<f32>>, StoreError> {
         let read_txn = self.db.begin_read().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
@@ -274,7 +274,7 @@ impl DocumentStore for RedbDocumentStore {
         }
     }
 
-    async fn put_embedding(&self, id: DocId, embedding: &[f32]) -> Result<(), StoreError> {
+    async fn put_embedding(&self, id: ChunkId, embedding: &[f32]) -> Result<(), StoreError> {
         let bytes = Self::serialize_embedding(embedding);
 
         let write_txn = self.db.begin_write().map_err(|e| {
@@ -298,7 +298,7 @@ impl DocumentStore for RedbDocumentStore {
         Ok(())
     }
 
-    async fn delete_embedding(&self, id: DocId) -> Result<(), StoreError> {
+    async fn delete_embedding(&self, id: ChunkId) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
         })?;
@@ -320,7 +320,7 @@ impl DocumentStore for RedbDocumentStore {
         Ok(())
     }
 
-    async fn iter_embeddings(&self) -> Result<Vec<(DocId, Vec<f32>)>, StoreError> {
+    async fn iter_embeddings(&self) -> Result<Vec<(ChunkId, Vec<f32>)>, StoreError> {
         let read_txn = self.db.begin_read().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
@@ -338,9 +338,9 @@ impl DocumentStore for RedbDocumentStore {
             let (key, value) = result.map_err(|e| {
                 StoreError::DatabaseError(format!("Failed to read embedding entry: {}", e))
             })?;
-            let doc_id = DocId::from_u64(key.value());
+            let chunk_id = ChunkId::from_u64(key.value());
             let embedding = Self::deserialize_embedding(value.value());
-            embeddings.push((doc_id, embedding));
+            embeddings.push((chunk_id, embedding));
         }
 
         Ok(embeddings)
@@ -495,7 +495,7 @@ impl DocumentStore for RedbDocumentStore {
     // Utility Operations
     // =========================================================================
 
-    async fn document_count(&self) -> Result<usize, StoreError> {
+    async fn chunk_count(&self) -> Result<usize, StoreError> {
         let read_txn = self.db.begin_read().map_err(|e| {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
@@ -504,9 +504,9 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
         })?;
 
-        let count = table.len().map_err(|e| {
-            StoreError::DatabaseError(format!("Failed to get document count: {}", e))
-        })?;
+        let count = table
+            .len()
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get chunk count: {}", e)))?;
 
         Ok(count as usize)
     }
@@ -593,7 +593,7 @@ impl DocumentStore for RedbDocumentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::types::DocumentMetadata;
+    use crate::search::types::ChunkSourceMetadata;
     use tempfile::TempDir;
 
     fn create_test_store() -> (RedbDocumentStore, TempDir) {
@@ -603,11 +603,11 @@ mod tests {
         (store, temp_dir)
     }
 
-    fn make_test_doc(id: u64, text: &str) -> DocumentRecord {
-        DocumentRecord {
-            id: DocId::from_u64(id),
+    fn make_test_chunk(id: u64, text: &str) -> ChunkRecord {
+        ChunkRecord {
+            id: ChunkId::from_u64(id),
             text: text.to_string(),
-            metadata: DocumentMetadata {
+            metadata: ChunkSourceMetadata {
                 filename: Some("test.txt".to_string()),
                 source: Some("/path/to/test.txt".to_string()),
                 created_at: 12345,
@@ -616,30 +616,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_document_crud() {
+    async fn test_chunk_crud() {
         let (store, _temp) = create_test_store();
-        let doc = make_test_doc(1, "Hello world");
+        let chunk = make_test_chunk(1, "Hello world");
 
         // Initially empty
         assert!(store
-            .get_document(DocId::from_u64(1))
+            .get_chunk(ChunkId::from_u64(1))
             .await
             .unwrap()
             .is_none());
 
         // Put and get
-        store.put_document(DocId::from_u64(1), &doc).await.unwrap();
+        store.put_chunk(ChunkId::from_u64(1), &chunk).await.unwrap();
         let retrieved = store
-            .get_document(DocId::from_u64(1))
+            .get_chunk(ChunkId::from_u64(1))
             .await
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.text, "Hello world");
 
         // Delete
-        store.delete_document(DocId::from_u64(1)).await.unwrap();
+        store.delete_chunk(ChunkId::from_u64(1)).await.unwrap();
         assert!(store
-            .get_document(DocId::from_u64(1))
+            .get_chunk(ChunkId::from_u64(1))
             .await
             .unwrap()
             .is_none());
@@ -649,21 +649,21 @@ mod tests {
     async fn test_batch_get() {
         let (store, _temp) = create_test_store();
 
-        // Add some documents
+        // Add some chunks
         for i in 1..=5 {
-            let doc = make_test_doc(i, &format!("Doc {}", i));
-            store.put_document(DocId::from_u64(i), &doc).await.unwrap();
+            let chunk = make_test_chunk(i, &format!("Chunk {}", i));
+            store.put_chunk(ChunkId::from_u64(i), &chunk).await.unwrap();
         }
 
         // Batch get (including one that doesn't exist)
         let ids = vec![
-            DocId::from_u64(1),
-            DocId::from_u64(3),
-            DocId::from_u64(99), // doesn't exist
-            DocId::from_u64(5),
+            ChunkId::from_u64(1),
+            ChunkId::from_u64(3),
+            ChunkId::from_u64(99), // doesn't exist
+            ChunkId::from_u64(5),
         ];
-        let docs = store.get_documents_batch(&ids).await.unwrap();
-        assert_eq!(docs.len(), 3); // Only 3 found
+        let chunks = store.get_chunks_batch(&ids).await.unwrap();
+        assert_eq!(chunks.len(), 3); // Only 3 found
     }
 
     #[tokio::test]
@@ -673,11 +673,11 @@ mod tests {
 
         // Put and get
         store
-            .put_embedding(DocId::from_u64(1), &embedding)
+            .put_embedding(ChunkId::from_u64(1), &embedding)
             .await
             .unwrap();
         let retrieved = store
-            .get_embedding(DocId::from_u64(1))
+            .get_embedding(ChunkId::from_u64(1))
             .await
             .unwrap()
             .unwrap();
@@ -685,7 +685,7 @@ mod tests {
 
         // Iterate
         store
-            .put_embedding(DocId::from_u64(2), &[5.0, 6.0, 7.0, 8.0])
+            .put_embedding(ChunkId::from_u64(2), &[5.0, 6.0, 7.0, 8.0])
             .await
             .unwrap();
         let all = store.iter_embeddings().await.unwrap();
@@ -697,14 +697,14 @@ mod tests {
         let (store, _temp) = create_test_store();
         let source = SourceRecord::new_complete(
             "abc123".to_string(),
-            vec![DocId::from_u64(1), DocId::from_u64(2)],
+            vec![ChunkId::from_u64(1), ChunkId::from_u64(2)],
         );
 
         // Put and get
         store.put_source("/path/to/file.md", &source).await.unwrap();
         let retrieved = store.get_source("/path/to/file.md").await.unwrap().unwrap();
         assert_eq!(retrieved.content_hash, "abc123");
-        assert_eq!(retrieved.doc_ids.len(), 2);
+        assert_eq!(retrieved.chunk_ids.len(), 2);
 
         // List sources
         let sources = store.list_sources().await.unwrap();
@@ -747,11 +747,11 @@ mod tests {
 
         // Add data
         store
-            .put_document(DocId::from_u64(1), &make_test_doc(1, "test"))
+            .put_chunk(ChunkId::from_u64(1), &make_test_chunk(1, "test"))
             .await
             .unwrap();
         store
-            .put_embedding(DocId::from_u64(1), &[1.0, 2.0])
+            .put_embedding(ChunkId::from_u64(1), &[1.0, 2.0])
             .await
             .unwrap();
         store
@@ -759,14 +759,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.document_count().await.unwrap(), 1);
+        assert_eq!(store.chunk_count().await.unwrap(), 1);
 
         // Clear
         store.clear().await.unwrap();
 
-        assert_eq!(store.document_count().await.unwrap(), 0);
+        assert_eq!(store.chunk_count().await.unwrap(), 0);
         assert!(store
-            .get_embedding(DocId::from_u64(1))
+            .get_embedding(ChunkId::from_u64(1))
             .await
             .unwrap()
             .is_none());
@@ -782,11 +782,11 @@ mod tests {
         {
             let store = RedbDocumentStore::open(&db_path).unwrap();
             store
-                .put_document(DocId::from_u64(42), &make_test_doc(42, "Persisted"))
+                .put_chunk(ChunkId::from_u64(42), &make_test_chunk(42, "Persisted"))
                 .await
                 .unwrap();
             store
-                .put_embedding(DocId::from_u64(42), &[1.0, 2.0, 3.0])
+                .put_embedding(ChunkId::from_u64(42), &[1.0, 2.0, 3.0])
                 .await
                 .unwrap();
         }
@@ -794,15 +794,15 @@ mod tests {
         // Reopen and verify
         {
             let store = RedbDocumentStore::open(&db_path).unwrap();
-            let doc = store
-                .get_document(DocId::from_u64(42))
+            let chunk = store
+                .get_chunk(ChunkId::from_u64(42))
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(doc.text, "Persisted");
+            assert_eq!(chunk.text, "Persisted");
 
             let emb = store
-                .get_embedding(DocId::from_u64(42))
+                .get_embedding(ChunkId::from_u64(42))
                 .await
                 .unwrap()
                 .unwrap();
