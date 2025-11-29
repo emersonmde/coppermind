@@ -10,7 +10,9 @@
 //! - `sources`: source_id (string) -> SourceRecord (JSON)
 //! - `metadata`: key (string) -> value (JSON) - stores tombstones, etc.
 
-use coppermind_core::search::types::{ChunkId, ChunkRecord, SourceRecord};
+use coppermind_core::search::types::{
+    ChunkId, ChunkRecord, DocumentId, DocumentRecord, SourceRecord,
+};
 use coppermind_core::storage::{DocumentStore, StoreError};
 use rexie::{ObjectStore, Rexie, TransactionMode};
 use std::collections::HashSet;
@@ -18,9 +20,10 @@ use wasm_bindgen::JsValue;
 
 // Store names
 const DB_NAME: &str = "coppermind";
-const DB_VERSION: u32 = 1;
-const DOCUMENTS_STORE: &str = "documents";
+const DB_VERSION: u32 = 2; // Bumped for doc_records store
+const DOCUMENTS_STORE: &str = "documents"; // Note: stores chunks, name kept for backward compat
 const EMBEDDINGS_STORE: &str = "embeddings";
+const DOC_RECORDS_STORE: &str = "doc_records"; // ADR-008: Document-level records
 const SOURCES_STORE: &str = "sources";
 const METADATA_STORE: &str = "metadata";
 
@@ -53,6 +56,7 @@ impl IndexedDbDocumentStore {
             .version(DB_VERSION)
             .add_object_store(ObjectStore::new(DOCUMENTS_STORE))
             .add_object_store(ObjectStore::new(EMBEDDINGS_STORE))
+            .add_object_store(ObjectStore::new(DOC_RECORDS_STORE))
             .add_object_store(ObjectStore::new(SOURCES_STORE))
             .add_object_store(ObjectStore::new(METADATA_STORE))
             .build()
@@ -70,6 +74,16 @@ impl IndexedDbDocumentStore {
     /// Converts a string key back to a ChunkId.
     fn key_to_chunk_id(key: &str) -> Option<ChunkId> {
         key.parse::<u64>().ok().map(ChunkId::from_u64)
+    }
+
+    /// Converts a DocumentId to a string key for IndexedDB.
+    fn doc_id_to_key(id: DocumentId) -> String {
+        id.as_u64().to_string()
+    }
+
+    /// Converts a string key back to a DocumentId.
+    fn key_to_doc_id(key: &str) -> Option<DocumentId> {
+        key.parse::<u64>().ok().map(DocumentId::from_u64)
     }
 
     /// Serializes a ChunkRecord to a JsValue.
@@ -97,6 +111,20 @@ impl IndexedDbDocumentStore {
     fn deserialize_source(value: JsValue) -> Result<SourceRecord, StoreError> {
         serde_wasm_bindgen::from_value(value).map_err(|e| {
             StoreError::SerializationError(format!("Failed to deserialize source: {}", e))
+        })
+    }
+
+    /// Serializes a DocumentRecord to a JsValue.
+    fn serialize_doc_record(doc: &DocumentRecord) -> Result<JsValue, StoreError> {
+        serde_wasm_bindgen::to_value(doc).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to serialize document: {}", e))
+        })
+    }
+
+    /// Deserializes a DocumentRecord from a JsValue.
+    fn deserialize_doc_record(value: JsValue) -> Result<DocumentRecord, StoreError> {
+        serde_wasm_bindgen::from_value(value).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to deserialize document: {}", e))
         })
     }
 
@@ -469,6 +497,160 @@ impl DocumentStore for IndexedDbDocumentStore {
     }
 
     // =========================================================================
+    // Document Operations (ADR-008: Multi-Level Indexing)
+    // =========================================================================
+
+    async fn get_document(&self, id: DocumentId) -> Result<Option<DocumentRecord>, StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadOnly)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        match store.get(key.clone()).await {
+            Ok(Some(value)) => {
+                let doc = Self::deserialize_doc_record(value)?;
+                Ok(Some(doc))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StoreError::DatabaseError(format!(
+                "Failed to get document: {:?}",
+                e
+            ))),
+        }
+    }
+
+    async fn put_document(&self, id: DocumentId, doc: &DocumentRecord) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadWrite)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+        let value = Self::serialize_doc_record(doc)?;
+
+        store
+            .put(&value, Some(&key))
+            .await
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to put document: {:?}", e)))?;
+
+        tx.done()
+            .await
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to commit: {:?}", e)))?;
+
+        Ok(())
+    }
+
+    async fn delete_document(&self, id: DocumentId) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadWrite)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let key = JsValue::from_str(&Self::doc_id_to_key(id));
+
+        store.delete(key).await.map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to delete document: {:?}", e))
+        })?;
+
+        tx.done()
+            .await
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to commit: {:?}", e)))?;
+
+        Ok(())
+    }
+
+    async fn get_documents_batch(
+        &self,
+        ids: &[DocumentId],
+    ) -> Result<Vec<DocumentRecord>, StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadOnly)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let mut docs = Vec::with_capacity(ids.len());
+        for id in ids {
+            let key = JsValue::from_str(&Self::doc_id_to_key(*id));
+            if let Ok(Some(value)) = store.get(key.clone()).await {
+                if let Ok(doc) = Self::deserialize_doc_record(value) {
+                    docs.push(doc);
+                }
+            }
+        }
+
+        Ok(docs)
+    }
+
+    async fn iter_document_ids(&self) -> Result<Vec<DocumentId>, StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadOnly)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let keys = store.get_all_keys(None, None).await.map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to get document IDs: {:?}", e))
+        })?;
+
+        let doc_ids: Vec<DocumentId> = keys
+            .into_iter()
+            .filter_map(|key| key.as_string())
+            .filter_map(|key_str| Self::key_to_doc_id(&key_str))
+            .collect();
+
+        Ok(doc_ids)
+    }
+
+    async fn document_count(&self) -> Result<usize, StoreError> {
+        let tx = self
+            .db
+            .transaction(&[DOC_RECORDS_STORE], TransactionMode::ReadOnly)
+            .map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to start transaction: {:?}", e))
+            })?;
+
+        let store = tx
+            .store(DOC_RECORDS_STORE)
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to get store: {:?}", e)))?;
+
+        let count = store.count(None).await.map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to count documents: {:?}", e))
+        })?;
+
+        Ok(count as usize)
+    }
+
+    // =========================================================================
     // Metadata Operations
     // =========================================================================
 
@@ -551,6 +733,7 @@ impl DocumentStore for IndexedDbDocumentStore {
         for store_name in &[
             DOCUMENTS_STORE,
             EMBEDDINGS_STORE,
+            DOC_RECORDS_STORE,
             SOURCES_STORE,
             METADATA_STORE,
         ] {

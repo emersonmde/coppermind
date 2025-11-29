@@ -12,7 +12,7 @@
 //! - `metadata`: key (string) -> value (JSON) - stores tombstones, etc.
 
 use super::{DocumentStore, StoreError};
-use crate::search::types::{ChunkId, ChunkRecord, SourceRecord};
+use crate::search::types::{ChunkId, ChunkRecord, DocumentId, DocumentRecord, SourceRecord};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::collections::HashSet;
 use std::path::Path;
@@ -20,8 +20,10 @@ use std::sync::Arc;
 use tracing::warn;
 
 // Table definitions
-const DOCUMENTS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("documents");
+// Note: "documents" table stores chunks (renamed in ADR-008, table name kept for backward compat)
+const CHUNKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("documents");
 const EMBEDDINGS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("embeddings");
+const DOC_RECORDS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("doc_records");
 const SOURCES_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("sources");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 
@@ -60,11 +62,14 @@ impl RedbDocumentStore {
             })?;
 
             // Open (and create if needed) each table
-            write_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
-                StoreError::DatabaseError(format!("Failed to create documents table: {}", e))
+            write_txn.open_table(CHUNKS_TABLE).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to create chunks table: {}", e))
             })?;
             write_txn.open_table(EMBEDDINGS_TABLE).map_err(|e| {
                 StoreError::DatabaseError(format!("Failed to create embeddings table: {}", e))
+            })?;
+            write_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to create doc_records table: {}", e))
             })?;
             write_txn.open_table(SOURCES_TABLE).map_err(|e| {
                 StoreError::DatabaseError(format!("Failed to create sources table: {}", e))
@@ -106,6 +111,20 @@ impl RedbDocumentStore {
     fn deserialize_source(bytes: &[u8]) -> Result<SourceRecord, StoreError> {
         serde_json::from_slice(bytes).map_err(|e| {
             StoreError::SerializationError(format!("Failed to deserialize source: {}", e))
+        })
+    }
+
+    /// Serializes a DocumentRecord to JSON bytes.
+    fn serialize_doc_record(doc: &DocumentRecord) -> Result<Vec<u8>, StoreError> {
+        serde_json::to_vec(doc).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to serialize document: {}", e))
+        })
+    }
+
+    /// Deserializes a DocumentRecord from JSON bytes.
+    fn deserialize_doc_record(bytes: &[u8]) -> Result<DocumentRecord, StoreError> {
+        serde_json::from_slice(bytes).map_err(|e| {
+            StoreError::SerializationError(format!("Failed to deserialize document: {}", e))
         })
     }
 
@@ -162,7 +181,7 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
 
-        let table = read_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
+        let table = read_txn.open_table(CHUNKS_TABLE).map_err(|e| {
             StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
         })?;
 
@@ -188,7 +207,7 @@ impl DocumentStore for RedbDocumentStore {
         })?;
 
         {
-            let mut table = write_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
+            let mut table = write_txn.open_table(CHUNKS_TABLE).map_err(|e| {
                 StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
             })?;
 
@@ -210,7 +229,7 @@ impl DocumentStore for RedbDocumentStore {
         })?;
 
         {
-            let mut table = write_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
+            let mut table = write_txn.open_table(CHUNKS_TABLE).map_err(|e| {
                 StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
             })?;
 
@@ -232,7 +251,7 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
 
-        let table = read_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
+        let table = read_txn.open_table(CHUNKS_TABLE).map_err(|e| {
             StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
         })?;
 
@@ -443,6 +462,143 @@ impl DocumentStore for RedbDocumentStore {
     }
 
     // =========================================================================
+    // Document Operations (ADR-008: Multi-Level Indexing)
+    // =========================================================================
+
+    async fn get_document(&self, id: DocumentId) -> Result<Option<DocumentRecord>, StoreError> {
+        let read_txn = self.db.begin_read().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
+        })?;
+
+        let table = read_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+        })?;
+
+        match table.get(id.as_u64()) {
+            Ok(Some(guard)) => {
+                let bytes = guard.value();
+                let doc = Self::deserialize_doc_record(bytes)?;
+                Ok(Some(doc))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StoreError::DatabaseError(format!(
+                "Failed to get document: {}",
+                e
+            ))),
+        }
+    }
+
+    async fn put_document(&self, id: DocumentId, doc: &DocumentRecord) -> Result<(), StoreError> {
+        let bytes = Self::serialize_doc_record(doc)?;
+
+        let write_txn = self.db.begin_write().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
+        })?;
+
+        {
+            let mut table = write_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+            })?;
+
+            table.insert(id.as_u64(), bytes.as_slice()).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to insert document: {}", e))
+            })?;
+        }
+
+        write_txn
+            .commit()
+            .map_err(|e| StoreError::DatabaseError(format!("Failed to commit document: {}", e)))?;
+
+        Ok(())
+    }
+
+    async fn delete_document(&self, id: DocumentId) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin write transaction: {}", e))
+        })?;
+
+        {
+            let mut table = write_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+            })?;
+
+            table.remove(id.as_u64()).map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to delete document: {}", e))
+            })?;
+        }
+
+        write_txn.commit().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to commit document deletion: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_documents_batch(
+        &self,
+        ids: &[DocumentId],
+    ) -> Result<Vec<DocumentRecord>, StoreError> {
+        let read_txn = self.db.begin_read().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
+        })?;
+
+        let table = read_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+        })?;
+
+        let mut docs = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(Some(guard)) = table.get(id.as_u64()) {
+                if let Ok(doc) = Self::deserialize_doc_record(guard.value()) {
+                    docs.push(doc);
+                }
+            }
+        }
+
+        Ok(docs)
+    }
+
+    async fn iter_document_ids(&self) -> Result<Vec<DocumentId>, StoreError> {
+        let read_txn = self.db.begin_read().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
+        })?;
+
+        let table = read_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+        })?;
+
+        let mut doc_ids = Vec::new();
+        let iter = table.iter().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to iterate doc_records: {}", e))
+        })?;
+
+        for result in iter {
+            let (key, _) = result.map_err(|e| {
+                StoreError::DatabaseError(format!("Failed to read doc_record entry: {}", e))
+            })?;
+            doc_ids.push(DocumentId::from_u64(key.value()));
+        }
+
+        Ok(doc_ids)
+    }
+
+    async fn document_count(&self) -> Result<usize, StoreError> {
+        let read_txn = self.db.begin_read().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
+        })?;
+
+        let table = read_txn.open_table(DOC_RECORDS_TABLE).map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to open doc_records table: {}", e))
+        })?;
+
+        let count = table.len().map_err(|e| {
+            StoreError::DatabaseError(format!("Failed to get document count: {}", e))
+        })?;
+
+        Ok(count as usize)
+    }
+
+    // =========================================================================
     // Metadata Operations
     // =========================================================================
 
@@ -500,7 +656,7 @@ impl DocumentStore for RedbDocumentStore {
             StoreError::DatabaseError(format!("Failed to begin read transaction: {}", e))
         })?;
 
-        let table = read_txn.open_table(DOCUMENTS_TABLE).map_err(|e| {
+        let table = read_txn.open_table(CHUNKS_TABLE).map_err(|e| {
             StoreError::DatabaseError(format!("Failed to open documents table: {}", e))
         })?;
 
@@ -577,8 +733,9 @@ impl DocumentStore for RedbDocumentStore {
         }
 
         // Clear all tables - log warnings for individual failures but continue
-        clear_u64_table(&write_txn, DOCUMENTS_TABLE, "documents")?;
+        clear_u64_table(&write_txn, CHUNKS_TABLE, "documents")?;
         clear_u64_table(&write_txn, EMBEDDINGS_TABLE, "embeddings")?;
+        clear_u64_table(&write_txn, DOC_RECORDS_TABLE, "doc_records")?;
         clear_str_table(&write_txn, SOURCES_TABLE, "sources")?;
         clear_str_table(&write_txn, METADATA_TABLE, "metadata")?;
 
@@ -593,7 +750,7 @@ impl DocumentStore for RedbDocumentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::types::ChunkSourceMetadata;
+    use crate::search::types::{ChunkSourceMetadata, DocumentMetainfo};
     use tempfile::TempDir;
 
     fn create_test_store() -> (RedbDocumentStore, TempDir) {
@@ -718,6 +875,105 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_document_crud() {
+        let (store, _temp) = create_test_store();
+
+        let doc = DocumentRecord {
+            id: DocumentId::from_u64(1),
+            metadata: DocumentMetainfo {
+                source_id: "/path/to/file.md".to_string(),
+                title: "Test Document".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+                content_hash: "abc123".to_string(),
+                created_at: 1000,
+                updated_at: 2000,
+                char_count: 500,
+                chunk_count: 3,
+            },
+            chunk_ids: vec![
+                ChunkId::from_u64(10),
+                ChunkId::from_u64(11),
+                ChunkId::from_u64(12),
+            ],
+        };
+
+        // Initially empty
+        assert!(store
+            .get_document(DocumentId::from_u64(1))
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(store.document_count().await.unwrap(), 0);
+
+        // Put and get
+        store
+            .put_document(DocumentId::from_u64(1), &doc)
+            .await
+            .unwrap();
+        let retrieved = store
+            .get_document(DocumentId::from_u64(1))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(retrieved.metadata.title, "Test Document");
+        assert_eq!(retrieved.chunk_ids.len(), 3);
+        assert_eq!(store.document_count().await.unwrap(), 1);
+
+        // Delete
+        store
+            .delete_document(DocumentId::from_u64(1))
+            .await
+            .unwrap();
+        assert!(store
+            .get_document(DocumentId::from_u64(1))
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(store.document_count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_document_batch_and_iter() {
+        let (store, _temp) = create_test_store();
+
+        // Add documents
+        for i in 1..=5 {
+            let doc = DocumentRecord {
+                id: DocumentId::from_u64(i),
+                metadata: DocumentMetainfo {
+                    source_id: format!("/path/to/file{}.md", i),
+                    title: format!("Document {}", i),
+                    mime_type: None,
+                    content_hash: format!("hash{}", i),
+                    created_at: 1000 + i,
+                    updated_at: 2000 + i,
+                    char_count: 100 * i as usize,
+                    chunk_count: i as usize,
+                },
+                chunk_ids: vec![ChunkId::from_u64(i * 10)],
+            };
+            store
+                .put_document(DocumentId::from_u64(i), &doc)
+                .await
+                .unwrap();
+        }
+
+        // Batch get (including one that doesn't exist)
+        let ids = vec![
+            DocumentId::from_u64(1),
+            DocumentId::from_u64(3),
+            DocumentId::from_u64(99), // doesn't exist
+            DocumentId::from_u64(5),
+        ];
+        let docs = store.get_documents_batch(&ids).await.unwrap();
+        assert_eq!(docs.len(), 3);
+
+        // Iterate IDs
+        let all_ids = store.iter_document_ids().await.unwrap();
+        assert_eq!(all_ids.len(), 5);
     }
 
     #[tokio::test]

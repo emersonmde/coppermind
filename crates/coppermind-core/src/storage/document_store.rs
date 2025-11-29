@@ -6,7 +6,7 @@
 //! DocumentStore provides O(log n) random access to individual documents,
 //! embeddings, and source records - essential for scaling to millions of chunks.
 
-use crate::search::types::{ChunkId, ChunkRecord, SourceRecord};
+use crate::search::types::{ChunkId, ChunkRecord, DocumentId, DocumentRecord, SourceRecord};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -102,6 +102,38 @@ pub trait DocumentStore {
     async fn iter_embeddings(&self) -> Result<Vec<(ChunkId, Vec<f32>)>, StoreError>;
 
     // =========================================================================
+    // Document Operations (ADR-008: Multi-Level Indexing)
+    // =========================================================================
+
+    /// Retrieves a document by ID.
+    ///
+    /// Returns `Ok(None)` if the document doesn't exist.
+    async fn get_document(&self, id: DocumentId) -> Result<Option<DocumentRecord>, StoreError>;
+
+    /// Stores a document with the given ID.
+    ///
+    /// Overwrites any existing document with the same ID.
+    async fn put_document(&self, id: DocumentId, doc: &DocumentRecord) -> Result<(), StoreError>;
+
+    /// Deletes a document by ID.
+    ///
+    /// Returns `Ok(())` even if the document didn't exist.
+    /// Note: This does NOT delete associated chunks - call delete_chunk separately.
+    async fn delete_document(&self, id: DocumentId) -> Result<(), StoreError>;
+
+    /// Retrieves multiple documents by ID in a single operation.
+    async fn get_documents_batch(
+        &self,
+        ids: &[DocumentId],
+    ) -> Result<Vec<DocumentRecord>, StoreError>;
+
+    /// Returns all document IDs in the store.
+    async fn iter_document_ids(&self) -> Result<Vec<DocumentId>, StoreError>;
+
+    /// Returns the number of documents in the store.
+    async fn document_count(&self) -> Result<usize, StoreError>;
+
+    // =========================================================================
     // Source Operations (for re-upload detection)
     // =========================================================================
 
@@ -167,6 +199,7 @@ pub trait DocumentStore {
 pub struct InMemoryDocumentStore {
     chunks: std::sync::RwLock<HashMap<u64, ChunkRecord>>,
     embeddings: std::sync::RwLock<HashMap<u64, Vec<f32>>>,
+    documents: std::sync::RwLock<HashMap<u64, DocumentRecord>>,
     sources: std::sync::RwLock<HashMap<String, SourceRecord>>,
     tombstones: std::sync::RwLock<HashSet<usize>>,
 }
@@ -254,6 +287,62 @@ impl DocumentStore for InMemoryDocumentStore {
             .collect())
     }
 
+    async fn get_document(&self, id: DocumentId) -> Result<Option<DocumentRecord>, StoreError> {
+        let docs = self
+            .documents
+            .read()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        Ok(docs.get(&id.as_u64()).cloned())
+    }
+
+    async fn put_document(&self, id: DocumentId, doc: &DocumentRecord) -> Result<(), StoreError> {
+        let mut docs = self
+            .documents
+            .write()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        docs.insert(id.as_u64(), doc.clone());
+        Ok(())
+    }
+
+    async fn delete_document(&self, id: DocumentId) -> Result<(), StoreError> {
+        let mut docs = self
+            .documents
+            .write()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        docs.remove(&id.as_u64());
+        Ok(())
+    }
+
+    async fn get_documents_batch(
+        &self,
+        ids: &[DocumentId],
+    ) -> Result<Vec<DocumentRecord>, StoreError> {
+        let docs = self
+            .documents
+            .read()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        Ok(ids
+            .iter()
+            .filter_map(|id| docs.get(&id.as_u64()).cloned())
+            .collect())
+    }
+
+    async fn iter_document_ids(&self) -> Result<Vec<DocumentId>, StoreError> {
+        let docs = self
+            .documents
+            .read()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        Ok(docs.keys().map(|&id| DocumentId::from_u64(id)).collect())
+    }
+
+    async fn document_count(&self) -> Result<usize, StoreError> {
+        let docs = self
+            .documents
+            .read()
+            .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+        Ok(docs.len())
+    }
+
     async fn get_source(&self, source_id: &str) -> Result<Option<SourceRecord>, StoreError> {
         let sources = self
             .sources
@@ -329,6 +418,13 @@ impl DocumentStore for InMemoryDocumentStore {
             embs.clear();
         }
         {
+            let mut docs = self
+                .documents
+                .write()
+                .map_err(|e| StoreError::DatabaseError(format!("Lock poisoned: {}", e)))?;
+            docs.clear();
+        }
+        {
             let mut sources = self
                 .sources
                 .write()
@@ -380,6 +476,33 @@ impl<T: DocumentStore> DocumentStore for std::sync::Arc<T> {
 
     async fn iter_embeddings(&self) -> Result<Vec<(ChunkId, Vec<f32>)>, StoreError> {
         (**self).iter_embeddings().await
+    }
+
+    async fn get_document(&self, id: DocumentId) -> Result<Option<DocumentRecord>, StoreError> {
+        (**self).get_document(id).await
+    }
+
+    async fn put_document(&self, id: DocumentId, doc: &DocumentRecord) -> Result<(), StoreError> {
+        (**self).put_document(id, doc).await
+    }
+
+    async fn delete_document(&self, id: DocumentId) -> Result<(), StoreError> {
+        (**self).delete_document(id).await
+    }
+
+    async fn get_documents_batch(
+        &self,
+        ids: &[DocumentId],
+    ) -> Result<Vec<DocumentRecord>, StoreError> {
+        (**self).get_documents_batch(ids).await
+    }
+
+    async fn iter_document_ids(&self) -> Result<Vec<DocumentId>, StoreError> {
+        (**self).iter_document_ids().await
+    }
+
+    async fn document_count(&self) -> Result<usize, StoreError> {
+        (**self).document_count().await
     }
 
     async fn get_source(&self, source_key: &str) -> Result<Option<SourceRecord>, StoreError> {

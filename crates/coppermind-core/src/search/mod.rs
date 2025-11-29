@@ -76,6 +76,8 @@ pub mod types;
 
 // Internal modules - exposed for benchmarking but hidden from docs
 mod aggregation;
+#[doc(hidden)]
+pub mod document_keyword;
 mod engine;
 #[doc(hidden)]
 pub mod fusion;
@@ -87,10 +89,27 @@ pub mod vector;
 // Re-export main types (public API)
 #[allow(unused_imports)]
 pub use types::{
-    validate_dimension, Chunk, ChunkId, ChunkMetadata, ChunkRecord, ChunkSourceMetadata,
-    CompactionStats, FileSearchResult, SearchError, SearchResult, SourceRecord,
+    // Chunk-level types
+    validate_dimension,
+    Chunk,
+    ChunkId,
+    ChunkMetadata,
+    ChunkRecord,
+    ChunkSourceMetadata,
+    // Search result types
+    CompactionStats,
+    // Document-level types (ADR-008)
+    DocumentId,
+    DocumentMetainfo,
+    DocumentRecord,
+    DocumentSearchResult,
+    FileSearchResult,
+    SearchError,
+    SearchResult,
+    SourceRecord,
 };
 
 // Re-export search engine and aggregation
 pub use aggregation::aggregate_chunks_by_file;
+pub use document_keyword::DocumentKeywordEngine;
 pub use engine::HybridSearchEngine;
