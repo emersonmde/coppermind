@@ -7,8 +7,8 @@
 use super::error::GpuError;
 use super::scheduler::GpuScheduler;
 use super::types::{
-    BatchEmbedRequest, EmbedRequest, EmbedResponse, GenerateRequest, GenerateResponse, ModelId,
-    ModelLoadConfig, Priority, SchedulerStats,
+    BatchEmbedRequest, DeviceType, EmbedRequest, EmbedResponse, GenerateRequest, GenerateResponse,
+    ModelId, ModelLoadConfig, Priority, SchedulerStats,
 };
 use crate::embedding::{Embedder, JinaBertConfig, JinaBertEmbedder, ModelConfig};
 use async_trait::async_trait;
@@ -152,6 +152,7 @@ impl Ord for PrioritizedMessage {
 
 /// Internal statistics tracking.
 pub(crate) struct SchedulerStatsInner {
+    pub device_type: RwLock<DeviceType>,
     pub queue_depth: AtomicUsize,
     pub requests_completed: AtomicU64,
     pub models_loaded: AtomicUsize,
@@ -160,6 +161,7 @@ pub(crate) struct SchedulerStatsInner {
 impl SchedulerStatsInner {
     fn new() -> Self {
         Self {
+            device_type: RwLock::new(DeviceType::Cpu),
             queue_depth: AtomicUsize::new(0),
             requests_completed: AtomicU64::new(0),
             models_loaded: AtomicUsize::new(0),
@@ -168,6 +170,8 @@ impl SchedulerStatsInner {
 
     fn to_stats(&self) -> SchedulerStats {
         SchedulerStats {
+            scheduler_name: "SerialScheduler",
+            device_type: *self.device_type.read().unwrap(),
             queue_depth: self.queue_depth.load(Ordering::Relaxed),
             requests_completed: self.requests_completed.load(Ordering::Relaxed),
             models_loaded: self.models_loaded.load(Ordering::Relaxed),
@@ -222,7 +226,12 @@ impl SerialScheduler {
         info!("GPU scheduler worker thread started");
 
         // Initialize compute device (owned by this thread only)
-        let device = Self::select_device();
+        let (device, device_type) = Self::select_device();
+
+        // Record device type in stats for monitoring
+        if let Ok(mut dt) = stats.device_type.write() {
+            *dt = device_type;
+        }
 
         // Model registry (owned by this thread)
         let mut models: HashMap<ModelId, Arc<dyn Embedder>> = HashMap::new();
@@ -350,22 +359,22 @@ impl SerialScheduler {
     }
 
     /// Select the best available compute device.
-    fn select_device() -> Device {
+    fn select_device() -> (Device, DeviceType) {
         // Try CUDA first (NVIDIA GPUs)
         if let Ok(cuda_device) = Device::new_cuda(0) {
             info!("GPU scheduler using CUDA device");
-            return cuda_device;
+            return (cuda_device, DeviceType::Cuda);
         }
 
         // Try Metal (Apple Silicon)
         if let Ok(metal_device) = Device::new_metal(0) {
             info!("GPU scheduler using Metal device");
-            return metal_device;
+            return (metal_device, DeviceType::Metal);
         }
 
         // Fallback to CPU
         info!("GPU scheduler using CPU device");
-        Device::Cpu
+        (Device::Cpu, DeviceType::Cpu)
     }
 
     /// Execute a single embedding request.

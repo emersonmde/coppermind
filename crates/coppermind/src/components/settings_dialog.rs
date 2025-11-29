@@ -1,6 +1,9 @@
 //! Settings dialog component for managing application preferences and storage.
 
-use crate::components::{use_search_engine, use_search_engine_status, SearchEngineStatus};
+use crate::components::{
+    use_batches, use_search_engine, use_search_engine_status, SearchEngineStatus,
+};
+use crate::metrics::global_metrics;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 
@@ -11,6 +14,7 @@ use dioxus::prelude::*;
 pub fn SettingsDialog(on_close: EventHandler<()>) -> Element {
     let search_engine = use_search_engine();
     let mut engine_status = use_search_engine_status();
+    let mut batches = use_batches();
     let mut confirm_clear = use_signal(|| false);
     let mut clearing = use_signal(|| false);
 
@@ -31,10 +35,20 @@ pub fn SettingsDialog(on_close: EventHandler<()>) -> Element {
                     match engine.clear_all().await {
                         Ok(()) => {
                             info!("Storage cleared successfully");
+
+                            // Reset engine status
                             engine_status.set(SearchEngineStatus::Ready {
                                 doc_count: 0,
                                 total_tokens: 0,
                             });
+
+                            // Clear batches list
+                            batches.set(Vec::new());
+
+                            // Clear performance metrics
+                            global_metrics().clear();
+
+                            info!("All metrics and batches cleared");
                         }
                         Err(e) => {
                             error!("Failed to clear storage: {:?}", e);

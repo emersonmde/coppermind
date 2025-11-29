@@ -76,8 +76,8 @@ pub use scheduler::GpuScheduler;
 #[cfg(not(target_arch = "wasm32"))]
 pub use serial_scheduler::SerialScheduler;
 pub use types::{
-    BatchEmbedRequest, EmbedRequest, EmbedResponse, GenerateRequest, GenerateResponse, ModelId,
-    ModelLoadConfig, Priority, SchedulerStats,
+    BatchEmbedRequest, DeviceType, EmbedRequest, EmbedResponse, GenerateRequest, GenerateResponse,
+    ModelId, ModelLoadConfig, Priority, SchedulerStats,
 };
 
 use once_cell::sync::OnceCell;

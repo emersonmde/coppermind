@@ -215,9 +215,35 @@ impl ModelLoadConfig {
     }
 }
 
+/// Device type used for compute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeviceType {
+    /// NVIDIA CUDA GPU
+    Cuda,
+    /// Apple Metal GPU
+    Metal,
+    /// CPU (with optional acceleration: MKL, Accelerate)
+    #[default]
+    Cpu,
+}
+
+impl std::fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceType::Cuda => write!(f, "CUDA"),
+            DeviceType::Metal => write!(f, "Metal"),
+            DeviceType::Cpu => write!(f, "CPU"),
+        }
+    }
+}
+
 /// Scheduler statistics for monitoring.
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerStats {
+    /// Scheduler implementation name (e.g., "SerialScheduler")
+    pub scheduler_name: &'static str,
+    /// Device type being used (CUDA, Metal, CPU)
+    pub device_type: DeviceType,
     /// Current queue depth
     pub queue_depth: usize,
     /// Total requests completed since startup

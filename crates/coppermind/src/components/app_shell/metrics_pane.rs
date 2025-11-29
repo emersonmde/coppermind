@@ -2,8 +2,11 @@ use dioxus::prelude::*;
 
 use crate::components::{use_batches, use_search_engine, BatchStatus};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::gpu::{get_scheduler, is_scheduler_initialized};
+use crate::gpu::{get_scheduler, is_scheduler_initialized, DeviceType};
 use crate::metrics::global_metrics;
+
+/// Embedding dimension for JinaBERT model (used for memory calculations)
+const EMBEDDING_DIM: usize = 512;
 
 /// Cached index metrics to avoid flickering when lock is held during indexing
 #[derive(Clone, Default)]
@@ -26,6 +29,31 @@ struct CachedIndexMetrics {
     bm25_doc_count: usize,
 }
 
+/// Format bytes as human-readable string
+fn format_bytes(bytes: usize) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Estimate HNSW memory usage
+/// Formula: entries × embedding_dim × 4 bytes (f32) × 1.2 (graph overhead)
+fn estimate_hnsw_memory(entries: usize) -> usize {
+    let vector_bytes = entries * EMBEDDING_DIM * 4;
+    (vector_bytes as f64 * 1.2) as usize
+}
+
+/// Estimate BM25 memory usage (rough approximation)
+/// BM25 stores term frequencies and document lengths
+/// Estimate: ~100 bytes per entry for term data + metadata
+fn estimate_bm25_memory(chunk_entries: usize, doc_entries: usize) -> usize {
+    (chunk_entries + doc_entries) * 100
+}
+
 /// Collapsible metrics panel showing engine statistics
 #[component]
 pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
@@ -35,7 +63,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         "cm-metrics-panel"
     };
 
-    // Get batches from context and calculate metrics
+    // Get batches from context
     let batches = use_batches();
     let batches_list = batches.read();
 
@@ -54,13 +82,11 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     // Try to update cached metrics from engine (only when not actively indexing)
     if let Some(engine_lock) = &search_engine_arc {
         if let Some(engine) = engine_lock.try_lock() {
-            // Only update cache when not actively indexing to avoid flickering
             if !is_indexing {
                 let (docs, chunks, _tokens, _avg) = engine.get_index_metrics_sync();
                 let (tombstones, _total, ratio) = engine.compaction_stats();
                 let needs_compact = engine.needs_compaction();
 
-                // Get individual index sizes
                 let hnsw_size = engine.vector_index_len();
                 let bm25_chunk_size = engine.keyword_index_len();
                 let bm25_doc_size = engine.document_keyword_index_len();
@@ -79,55 +105,45 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         }
     }
 
-    // Read cached values
     let index_metrics = cached_metrics.read();
 
     // GPU Scheduler stats (desktop only)
     #[cfg(not(target_arch = "wasm32"))]
-    let (gpu_queue_depth, gpu_requests_completed, gpu_models_loaded) = {
+    let (scheduler_name, device_type, gpu_queue_depth, gpu_requests_completed, _gpu_models_loaded) = {
         if is_scheduler_initialized() {
             if let Ok(scheduler) = get_scheduler() {
                 let stats = scheduler.stats();
                 (
+                    stats.scheduler_name,
+                    stats.device_type,
                     stats.queue_depth,
                     stats.requests_completed,
                     stats.models_loaded,
                 )
             } else {
-                (0, 0, 0)
+                ("N/A", DeviceType::Cpu, 0, 0, 0)
             }
         } else {
-            (0, 0, 0)
+            ("Not initialized", DeviceType::Cpu, 0, 0, 0)
         }
     };
     #[cfg(target_arch = "wasm32")]
-    let (gpu_queue_depth, gpu_requests_completed, gpu_models_loaded) = (0usize, 0u64, 0usize);
+    let (scheduler_name, device_type, gpu_queue_depth, gpu_requests_completed, _gpu_models_loaded) =
+        ("Web Worker", "CPU (WASM)", 0usize, 0u64, 0usize);
 
-    // Memory estimate for HNSW: live_entries × embedding_dim × 4 bytes (f32)
-    // Plus ~20% overhead for HNSW graph structure (M=16 bidirectional links per node)
-    let embedding_dim = 512usize;
-    let vector_memory_bytes = index_metrics.hnsw_live * embedding_dim * 4;
-    let estimated_memory_bytes = (vector_memory_bytes as f64 * 1.2) as usize;
-    let memory_display = if estimated_memory_bytes > 1_000_000 {
-        format!("{:.1} MB", estimated_memory_bytes as f64 / 1_000_000.0)
-    } else if estimated_memory_bytes > 1_000 {
-        format!("{:.1} KB", estimated_memory_bytes as f64 / 1_000.0)
-    } else {
-        format!("{} B", estimated_memory_bytes)
-    };
+    // Memory calculations
+    let hnsw_memory = estimate_hnsw_memory(index_metrics.hnsw_live);
+    let bm25_memory =
+        estimate_bm25_memory(index_metrics.bm25_chunk_count, index_metrics.bm25_doc_count);
+    let total_memory = hnsw_memory + bm25_memory;
 
-    // Tombstone ratio as percentage and progress toward 30% compaction threshold
+    // Tombstone percentage
     let tombstone_pct = index_metrics.tombstone_ratio * 100.0;
-    // Show how close we are to the 30% threshold (capped at 100%)
-    let compaction_progress = ((index_metrics.tombstone_ratio / 0.30) * 100.0).min(100.0);
 
-    // Note: batches_list is used only to check is_indexing status above
-    // All displayed metrics come from persisted index state via cached_metrics
-
-    // Get rolling average metrics (60-second window) for stable performance display
+    // Get rolling average metrics (60-second window)
     let perf_snapshot = global_metrics().snapshot();
 
-    // Determine state based on whether we have recent activity
+    // Determine state based on activity
     let has_recent_activity = perf_snapshot.embedding_count > 0;
     let state_mode = if is_indexing {
         "live"
@@ -137,15 +153,12 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         "idle"
     };
 
-    // Use rolling averages for throughput metrics (stable, not per-chunk)
     let chunks_per_sec = perf_snapshot.embedding_throughput;
     let avg_chunk_time_ms = perf_snapshot.embedding_avg_ms.unwrap_or(0.0);
 
-    // Format values for display
     let formatted_chunks_per_sec = format!("{:.1}", chunks_per_sec);
     let formatted_chunk_time = format!("{:.0}", avg_chunk_time_ms);
 
-    // State indicator and caption based on mode
     let (state_class, state_label, state_caption) = match state_mode {
         "live" => (
             "cm-metrics-state cm-metrics-state--live",
@@ -160,11 +173,11 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         _ => (
             "cm-metrics-state cm-metrics-state--idle",
             "Idle",
-            "Waiting for first batch…",
+            "Waiting for first batch...",
         ),
     };
 
-    // Format rolling averages for display
+    // Format rolling averages
     let chunking_avg = perf_snapshot
         .chunking_avg_ms
         .map(|v| format!("{:.1}", v))
@@ -186,10 +199,8 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         .map(|v| format!("{:.2}", v))
         .unwrap_or_else(|| "-".to_string());
 
-    // Throughput metrics
     let embedding_throughput = format!("{:.1}", perf_snapshot.embedding_throughput);
 
-    // Check if we have any rolling metrics data
     let has_rolling_data = perf_snapshot.chunking_count > 0
         || perf_snapshot.tokenization_count > 0
         || perf_snapshot.embedding_count > 0;
@@ -202,9 +213,9 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 h2 { class: "cm-metrics-title", "Engine Metrics" }
             }
 
-            // Two-column layout for Index Summary and GPU Scheduler
+            // Row 1: Index Summary and Compute
             div { class: "cm-metrics-columns",
-                // Left column: Index Summary (persisted metrics)
+                // Index Summary
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "Index Summary" }
@@ -219,16 +230,16 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                             div { class: "cm-metric-value", "{index_metrics.chunks}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Memory" }
-                            div { class: "cm-metric-value", "{memory_display}" }
+                            div { class: "cm-metric-label", "Total Memory" }
+                            div { class: "cm-metric-value", "{format_bytes(total_memory)}" }
                         }
                     }
                 }
 
-                // Right column: GPU Scheduler (desktop only, session metrics)
+                // Compute Backend
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
-                        h3 { class: "cm-metrics-section-title", "GPU Scheduler" }
+                        h3 { class: "cm-metrics-section-title", "Compute" }
                         if gpu_queue_depth > 0 {
                             span { class: "cm-metrics-state cm-metrics-state--live",
                                 span { class: "cm-metrics-state-indicator" }
@@ -238,25 +249,25 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Queue Depth" }
-                            div { class: "cm-metric-value", "{gpu_queue_depth}" }
+                            div { class: "cm-metric-label", "Scheduler" }
+                            div { class: "cm-metric-value", "{scheduler_name}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Device" }
+                            div { class: "cm-metric-value", "{device_type}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Completed" }
                             div { class: "cm-metric-value", "{gpu_requests_completed}" }
                         }
-                        div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Models" }
-                            div { class: "cm-metric-value", "{gpu_models_loaded}" }
-                        }
                     }
                 }
             }
 
-            // Per-index metrics: HNSW and BM25
+            // Row 2: HNSW and BM25 Index Details
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-columns",
-                // HNSW Vector Index (semantic search)
+                // HNSW Vector Index
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "HNSW Vector Index" }
@@ -268,7 +279,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     }
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Live Entries" }
+                            div { class: "cm-metric-label", "Entries" }
                             div { class: "cm-metric-value", "{index_metrics.hnsw_live}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
@@ -279,16 +290,13 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                             }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
-                            div { class: "cm-metric-label", "Compaction" }
-                            div { class: "cm-metric-value",
-                                "{compaction_progress:.0}",
-                                span { class: "cm-metric-unit", "% of 30%" }
-                            }
+                            div { class: "cm-metric-label", "Memory" }
+                            div { class: "cm-metric-value", "{format_bytes(hnsw_memory)}" }
                         }
                     }
                 }
 
-                // BM25 Keyword Indexes (chunk-level and document-level)
+                // BM25 Keyword Indexes
                 div { class: "cm-metrics-column",
                     div { class: "cm-metrics-section-header",
                         h3 { class: "cm-metrics-section-title", "BM25 Keyword Index" }
@@ -296,23 +304,21 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     div { class: "cm-metrics-grid cm-metrics-grid--compact",
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Chunk Index" }
-                            div { class: "cm-metric-value",
-                                "{index_metrics.bm25_chunk_count}",
-                                span { class: "cm-metric-unit", " entries" }
-                            }
+                            div { class: "cm-metric-value", "{index_metrics.bm25_chunk_count}" }
                         }
                         div { class: "cm-metric-card cm-metric-card--compact",
                             div { class: "cm-metric-label", "Doc Index" }
-                            div { class: "cm-metric-value",
-                                "{index_metrics.bm25_doc_count}",
-                                span { class: "cm-metric-unit", " entries" }
-                            }
+                            div { class: "cm-metric-value", "{index_metrics.bm25_doc_count}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Memory" }
+                            div { class: "cm-metric-value", "{format_bytes(bm25_memory)}" }
                         }
                     }
                 }
             }
 
-            // Performance metrics (rolling 60-second averages)
+            // Row 3: Embedding Performance
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-section-header",
                 h3 { class: "cm-metrics-section-title", "Embedding Performance" }
@@ -335,7 +341,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 "{state_caption}"
             }
 
-            // Rolling averages (60-second window) - only shown during/after indexing
+            // Row 4: Operation Timings (only when data available)
             if has_rolling_data {
                 div { class: "cm-metrics-separator cm-metrics-separator--tight" }
                 div { class: "cm-metrics-section-header",
@@ -345,7 +351,6 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                     }
                 }
                 div { class: "cm-metrics-columns",
-                    // Processing Pipeline
                     div { class: "cm-metrics-column",
                         div { class: "cm-metrics-grid cm-metrics-grid--compact",
                             div { class: "cm-metric-card cm-metric-card--compact",
@@ -362,7 +367,6 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                             }
                         }
                     }
-                    // Indexing
                     div { class: "cm-metrics-column",
                         div { class: "cm-metrics-grid cm-metrics-grid--compact",
                             div { class: "cm-metric-card cm-metric-card--compact",

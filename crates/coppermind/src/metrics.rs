@@ -314,6 +314,16 @@ impl PerformanceMetrics {
     pub fn window(&self) -> Duration {
         self.window
     }
+
+    /// Clear all metrics data.
+    ///
+    /// Resets all counters and samples to their initial state.
+    /// Used when clearing storage to ensure metrics reflect the reset state.
+    pub fn clear(&self) {
+        if let Ok(mut inner) = self.inner.write() {
+            *inner = MetricsInner::default();
+        }
+    }
 }
 
 impl Default for PerformanceMetrics {
