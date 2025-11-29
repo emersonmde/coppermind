@@ -265,8 +265,9 @@ impl VectorSearchEngine {
 
         // Search HNSW index
         // ef_search controls search quality (higher = better but slower)
-        // We use max(k * 2, MIN_EF_SEARCH) for good quality
-        let ef_search = std::cmp::max(k * 2, MIN_EF_SEARCH);
+        // We use max(k * 2, MIN_EF_SEARCH) for good quality, but cap at index size
+        // to avoid panics in the HNSW library when ef_search exceeds available vectors
+        let ef_search = std::cmp::min(std::cmp::max(k * 2, MIN_EF_SEARCH), self.chunk_ids.len());
 
         // Convert query to Box<[f32]> to match the index's data type
         let query_box = query_embedding.to_vec().into_boxed_slice();

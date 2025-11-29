@@ -104,13 +104,7 @@ fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "apple-touch-icon", href: APPLE_TOUCH_ICON }
-
-        // CSS loading: asset! macro has issues on desktop, use include_str! as workaround
-        if cfg!(target_arch = "wasm32") {
-            document::Stylesheet { href: MAIN_CSS }
-        } else {
-            style { {include_str!("../assets/coppermind.css")} }
-        }
+        document::Stylesheet { href: MAIN_CSS }
 
         body { class: "cm-body",
             CoppermindApp {}

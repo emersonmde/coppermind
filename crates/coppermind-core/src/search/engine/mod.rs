@@ -784,8 +784,45 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         query_text: &str,
         k: usize,
     ) -> Result<Vec<super::types::DocumentSearchResult>, SearchError> {
+        // Delegate to search_documents_with_timings and discard timing info
+        let (results, _timings) = self
+            .search_documents_with_timings(query_embedding, query_text, k)
+            .await?;
+        Ok(results)
+    }
+
+    /// Perform document-level hybrid search with detailed timing breakdown.
+    ///
+    /// This is the same as [`search_documents`](Self::search_documents) but also returns
+    /// timing information for each phase of the search pipeline, useful for metrics
+    /// and debugging.
+    ///
+    /// # Arguments
+    /// * `query_embedding` - Pre-computed embedding for the query text
+    /// * `query_text` - The query text for keyword matching
+    /// * `k` - Number of documents to return (must be > 0)
+    ///
+    /// # Returns
+    /// A tuple of:
+    /// - Vector of [`DocumentSearchResult`](super::types::DocumentSearchResult) sorted by fused score
+    /// - [`SearchTimings`] with detailed timing breakdown
+    ///
+    /// # Note
+    /// Only chunks indexed via [`add_chunk_to_document`](Self::add_chunk_to_document)
+    /// are included in document-level search. Legacy chunks without a document_id
+    /// are skipped (use regular [`search_with_timings`](Self::search_with_timings) for those).
+    #[must_use = "Search results and timings should be used or errors handled"]
+    pub async fn search_documents_with_timings(
+        &mut self,
+        query_embedding: &[f32],
+        query_text: &str,
+        k: usize,
+    ) -> Result<(Vec<super::types::DocumentSearchResult>, SearchTimings), SearchError> {
         use super::types::DocumentSearchResult;
+        use instant::Instant;
         use std::collections::HashSet;
+
+        let total_start = Instant::now();
 
         // Validate query parameters
         if query_text.trim().is_empty() {
@@ -801,9 +838,15 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
         validate_dimension(self.embedding_dim, query_embedding.len())?;
 
-        // Step 1: Chunk-level HNSW vector search
+        // Step 1: Chunk-level HNSW vector search (with timing)
+        let vector_start = Instant::now();
         let vector_results = self.vector_engine.search(query_embedding, k * 4)?;
-        debug!("Vector search found {} chunk results", vector_results.len());
+        let vector_ms = vector_start.elapsed().as_secs_f64() * 1000.0;
+        let vector_count = vector_results.len();
+        debug!(
+            "Vector search found {} chunk results in {:.2}ms",
+            vector_count, vector_ms
+        );
 
         // Step 2: Lift chunks to documents using document_id from ChunkRecord (O(1) lookup)
         let mut doc_chunks: HashMap<DocumentId, Vec<(ChunkId, f32)>> = HashMap::new();
@@ -833,11 +876,14 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             }
         }
 
-        // Step 3: Document-level BM25 keyword search
+        // Step 3: Document-level BM25 keyword search (with timing)
+        let keyword_start = Instant::now();
         let doc_keyword_results = self.document_keyword_engine.search(query_text, k * 2);
+        let keyword_ms = keyword_start.elapsed().as_secs_f64() * 1000.0;
+        let keyword_count = doc_keyword_results.len();
         debug!(
-            "Document keyword search found {} results",
-            doc_keyword_results.len()
+            "Document keyword search found {} results in {:.2}ms",
+            keyword_count, keyword_ms
         );
 
         // Add documents from keyword search to seen set
@@ -845,7 +891,9 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             seen_doc_ids.insert(*doc_id);
         }
 
-        // Step 4: Document-level RRF fusion
+        // Step 4: Document-level RRF fusion (with timing)
+        let fusion_start = Instant::now();
+
         // For vector ranking, use the best chunk score for each document
         let doc_vector_rankings: Vec<(DocumentId, f32)> = doc_chunks
             .iter()
@@ -868,6 +916,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
         // Apply RRF
         let fused_doc_results = reciprocal_rank_fusion(&sorted_vector, &sorted_keyword, RRF_K);
+        let fusion_ms = fusion_start.elapsed().as_secs_f64() * 1000.0;
 
         // Build score lookup maps
         let keyword_doc_scores: HashMap<DocumentId, f32> = sorted_keyword.into_iter().collect();
@@ -930,13 +979,25 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             });
         }
 
+        let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+
         info!(
-            "Document search returned {} results (from {} candidate docs)",
+            "Document search returned {} results (from {} candidate docs) in {:.1}ms",
             results.len(),
-            seen_doc_ids.len()
+            seen_doc_ids.len(),
+            total_ms
         );
 
-        Ok(results)
+        let timings = SearchTimings {
+            vector_ms,
+            keyword_ms,
+            fusion_ms,
+            total_ms,
+            vector_count,
+            keyword_count,
+        };
+
+        Ok((results, timings))
     }
 
     /// Get the number of indexed chunks.

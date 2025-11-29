@@ -7,7 +7,7 @@ mod search_view;
 mod source_preview;
 
 pub use empty_state::EmptyState;
-pub use result_card::ResultCard;
-pub use search_card::SearchCard;
+pub use result_card::{ResultCard, SkeletonResultCard};
+pub use search_card::{SearchCard, SearchMode};
 pub use search_view::SearchView;
 pub use source_preview::SourcePreviewOverlay;

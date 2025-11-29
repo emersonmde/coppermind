@@ -1,51 +1,42 @@
 use dioxus::prelude::*;
 
-use crate::components::{
-    use_model_status, use_search_engine_status, ModelStatus, SearchEngineStatus,
-};
+/// Search mode options
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchMode {
+    #[default]
+    Hybrid,
+    Semantic,
+    Keyword,
+}
 
-/// Search card with input, hints, and search button
+impl SearchMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SearchMode::Hybrid => "Hybrid",
+            SearchMode::Semantic => "Semantic",
+            SearchMode::Keyword => "Keyword",
+        }
+    }
+}
+
+/// Available result count options (chunks to retrieve)
+const RESULT_COUNTS: [usize; 4] = [10, 20, 50, 100];
+
+/// Search card with input, search button, and inline controls.
+///
+/// Search is always enabled - users can submit queries even while the model/index
+/// is loading. The search will wait for initialization to complete, showing
+/// skeleton loading cards in the meantime.
 #[component]
 pub fn SearchCard(
     search_query: Signal<String>,
     on_search: EventHandler<String>,
     searching: ReadSignal<bool>,
+    result_count: Signal<usize>,
+    search_mode: Signal<SearchMode>,
 ) -> Element {
-    let engine_status = use_search_engine_status();
-    let model_status = use_model_status();
-
-    // Get doc count and token count from engine status
-    let (doc_count, token_count) = match engine_status.read().clone() {
-        SearchEngineStatus::Ready {
-            doc_count,
-            total_tokens,
-        } => (doc_count, total_tokens),
-        _ => (0, 0),
-    };
-
-    // Check if search is ready (both model and index must be ready)
-    let engine_status_clone = engine_status.read().clone();
-    let model_status_clone = model_status.read().clone();
-    let index_loading = matches!(
-        engine_status_clone,
-        SearchEngineStatus::Pending | SearchEngineStatus::Loading
-    );
-    let model_loading = matches!(model_status_clone, ModelStatus::Cold | ModelStatus::Loading);
-    let search_ready = !index_loading && !model_loading;
-
-    // Determine placeholder text based on loading state
-    let placeholder = if index_loading && model_loading {
-        "Initializing index and model…"
-    } else if index_loading {
-        "Loading index…"
-    } else if model_loading {
-        "Loading model…"
-    } else {
-        "Search your knowledge base…"
-    };
-
     let handle_keypress = move |evt: KeyboardEvent| {
-        if evt.key() == Key::Enter {
+        if evt.key() == Key::Enter && !searching() {
             let query = search_query.read().clone();
             if !query.trim().is_empty() {
                 on_search.call(query);
@@ -55,43 +46,70 @@ pub fn SearchCard(
 
     rsx! {
         section { class: "cm-search-card",
-            div { class: "cm-search-card-top",
-                div { class: "cm-search-index-selector cm-search-index-selector--disabled",
-                    "All indexes"
-                    span { class: "cm-caret", "▾" }
-                }
-            }
+            // Main search input row
             div { class: "cm-search-input-row",
                 input {
-                    class: if !search_ready { "cm-search-input cm-search-input--loading" } else { "cm-search-input" },
+                    class: "cm-search-input",
                     r#type: "text",
-                    placeholder: "{placeholder}",
+                    placeholder: "Search your knowledge base…",
                     value: "{search_query}",
-                    disabled: searching() || !search_ready,
+                    disabled: searching(),
                     oninput: move |evt| search_query.set(evt.value()),
                     onkeypress: handle_keypress,
                 }
                 button {
                     class: "cm-btn cm-btn--primary",
-                    disabled: searching() || !search_ready,
+                    disabled: searching(),
                     onclick: move |_| {
                         let query = search_query.read().clone();
                         if !query.trim().is_empty() {
                             on_search.call(query);
                         }
                     },
-                    if searching() {
-                        "Searching…"
-                    } else if !search_ready {
-                        "Loading…"
-                    } else {
-                        "Search"
-                    }
+                    "Search"
                 }
             }
-            div { class: "cm-search-hints",
-                span { "Local-first • Hybrid semantic + keyword search" }
-                span { "{doc_count} documents indexed • {token_count} tokens" }
+
+            // Inline controls row - subtle hints per UX spec
+            div { class: "cm-search-controls",
+                // Max results selector (controls chunk retrieval depth)
+                div { class: "cm-search-control",
+                    label { class: "cm-search-control-label", "Max" }
+                    select {
+                        class: "cm-search-select",
+                        value: "{result_count}",
+                        disabled: searching(),
+                        onchange: move |evt| {
+                            if let Ok(count) = evt.value().parse::<usize>() {
+                                result_count.set(count);
+                            }
+                        },
+                        for count in RESULT_COUNTS {
+                            option { value: "{count}", "{count}" }
+                        }
+                    }
+                }
+
+                // Search mode selector
+                div { class: "cm-search-control",
+                    label { class: "cm-search-control-label", "Mode" }
+                    select {
+                        class: "cm-search-select",
+                        value: "{search_mode.read().label()}",
+                        disabled: searching(),
+                        onchange: move |evt| {
+                            let mode = match evt.value().as_str() {
+                                "Semantic" => SearchMode::Semantic,
+                                "Keyword" => SearchMode::Keyword,
+                                _ => SearchMode::Hybrid,
+                            };
+                            search_mode.set(mode);
+                        },
+                        option { value: "Hybrid", "Hybrid" }
+                        option { value: "Semantic", "Semantic" }
+                        option { value: "Keyword", "Keyword" }
+                    }
+                }
             }
         }
     }

@@ -216,6 +216,7 @@ body.cm-body {
     flex: 1;
     padding: 1.5rem 2rem 3rem;
     max-width: 1100px;
+    width: 100%;
     margin: 0 auto;
 }
 
@@ -371,6 +372,11 @@ body.cm-body {
     }
 }
 
+@keyframes cm-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 /* Historical state (muted) */
 .cm-metrics-state--historical {
     background: rgba(107, 118, 153, 0.08);
@@ -469,6 +475,7 @@ body.cm-body {
 /* Views */
 .cm-view {
     display: none;
+    width: 100%;
 }
 
 .cm-view--active {
@@ -529,12 +536,70 @@ body.cm-body {
     box-shadow: var(--cm-glow-soft);
 }
 
-.cm-search-hints {
+/* Search input loading state - subtle border indication only */
+.cm-search-input--loading {
+    border-color: rgba(68, 255, 178, 0.2);
+}
+
+/* Search controls row - subtle, hint-like styling per UX spec */
+.cm-search-controls {
     display: flex;
-    justify-content: space-between;
+    gap: 1.25rem;
     margin-top: 0.6rem;
+    padding-left: 0.1rem;
+}
+
+.cm-search-control {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.cm-search-control-label {
     font-size: var(--cm-font-size-xs);
     color: var(--cm-text-muted);
+}
+
+/* Subtle inline select - minimal visual weight */
+.cm-search-select {
+    padding: 0.2rem 1.25rem 0.2rem 0.4rem;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: var(--cm-text-secondary);
+    font-size: var(--cm-font-size-xs);
+    font-family: var(--cm-font-sans);
+    cursor: pointer;
+    transition: all 150ms ease;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    /* Subtle dropdown arrow */
+    background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236b7699' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.15rem center;
+}
+
+.cm-search-select:hover:not(:disabled) {
+    color: var(--cm-text-primary);
+    background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23ff9a4a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.cm-search-select:focus {
+    outline: none;
+    color: var(--cm-text-primary);
+}
+
+.cm-search-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Style the dropdown options (limited browser support) */
+.cm-search-select option {
+    background: var(--cm-bg-elevated);
+    color: var(--cm-text-primary);
+    padding: 0.5rem;
 }
 
 /* Buttons */
@@ -551,6 +616,15 @@ body.cm-body {
     background: linear-gradient(135deg, var(--cm-accent-copper), var(--cm-accent-copper-soft));
     color: #05070d;
     font-weight: 600;
+    min-width: 120px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cm-btn--primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .cm-btn--secondary {
@@ -577,11 +651,13 @@ body.cm-body {
 
 .cm-results-header {
     margin-bottom: 0.7rem;
+    min-height: 1.5rem;
 }
 
 .cm-results-count {
     font-size: var(--cm-font-size-sm);
     color: var(--cm-text-muted);
+    animation: cm-fade-in 0.3s ease;
 }
 
 .cm-result-card {
@@ -744,7 +820,71 @@ body.cm-body {
 }
 
 .cm-results-load-more {
-    margin-top: 0.75rem;
+    margin-top: 1rem;
+    display: flex;
+    justify-content: center;
+}
+
+/* Skeleton loading animation */
+@keyframes cm-skeleton-pulse {
+    0%, 100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 0.15;
+    }
+}
+
+/* Skeleton result card */
+.cm-result-card--skeleton {
+    pointer-events: none;
+}
+
+.cm-skeleton-text {
+    background: linear-gradient(
+        90deg,
+        var(--cm-border-subtle) 0%,
+        rgba(107, 118, 153, 0.3) 50%,
+        var(--cm-border-subtle) 100%
+    );
+    border-radius: 4px;
+    animation: cm-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.cm-skeleton-text--sm {
+    width: 2rem;
+    height: 0.9rem;
+}
+
+.cm-skeleton-text--md {
+    width: 12rem;
+    height: 0.8rem;
+}
+
+.cm-skeleton-text--title {
+    width: 60%;
+    height: 1.1rem;
+    margin-bottom: 0.25rem;
+}
+
+.cm-skeleton-text--line {
+    width: 100%;
+    height: 0.85rem;
+    margin-bottom: 0.4rem;
+}
+
+.cm-skeleton-text--short {
+    width: 70%;
+}
+
+.cm-skeleton-text--btn {
+    width: 5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+}
+
+.cm-skeleton-snippet {
+    padding: 0.25rem 0;
 }
 
 /* Chunk Preview (within file results) */

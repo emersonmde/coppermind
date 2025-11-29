@@ -1,57 +1,90 @@
 use dioxus::prelude::*;
 
-use crate::search::types::{FileSearchResult, SearchResult};
+use crate::search::types::{DocumentSearchResult, SearchResult};
 use crate::utils::formatting::format_timestamp;
 
-/// File-level search result card with expandable chunk list and fusion details.
+/// Skeleton result card shown while search is in progress.
+/// Mimics the structure of ResultCard but with animated placeholder blocks.
+#[component]
+pub fn SkeletonResultCard(rank: usize) -> Element {
+    rsx! {
+        article { class: "cm-result-card cm-result-card--skeleton",
+            header { class: "cm-result-header",
+                div { class: "cm-result-rank cm-skeleton-text cm-skeleton-text--sm" }
+                div { class: "cm-result-main",
+                    div { class: "cm-skeleton-text cm-skeleton-text--title" }
+                    div { class: "cm-result-meta",
+                        span { class: "cm-skeleton-text cm-skeleton-text--md" }
+                    }
+                }
+                div { class: "cm-result-score",
+                    span { class: "cm-skeleton-text cm-skeleton-text--sm" }
+                }
+            }
+
+            // Skeleton snippet - multiple lines
+            div { class: "cm-result-snippet cm-skeleton-snippet",
+                div { class: "cm-skeleton-text cm-skeleton-text--line" }
+                div { class: "cm-skeleton-text cm-skeleton-text--line cm-skeleton-text--short" }
+            }
+
+            footer { class: "cm-result-footer",
+                span { class: "cm-skeleton-text cm-skeleton-text--btn" }
+                span { class: "cm-skeleton-text cm-skeleton-text--btn" }
+            }
+        }
+    }
+}
+
+/// Document-level search result card with expandable chunk list and fusion details.
 ///
-/// Displays a file as the primary search result (like Google shows pages),
+/// Displays a document as the primary search result (like Google shows pages),
 /// with the best-matching chunk as the preview snippet. Users can expand
 /// to see all chunks and fusion score diagnostics.
 #[component]
 pub fn ResultCard(
     rank: usize,
-    file_result: FileSearchResult,
-    on_show_source: EventHandler<FileSearchResult>,
+    doc_result: DocumentSearchResult,
+    on_show_source: EventHandler<DocumentSearchResult>,
 ) -> Element {
     let mut details_expanded = use_signal(|| false);
     let mut chunks_expanded = use_signal(|| false);
 
-    // Best chunk determines file's displayed scores
-    let best_chunk = &file_result.chunks[0];
+    // Best chunk determines document's displayed scores
+    let best_chunk = &doc_result.chunks[0];
 
-    // Format scores for display (from best chunk)
-    let fusion_score_fmt = format!("{:.4}", file_result.score);
-    let vector_score_fmt = file_result
-        .vector_score
+    // Format scores for display
+    let fusion_score_fmt = format!("{:.4}", doc_result.score);
+    let vector_score_fmt = doc_result
+        .best_chunk_score
         .map(|s| format!("{:.4}", s))
         .unwrap_or_else(|| "N/A".to_string());
-    let bm25_score_fmt = file_result
-        .keyword_score
+    let bm25_score_fmt = doc_result
+        .doc_keyword_score
         .map(|s| format!("{:.4}", s))
         .unwrap_or_else(|| "N/A".to_string());
 
     // Calculate percentage bars for detail view
-    let vector_pct = file_result
-        .vector_score
+    let vector_pct = doc_result
+        .best_chunk_score
         .map(|s| (s * 100.0) as u32)
         .unwrap_or(0);
-    let bm25_pct = file_result
-        .keyword_score
+    let bm25_pct = doc_result
+        .doc_keyword_score
         .map(|s| (s * 100.0) as u32)
         .unwrap_or(0);
 
-    // Extract file info
-    let file_name = file_result.file_name.clone();
-    let file_path = file_result.file_path.clone();
-    let chunk_count = file_result.chunks.len();
+    // Extract document info
+    let doc_name = doc_result.metadata.title.clone();
+    let doc_path = doc_result.metadata.source_id.clone();
+    let chunk_count = doc_result.chunks.len();
 
     // Format timestamp (human-readable)
-    let indexed_at = format_timestamp(file_result.created_at);
+    let indexed_at = format_timestamp(doc_result.metadata.created_at);
 
-    // Clone file_result for closures
-    let file_for_title_click = file_result.clone();
-    let file_for_show_source = file_result.clone();
+    // Clone doc_result for closures
+    let doc_for_title_click = doc_result.clone();
+    let doc_for_show_source = doc_result.clone();
 
     let details_class = if details_expanded() {
         "cm-result-details"
@@ -75,12 +108,12 @@ pub fn ResultCard(
                         href: "#",
                         onclick: move |evt| {
                             evt.prevent_default();
-                            on_show_source.call(file_for_title_click.clone());
+                            on_show_source.call(doc_for_title_click.clone());
                         },
-                        "{file_name}"
+                        "{doc_name}"
                     }
                     div { class: "cm-result-meta",
-                        span { class: "cm-result-source", "{file_path}" }
+                        span { class: "cm-result-source", "{doc_path}" }
                         span { class: "cm-meta-dot", "•" }
                         span { class: "cm-result-index",
                             if chunk_count == 1 {
@@ -109,7 +142,7 @@ pub fn ResultCard(
                     class: "cm-btn cm-btn--ghost",
                     onclick: move |evt| {
                         evt.prevent_default();
-                        on_show_source.call(file_for_show_source.clone());
+                        on_show_source.call(doc_for_show_source.clone());
                     },
                     "Show source"
                 }
@@ -133,7 +166,7 @@ pub fn ResultCard(
                 }
             }
 
-            // Expandable chunks section (NEW)
+            // Expandable chunks section
             div { class: chunks_class,
                 div { class: "cm-result-detail-row",
                     div { class: "cm-detail-label",
@@ -144,7 +177,7 @@ pub fn ResultCard(
                         }
                     }
                     div { class: "cm-detail-bars",
-                        for (idx, chunk) in file_result.chunks.iter().enumerate() {
+                        for (idx, chunk) in doc_result.chunks.iter().enumerate() {
                             ChunkPreview {
                                 key: "{chunk.chunk_id.as_u64()}",
                                 chunk_number: idx + 1,
@@ -155,12 +188,12 @@ pub fn ResultCard(
                 }
             }
 
-            // Expandable details section (existing fusion diagnostics)
+            // Expandable details section (fusion diagnostics)
             div { class: details_class,
                 div { class: "cm-result-detail-row",
-                    div { class: "cm-detail-label", "Fusion breakdown (best chunk)" }
+                    div { class: "cm-detail-label", "Fusion breakdown" }
                     div { class: "cm-detail-bars",
-                        if let Some(_vec_score) = file_result.vector_score {
+                        if doc_result.best_chunk_score.is_some() {
                             div { class: "cm-detail-bar",
                                 div { class: "cm-detail-bar-label",
                                     span { class: "cm-detail-bar-name", "HNSW" }
@@ -171,7 +204,7 @@ pub fn ResultCard(
                                 }
                             }
                         }
-                        if let Some(_kw_score) = file_result.keyword_score {
+                        if doc_result.doc_keyword_score.is_some() {
                             div { class: "cm-detail-bar",
                                 div { class: "cm-detail-bar-label",
                                     span { class: "cm-detail-bar-name", "BM25" }
@@ -185,7 +218,7 @@ pub fn ResultCard(
                     }
                 }
                 div { class: "cm-result-detail-row cm-result-detail-row--meta",
-                    div { "File: {file_path}" }
+                    div { "Source: {doc_path}" }
                     div { "Indexed: {indexed_at}" }
                 }
             }
@@ -193,7 +226,7 @@ pub fn ResultCard(
     }
 }
 
-/// Compact chunk preview within file result.
+/// Compact chunk preview within document result.
 ///
 /// Shows chunk number, all scores (RRF, Vector, BM25), and text snippet.
 /// Follows the same visual design as the Details section.

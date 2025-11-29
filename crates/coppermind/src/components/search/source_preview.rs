@@ -1,16 +1,16 @@
 use dioxus::prelude::*;
 
-use crate::search::types::FileSearchResult;
+use crate::search::types::DocumentSearchResult;
 use crate::utils::formatting::format_timestamp;
 
-/// Source preview overlay showing reconstructed file content from all chunks.
+/// Source preview overlay showing reconstructed document content from all chunks.
 ///
-/// Takes a FileSearchResult and reconstructs the full file by concatenating
+/// Takes a DocumentSearchResult and reconstructs the full document by concatenating
 /// all chunks in order (sorted by chunk index). This provides the "Show Source"
 /// functionality matching the UX spec requirements.
 #[component]
 pub fn SourcePreviewOverlay(
-    file_result: ReadSignal<Option<FileSearchResult>>,
+    file_result: ReadSignal<Option<DocumentSearchResult>>,
     on_close: EventHandler<()>,
 ) -> Element {
     let result_data = file_result.read();
@@ -19,26 +19,26 @@ pub fn SourcePreviewOverlay(
         return rsx! { div {} };
     }
 
-    let file = result_data.as_ref().unwrap();
+    let doc = result_data.as_ref().unwrap();
 
-    // Reconstruct full file text from chunks
+    // Reconstruct full document text from chunks
     // Chunks are stored with filenames like "file.md (chunk 3)"
     // Sort by chunk number, then concatenate
-    let full_text = reconstruct_file_from_chunks(&file.chunks);
+    let full_text = reconstruct_file_from_chunks(&doc.chunks);
 
     // Calculate total token count (approximate)
-    let token_count: usize = file
+    let token_count: usize = doc
         .chunks
         .iter()
         .map(|c| c.text.split_whitespace().count())
         .sum();
 
     // Extract metadata
-    let filename = &file.file_name;
-    let source = &file.file_path;
+    let doc_name = &doc.metadata.title;
+    let source = &doc.metadata.source_id;
 
     // Format timestamp
-    let date_str = format_timestamp(file.created_at);
+    let date_str = format_timestamp(doc.metadata.created_at);
 
     rsx! {
         // Overlay backdrop
@@ -54,7 +54,7 @@ pub fn SourcePreviewOverlay(
                 // Header with metadata
                 header { class: "cm-source-preview-header",
                     div { class: "cm-source-preview-title",
-                        h2 { "{filename}" }
+                        h2 { "{doc_name}" }
                         button {
                             class: "cm-icon-button",
                             onclick: move |_| on_close.call(()),
@@ -73,7 +73,7 @@ pub fn SourcePreviewOverlay(
                         }
                         div { class: "cm-meta-item",
                             span { class: "cm-meta-label", "Chunks: " }
-                            span { class: "cm-meta-value", "{file.chunks.len()}" }
+                            span { class: "cm-meta-value", "{doc.chunks.len()}" }
                         }
                         div { class: "cm-meta-item",
                             span { class: "cm-meta-label", "Tokens: " }
@@ -82,7 +82,7 @@ pub fn SourcePreviewOverlay(
                     }
                 }
 
-                // Reconstructed file content (from all chunks)
+                // Reconstructed document content (from all chunks)
                 div { class: "cm-source-preview-content",
                     pre { class: "cm-source-text",
                         code { "{full_text}" }
