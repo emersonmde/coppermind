@@ -9,6 +9,7 @@
 //!
 //! - [`search`] - Hybrid search (HNSW vector + BM25 keyword + RRF fusion)
 //! - [`storage`] - Platform-agnostic storage trait
+//! - [`config`] - Production configuration constants
 //!
 //! Modules to be migrated:
 //! - `embedding` - ML model inference and text chunking
@@ -18,5 +19,6 @@
 
 #![forbid(unsafe_code)]
 
+pub mod config;
 pub mod search;
 pub mod storage;

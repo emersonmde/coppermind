@@ -68,5 +68,26 @@ url = { version = "2.5", optional = true }
 redb = { version = "2.4", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = "3.15"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "indexing"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "scalability"
+harness = false
+
+[[bench]]
+name = "recall"
+harness = false
+
+[[bench]]
+name = "throughput"
+harness = false

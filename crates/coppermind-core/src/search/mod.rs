@@ -74,12 +74,15 @@
 
 pub mod types;
 
-// Internal modules (will be implemented in phases)
+// Internal modules - exposed for benchmarking but hidden from docs
 mod aggregation;
 mod engine;
-mod fusion;
-mod keyword;
-mod vector;
+#[doc(hidden)]
+pub mod fusion;
+#[doc(hidden)]
+pub mod keyword;
+#[doc(hidden)]
+pub mod vector;
 
 // Re-export main types (public API)
 #[allow(unused_imports)]
