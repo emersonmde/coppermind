@@ -40,7 +40,7 @@ use super::fusion::{reciprocal_rank_fusion, RRF_K};
 use super::keyword::KeywordSearchEngine;
 use super::types::{
     validate_dimension, Chunk, ChunkId, ChunkRecord, DocumentId, IndexManifest, SearchError,
-    SearchResult,
+    SearchResult, SearchTimings,
 };
 use super::vector::VectorSearchEngine;
 use crate::storage::{DocumentStore, StoreError};
@@ -506,9 +506,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
-        // Add to in-memory indices
+        // Add to in-memory indices with separate timing
+        use crate::metrics::global_metrics;
+        use instant::Instant;
+
+        let hnsw_start = Instant::now();
         self.vector_engine.add_chunk(chunk_id, embedding)?;
+        let hnsw_ms = hnsw_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_hnsw_indexing(hnsw_ms);
+
+        let bm25_start = Instant::now();
         self.keyword_engine.add_chunk(chunk_id, record.text);
+        let bm25_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_bm25_indexing(bm25_ms);
 
         // Update manifest with token count
         self.manifest.update(self.manifest.chunk_count + 1);
@@ -571,9 +581,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
-        // Add to in-memory indices (deferred rebuild for vector)
+        // Add to in-memory indices (deferred rebuild for vector) with separate timing
+        use crate::metrics::global_metrics;
+        use instant::Instant;
+
+        let hnsw_start = Instant::now();
         self.vector_engine.add_chunk_deferred(chunk_id, embedding)?;
+        let hnsw_ms = hnsw_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_hnsw_indexing(hnsw_ms);
+
+        let bm25_start = Instant::now();
         self.keyword_engine.add_chunk(chunk_id, record.text);
+        let bm25_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_bm25_indexing(bm25_ms);
 
         // Update manifest with token count
         self.manifest.update(self.manifest.chunk_count + 1);
@@ -616,6 +636,42 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         query_text: &str,
         k: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        // Delegate to search_with_timings and discard timing info
+        let (results, _timings) = self
+            .search_with_timings(query_embedding, query_text, k)
+            .await?;
+        Ok(results)
+    }
+
+    /// Perform hybrid search with detailed timing breakdown.
+    ///
+    /// This is the same as [`search`](Self::search) but also returns timing
+    /// information for each phase of the search pipeline, useful for metrics
+    /// and debugging.
+    ///
+    /// # Arguments
+    /// * `query_embedding` - Pre-computed embedding for the query text
+    /// * `query_text` - The query text for keyword matching
+    /// * `k` - Number of results to return (must be > 0)
+    ///
+    /// # Returns
+    /// A tuple of:
+    /// - Vector of [`SearchResult`] sorted by fused score (descending)
+    /// - [`SearchTimings`] with detailed timing breakdown
+    ///
+    /// # Errors
+    /// Same as [`search`](Self::search).
+    #[must_use = "Search results and timings should be used or errors handled"]
+    pub async fn search_with_timings(
+        &mut self,
+        query_embedding: &[f32],
+        query_text: &str,
+        k: usize,
+    ) -> Result<(Vec<SearchResult>, SearchTimings), SearchError> {
+        use instant::Instant;
+
+        let total_start = Instant::now();
+
         // Validate query parameters
         if query_text.trim().is_empty() {
             return Err(SearchError::InvalidQuery(
@@ -631,18 +687,31 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         // Validate query embedding dimension
         validate_dimension(self.embedding_dim, query_embedding.len())?;
 
-        // Get vector search results (semantic similarity)
+        // Time vector search
+        let vector_start = Instant::now();
         let vector_results = self.vector_engine.search(query_embedding, k * 2)?;
-        info!("📊 Vector search found {} results", vector_results.len());
+        let vector_ms = vector_start.elapsed().as_secs_f64() * 1000.0;
+        let vector_count = vector_results.len();
+        info!(
+            "📊 Vector search found {} results in {:.2}ms",
+            vector_count, vector_ms
+        );
 
-        // Get keyword search results (BM25)
+        // Time keyword search
+        let keyword_start = Instant::now();
         let keyword_results = self.keyword_engine.search(query_text, k * 2);
-        info!("📊 Keyword search found {} results", keyword_results.len());
+        let keyword_ms = keyword_start.elapsed().as_secs_f64() * 1000.0;
+        let keyword_count = keyword_results.len();
+        info!(
+            "📊 Keyword search found {} results in {:.2}ms",
+            keyword_count, keyword_ms
+        );
 
-        // Fuse results using Reciprocal Rank Fusion (RRF)
-        info!("🔀 Applying Reciprocal Rank Fusion (RRF)...");
-
+        // Time RRF fusion
+        let fusion_start = Instant::now();
         let fused_results = reciprocal_rank_fusion(&vector_results, &keyword_results, RRF_K);
+        let fusion_ms = fusion_start.elapsed().as_secs_f64() * 1000.0;
+        info!("🔀 Applied RRF fusion in {:.2}ms", fusion_ms);
 
         // Build maps of individual scores for lookup
         let vector_scores: HashMap<ChunkId, f32> = vector_results.into_iter().collect();
@@ -652,7 +721,6 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
         let mut search_results = Vec::with_capacity(k);
 
         for (chunk_id, score) in fused_results.into_iter().take(k) {
-            // Fetch chunk from store
             match self.store.get_chunk(chunk_id).await {
                 Ok(Some(record)) => {
                     search_results.push(SearchResult {
@@ -665,7 +733,6 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                     });
                 }
                 Ok(None) => {
-                    // Chunk not found in store - skip (may have been deleted)
                     warn!("Chunk {} not found in store, skipping", chunk_id.as_u64());
                 }
                 Err(e) => {
@@ -674,7 +741,18 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             }
         }
 
-        Ok(search_results)
+        let total_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+
+        let timings = SearchTimings {
+            vector_ms,
+            keyword_ms,
+            fusion_ms,
+            total_ms,
+            vector_count,
+            keyword_count,
+        };
+
+        Ok((search_results, timings))
     }
 
     /// Search with two-level RRF fusion (ADR-008).

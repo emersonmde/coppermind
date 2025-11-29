@@ -187,6 +187,25 @@ pub fn use_processing_sender() -> Coroutine<ProcessingMessage> {
 }
 
 // ============================================================================
+// Metrics refresh signal (triggers re-render of metrics pane)
+// ============================================================================
+
+/// Signal that increments when metrics should be refreshed.
+/// Components that display metrics can subscribe to this to re-render
+/// when search operations complete.
+pub fn use_metrics_refresh() -> Signal<u32> {
+    use_context::<Signal<u32>>()
+}
+
+/// Trigger a metrics refresh. Call this after operations that update
+/// global metrics (e.g., after a search completes).
+pub fn trigger_metrics_refresh() {
+    if let Some(mut signal) = try_use_context::<Signal<u32>>() {
+        signal.set(signal() + 1);
+    }
+}
+
+// ============================================================================
 // Engine metrics (aggregate statistics from all batches)
 // ============================================================================
 
@@ -566,6 +585,10 @@ pub fn App() -> Element {
     let batches = use_signal(Vec::<Batch>::new);
     let batch_counter = use_signal(|| 0usize);
     use_context_provider(|| batches);
+
+    // Initialize metrics refresh signal (triggers metrics pane re-render)
+    let metrics_refresh = use_signal(|| 0u32);
+    use_context_provider(|| metrics_refresh);
 
     let processing_coroutine = use_coroutine({
         let mut batches_signal = batches;

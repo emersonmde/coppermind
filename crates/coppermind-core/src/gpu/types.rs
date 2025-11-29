@@ -81,6 +81,8 @@ pub struct EmbedRequest {
     pub tokens: Vec<u32>,
     /// Request priority
     pub priority: Priority,
+    /// Timestamp when request was created (for queue wait time measurement).
+    pub submitted_at: instant::Instant,
 }
 
 impl EmbedRequest {
@@ -90,6 +92,7 @@ impl EmbedRequest {
             model_id: ModelId::default(),
             tokens,
             priority: Priority::default(),
+            submitted_at: instant::Instant::now(),
         }
     }
 
@@ -99,6 +102,7 @@ impl EmbedRequest {
             model_id: ModelId::default(),
             tokens,
             priority: Priority::Immediate,
+            submitted_at: instant::Instant::now(),
         }
     }
 
@@ -108,6 +112,7 @@ impl EmbedRequest {
             model_id: ModelId::default(),
             tokens,
             priority: Priority::Background,
+            submitted_at: instant::Instant::now(),
         }
     }
 
@@ -137,6 +142,8 @@ pub struct BatchEmbedRequest {
     pub token_batches: Vec<Vec<u32>>,
     /// Request priority
     pub priority: Priority,
+    /// Timestamp when request was created (for queue wait time measurement).
+    pub submitted_at: instant::Instant,
 }
 
 impl BatchEmbedRequest {
@@ -146,6 +153,7 @@ impl BatchEmbedRequest {
             model_id: ModelId::default(),
             token_batches,
             priority: Priority::Background,
+            submitted_at: instant::Instant::now(),
         }
     }
 

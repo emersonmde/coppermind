@@ -41,13 +41,15 @@ pub mod embedding;
 pub mod error;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gpu;
-pub mod metrics;
 pub mod platform;
 pub mod processing;
 pub mod search;
 pub mod storage;
 pub mod utils;
 pub mod workers;
+
+// Re-export metrics from coppermind-core for backwards compatibility
+pub use coppermind_core::metrics;
 
 // Web crawler (desktop-only for now due to CORS restrictions on web)
 #[cfg(not(target_arch = "wasm32"))]

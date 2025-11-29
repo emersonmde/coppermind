@@ -106,6 +106,7 @@ pub use types::{
     FileSearchResult,
     SearchError,
     SearchResult,
+    SearchTimings,
     SourceRecord,
 };
 

@@ -165,9 +165,19 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
             .await
             .map_err(|e| SearchError::StorageError(e.to_string()))?;
 
-        // Add to in-memory indices
+        // Add to in-memory indices with separate timing
+        use crate::metrics::global_metrics;
+        use instant::Instant;
+
+        let hnsw_start = Instant::now();
         self.vector_engine.add_chunk(chunk_id, embedding)?;
+        let hnsw_ms = hnsw_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_hnsw_indexing(hnsw_ms);
+
+        let bm25_start = Instant::now();
         self.keyword_engine.add_chunk(chunk_id, record.text);
+        let bm25_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_bm25_indexing(bm25_ms);
 
         // Update manifest
         self.manifest.chunk_count += 1;

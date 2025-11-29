@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::components::{use_batches, use_search_engine, BatchStatus};
+use crate::components::{use_batches, use_metrics_refresh, use_search_engine, BatchStatus};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gpu::{get_scheduler, is_scheduler_initialized, DeviceType};
-use crate::metrics::global_metrics;
+use coppermind_core::metrics::global_metrics;
 
 /// Embedding dimension for JinaBERT model (used for memory calculations)
 const EMBEDDING_DIM: usize = 512;
@@ -54,6 +54,28 @@ fn estimate_bm25_memory(chunk_entries: usize, doc_entries: usize) -> usize {
     (chunk_entries + doc_entries) * 100
 }
 
+/// Format an optional f64 metric value with specified decimal precision.
+/// Returns "-" if the value is None.
+fn format_metric(value: Option<f64>, decimals: usize) -> String {
+    match value {
+        Some(v) => match decimals {
+            0 => format!("{:.0}", v),
+            1 => format!("{:.1}", v),
+            2 => format!("{:.2}", v),
+            _ => format!("{:.1}", v), // Default to 1 decimal
+        },
+        None => "-".to_string(),
+    }
+}
+
+/// Format an optional usize metric value.
+/// Returns "-" if the value is None.
+fn format_count(value: Option<usize>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
 /// Collapsible metrics panel showing engine statistics
 #[component]
 pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
@@ -62,6 +84,10 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
     } else {
         "cm-metrics-panel"
     };
+
+    // Subscribe to metrics refresh signal - triggers re-render when search completes
+    let metrics_refresh = use_metrics_refresh();
+    let _refresh_tick = metrics_refresh(); // Read to subscribe
 
     // Get batches from context
     let batches = use_batches();
@@ -177,33 +203,32 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
         ),
     };
 
-    // Format rolling averages
-    let chunking_avg = perf_snapshot
-        .chunking_avg_ms
-        .map(|v| format!("{:.1}", v))
-        .unwrap_or_else(|| "-".to_string());
-    let tokenization_avg = perf_snapshot
-        .tokenization_avg_ms
-        .map(|v| format!("{:.1}", v))
-        .unwrap_or_else(|| "-".to_string());
-    let embedding_avg = perf_snapshot
-        .embedding_avg_ms
-        .map(|v| format!("{:.1}", v))
-        .unwrap_or_else(|| "-".to_string());
-    let hnsw_avg = perf_snapshot
-        .hnsw_avg_ms
-        .map(|v| format!("{:.2}", v))
-        .unwrap_or_else(|| "-".to_string());
-    let bm25_avg = perf_snapshot
-        .bm25_avg_ms
-        .map(|v| format!("{:.2}", v))
-        .unwrap_or_else(|| "-".to_string());
-
+    // Format rolling averages using helper
+    let chunking_avg = format_metric(perf_snapshot.chunking_avg_ms, 1);
+    let tokenization_avg = format_metric(perf_snapshot.tokenization_avg_ms, 1);
+    let embedding_avg = format_metric(perf_snapshot.embedding_avg_ms, 1);
+    let hnsw_avg = format_metric(perf_snapshot.hnsw_avg_ms, 2);
+    let bm25_avg = format_metric(perf_snapshot.bm25_avg_ms, 2);
     let embedding_throughput = format!("{:.1}", perf_snapshot.embedding_throughput);
 
     let has_rolling_data = perf_snapshot.chunking_count > 0
         || perf_snapshot.tokenization_count > 0
         || perf_snapshot.embedding_count > 0;
+
+    // Search metrics using helper
+    let has_search_data = perf_snapshot.search.query_count > 0;
+    let search_total_avg = format_metric(perf_snapshot.search.total_latency_avg_ms, 1);
+    let search_vector_avg = format_metric(perf_snapshot.search.vector_search_avg_ms, 1);
+    let search_keyword_avg = format_metric(perf_snapshot.search.keyword_search_avg_ms, 1);
+    let search_fusion_avg = format_metric(perf_snapshot.search.fusion_avg_ms, 2);
+    let last_result_count = format_count(perf_snapshot.search.last_result_count);
+    let last_top_score = format_metric(perf_snapshot.search.last_top_score.map(|v| v as f64), 2);
+
+    // Scheduler timing metrics using helper
+    let has_scheduler_data = perf_snapshot.scheduler.requests_completed > 0;
+    let scheduler_queue_wait_avg = format_metric(perf_snapshot.scheduler.queue_wait_avg_ms, 1);
+    let scheduler_inference_avg = format_metric(perf_snapshot.scheduler.inference_avg_ms, 1);
+    let scheduler_queue_depth_metric = perf_snapshot.scheduler.queue_depth;
 
     rsx! {
         section {
@@ -213,7 +238,56 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 h2 { class: "cm-metrics-title", "Engine Metrics" }
             }
 
-            // Row 1: Index Summary and Compute
+            // Row 1: Search Performance (always visible, top priority)
+            div { class: "cm-metrics-section-header",
+                h3 { class: "cm-metrics-section-title", "Search Performance" }
+                if has_search_data {
+                    span { class: "cm-metrics-state cm-metrics-state--historical",
+                        "5 min avg"
+                    }
+                } else {
+                    span { class: "cm-metrics-state cm-metrics-state--idle",
+                        "No searches yet"
+                    }
+                }
+            }
+            div { class: "cm-metrics-columns",
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Total Latency" }
+                            div { class: "cm-metric-value", "{search_total_avg}", span { class: "cm-metric-unit", "ms" } }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Vector Search" }
+                            div { class: "cm-metric-value", "{search_vector_avg}", span { class: "cm-metric-unit", "ms" } }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Keyword Search" }
+                            div { class: "cm-metric-value", "{search_keyword_avg}", span { class: "cm-metric-unit", "ms" } }
+                        }
+                    }
+                }
+                div { class: "cm-metrics-column",
+                    div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "RRF Fusion" }
+                            div { class: "cm-metric-value", "{search_fusion_avg}", span { class: "cm-metric-unit", "ms" } }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Results" }
+                            div { class: "cm-metric-value", "{last_result_count}" }
+                        }
+                        div { class: "cm-metric-card cm-metric-card--compact",
+                            div { class: "cm-metric-label", "Top Score" }
+                            div { class: "cm-metric-value", "{last_top_score}" }
+                        }
+                    }
+                }
+            }
+
+            // Row 2: Index Summary and Compute
+            div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-columns",
                 // Index Summary
                 div { class: "cm-metrics-column",
@@ -264,7 +338,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
-            // Row 2: HNSW and BM25 Index Details
+            // Row 3: HNSW and BM25 Index Details
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-columns",
                 // HNSW Vector Index
@@ -318,7 +392,7 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                 }
             }
 
-            // Row 3: Embedding Performance
+            // Row 4: Embedding Performance
             div { class: "cm-metrics-separator cm-metrics-separator--tight" }
             div { class: "cm-metrics-section-header",
                 h3 { class: "cm-metrics-section-title", "Embedding Performance" }
@@ -382,6 +456,38 @@ pub fn MetricsPane(collapsed: ReadSignal<bool>) -> Element {
                                 div { class: "cm-metric-value", "{embedding_throughput}" }
                             }
                         }
+                    }
+                }
+            }
+
+            // Row 6: GPU Scheduler Timing (only when scheduler data available, desktop only)
+            if has_scheduler_data {
+                div { class: "cm-metrics-separator cm-metrics-separator--tight" }
+                div { class: "cm-metrics-section-header",
+                    h3 { class: "cm-metrics-section-title", "Scheduler Timing" }
+                    if scheduler_queue_depth_metric > 0 {
+                        span { class: "cm-metrics-state cm-metrics-state--live",
+                            span { class: "cm-metrics-state-indicator" }
+                            "{scheduler_queue_depth_metric} pending"
+                        }
+                    } else {
+                        span { class: "cm-metrics-state cm-metrics-state--historical",
+                            "60s avg"
+                        }
+                    }
+                }
+                div { class: "cm-metrics-grid cm-metrics-grid--compact",
+                    div { class: "cm-metric-card cm-metric-card--compact",
+                        div { class: "cm-metric-label", "Queue Wait" }
+                        div { class: "cm-metric-value", "{scheduler_queue_wait_avg}", span { class: "cm-metric-unit", "ms" } }
+                    }
+                    div { class: "cm-metric-card cm-metric-card--compact",
+                        div { class: "cm-metric-label", "Inference" }
+                        div { class: "cm-metric-value", "{scheduler_inference_avg}", span { class: "cm-metric-unit", "ms" } }
+                    }
+                    div { class: "cm-metric-card cm-metric-card--compact",
+                        div { class: "cm-metric-label", "Completed" }
+                        div { class: "cm-metric-value", "{perf_snapshot.scheduler.requests_completed}" }
                     }
                 }
             }

@@ -315,6 +315,26 @@ pub struct SearchResult {
     pub metadata: ChunkSourceMetadata,
 }
 
+/// Timing breakdown for a search operation.
+///
+/// Provides detailed timing information for each phase of the search pipeline,
+/// useful for debugging performance issues and displaying in metrics UI.
+#[derive(Debug, Clone, Default)]
+pub struct SearchTimings {
+    /// Time spent on HNSW vector search (semantic similarity).
+    pub vector_ms: f64,
+    /// Time spent on BM25 keyword search.
+    pub keyword_ms: f64,
+    /// Time spent on RRF fusion algorithm.
+    pub fusion_ms: f64,
+    /// Total search time (sum of above plus overhead).
+    pub total_ms: f64,
+    /// Number of results from vector search before fusion.
+    pub vector_count: usize,
+    /// Number of results from keyword search before fusion.
+    pub keyword_count: usize,
+}
+
 /// File-level search result aggregating multiple chunks from the same source.
 ///
 /// Used for displaying search results at the file level (like Google shows pages)

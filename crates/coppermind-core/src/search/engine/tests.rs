@@ -1393,3 +1393,134 @@ async fn test_legacy_chunk_has_no_document_id() {
     let chunk_record = engine.get_chunk(&chunk_id).await.unwrap().unwrap();
     assert_eq!(chunk_record.document_id, None);
 }
+
+// =========================================================================
+// Search With Timings Tests (ADR-009)
+// =========================================================================
+
+#[tokio::test]
+async fn test_search_with_timings_returns_valid_timings() {
+    let store = InMemoryDocumentStore::new();
+    let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+    // Add chunks
+    let chunk1 = Chunk {
+        text: "machine learning algorithms".to_string(),
+        metadata: ChunkSourceMetadata::default(),
+    };
+    let chunk2 = Chunk {
+        text: "deep neural networks".to_string(),
+        metadata: ChunkSourceMetadata::default(),
+    };
+
+    engine.add_chunk(chunk1, vec![1.0, 0.0, 0.0]).await.unwrap();
+    engine.add_chunk(chunk2, vec![0.9, 0.1, 0.0]).await.unwrap();
+
+    // Search with timings
+    let (results, timings) = engine
+        .search_with_timings(&[1.0, 0.0, 0.0], "machine learning", 2)
+        .await
+        .unwrap();
+
+    // Verify results are returned
+    assert!(!results.is_empty());
+    assert!(results.len() <= 2);
+
+    // Verify timing breakdown is populated
+    assert!(timings.vector_ms >= 0.0);
+    assert!(timings.keyword_ms >= 0.0);
+    assert!(timings.fusion_ms >= 0.0);
+    assert!(timings.total_ms >= 0.0);
+
+    // Total should be at least the sum of components
+    assert!(timings.total_ms >= timings.vector_ms + timings.keyword_ms + timings.fusion_ms);
+
+    // Verify counts are populated
+    assert!(timings.vector_count > 0);
+    assert!(timings.keyword_count > 0);
+}
+
+#[tokio::test]
+async fn test_search_with_timings_empty_index() {
+    let store = InMemoryDocumentStore::new();
+    let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+    // Search empty index
+    let (results, timings) = engine
+        .search_with_timings(&[1.0, 0.0, 0.0], "query", 10)
+        .await
+        .unwrap();
+
+    // Results should be empty
+    assert!(results.is_empty());
+
+    // Timings should still be valid (non-negative)
+    assert!(timings.vector_ms >= 0.0);
+    assert!(timings.keyword_ms >= 0.0);
+    assert!(timings.fusion_ms >= 0.0);
+    assert!(timings.total_ms >= 0.0);
+
+    // Counts should be zero for empty index
+    assert_eq!(timings.vector_count, 0);
+    assert_eq!(timings.keyword_count, 0);
+}
+
+#[tokio::test]
+async fn test_search_with_timings_matches_search() {
+    let store = InMemoryDocumentStore::new();
+    let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+    // Add chunks
+    let chunk = Chunk {
+        text: "semantic search test".to_string(),
+        metadata: ChunkSourceMetadata {
+            filename: Some("search.txt".to_string()),
+            source: None,
+            created_at: 999,
+        },
+    };
+    engine
+        .add_chunk(chunk.clone(), vec![1.0, 0.5, 0.2])
+        .await
+        .unwrap();
+
+    // Search using both methods
+    let regular_results = engine
+        .search(&[1.0, 0.5, 0.2], "semantic", 1)
+        .await
+        .unwrap();
+
+    let (timed_results, _timings) = engine
+        .search_with_timings(&[1.0, 0.5, 0.2], "semantic", 1)
+        .await
+        .unwrap();
+
+    // Results should be identical
+    assert_eq!(regular_results.len(), timed_results.len());
+    assert_eq!(regular_results[0].chunk_id, timed_results[0].chunk_id);
+    assert_eq!(regular_results[0].text, timed_results[0].text);
+    // Scores may differ slightly due to different execution order, but should be close
+    assert!((regular_results[0].score - timed_results[0].score).abs() < 0.001);
+}
+
+#[tokio::test]
+async fn test_search_with_timings_invalid_query() {
+    let store = InMemoryDocumentStore::new();
+    let mut engine = HybridSearchEngine::new(store, 3).await.unwrap();
+
+    let chunk = Chunk {
+        text: "test chunk".to_string(),
+        metadata: ChunkSourceMetadata::default(),
+    };
+    engine.add_chunk(chunk, vec![1.0, 0.0, 0.0]).await.unwrap();
+
+    // Empty query text should return InvalidQuery error
+    let result = engine.search_with_timings(&[1.0, 0.0, 0.0], "", 10).await;
+    assert!(matches!(result, Err(SearchError::InvalidQuery(_))));
+
+    // Zero k should also fail
+    let result = engine
+        .search_with_timings(&[1.0, 0.0, 0.0], "test", 0)
+        .await;
+    assert!(matches!(result, Err(SearchError::InvalidQuery(_))));
+}

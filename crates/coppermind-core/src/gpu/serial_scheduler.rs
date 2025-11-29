@@ -11,8 +11,10 @@ use super::types::{
     ModelId, ModelLoadConfig, Priority, SchedulerStats,
 };
 use crate::embedding::{Embedder, JinaBertConfig, JinaBertEmbedder, ModelConfig};
+use crate::metrics::global_metrics;
 use async_trait::async_trait;
 use candle_core::Device;
+use instant::Instant;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
@@ -272,24 +274,69 @@ impl SerialScheduler {
 
                 match message {
                     SchedulerMessage::Embed { request, response } => {
+                        // Calculate queue wait time (time from submission to processing start)
+                        let queue_wait_ms = request.submitted_at.elapsed().as_secs_f64() * 1000.0;
+
                         debug!(
-                            "Processing embed request (priority: {:?}, model: {}, queue_depth: {})",
-                            priority, request.model_id, remaining
+                            "Processing embed request (priority: {:?}, model: {}, queue_depth: {}, wait: {:.2}ms)",
+                            priority, request.model_id, remaining, queue_wait_ms
                         );
+
+                        // Time the actual inference
+                        let inference_start = Instant::now();
                         let result = Self::do_embed(&models, &request);
+                        let inference_ms = inference_start.elapsed().as_secs_f64() * 1000.0;
+
+                        // Record metrics
+                        global_metrics().record_scheduler_request(queue_wait_ms, inference_ms);
+
                         let _ = response.send(result);
                         stats.requests_completed.fetch_add(1, Ordering::Relaxed);
+
+                        // Update scheduler gauges
+                        global_metrics().update_scheduler_stats(
+                            stats.queue_depth.load(Ordering::Relaxed),
+                            stats.requests_completed.load(Ordering::Relaxed),
+                        );
                     }
                     SchedulerMessage::EmbedBatch { request, response } => {
+                        // Calculate queue wait time (time from submission to processing start)
+                        let queue_wait_ms = request.submitted_at.elapsed().as_secs_f64() * 1000.0;
+                        let batch_size = request.token_batches.len();
+
                         debug!(
-                            "Processing batch embed request ({} items, priority: {:?}, queue_depth: {})",
-                            request.token_batches.len(),
+                            "Processing batch embed request ({} items, priority: {:?}, queue_depth: {}, wait: {:.2}ms)",
+                            batch_size,
                             priority,
-                            remaining
+                            remaining,
+                            queue_wait_ms
                         );
+
+                        // Time the actual inference
+                        let inference_start = Instant::now();
                         let result = Self::do_embed_batch(&models, &request);
+                        let inference_ms = inference_start.elapsed().as_secs_f64() * 1000.0;
+
+                        // Record metrics (averaged per item for consistency with single requests)
+                        if batch_size > 0 {
+                            let per_item_wait_ms = queue_wait_ms;
+                            let per_item_inference_ms = inference_ms / batch_size as f64;
+                            for _ in 0..batch_size {
+                                global_metrics().record_scheduler_request(
+                                    per_item_wait_ms,
+                                    per_item_inference_ms,
+                                );
+                            }
+                        }
+
                         let _ = response.send(result);
                         stats.requests_completed.fetch_add(1, Ordering::Relaxed);
+
+                        // Update scheduler gauges
+                        global_metrics().update_scheduler_stats(
+                            stats.queue_depth.load(Ordering::Relaxed),
+                            stats.requests_completed.load(Ordering::Relaxed),
+                        );
                     }
                     SchedulerMessage::Generate { request, response } => {
                         debug!(

@@ -1,15 +1,19 @@
 use crate::processing::embed_text;
 use crate::search::types::{ChunkId, ChunkSourceMetadata, SearchResult};
 use crate::search::{aggregate_chunks_by_file, types::FileSearchResult};
+use coppermind_core::metrics::global_metrics;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_util::StreamExt;
+use instant::Instant;
 
 #[cfg(target_arch = "wasm32")]
 use crate::components::worker::use_worker_state;
 
-use crate::components::{use_search_engine, use_search_engine_status, SearchEngineStatus, View};
+use crate::components::{
+    trigger_metrics_refresh, use_search_engine, use_search_engine_status, SearchEngineStatus, View,
+};
 
 use super::{EmptyState, ResultCard, SearchCard, SourcePreviewOverlay};
 
@@ -88,12 +92,17 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                         info!("🔍 Searching for: '{}'", query);
                         status.set(format!("Embedding query '{}'...", query));
 
+                        // Time query embedding
+                        let embed_start = Instant::now();
+
                         // Embed the query using platform-appropriate method
                         #[cfg(target_arch = "wasm32")]
                         let embed_result = embed_text(&query, worker_state).await;
 
                         #[cfg(not(target_arch = "wasm32"))]
                         let embed_result = embed_text(&query).await;
+
+                        let embed_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
 
                         let query_embedding = match embed_result {
                             Ok(computation) => Some(computation.embedding),
@@ -112,13 +121,44 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                             // Read lock is dropped immediately after clone
                             let engine_arc = { engine.read().clone() };
                             if let Some(engine) = engine_arc {
-                                // Acquire lock and run search
+                                // Acquire lock and run search with timing
                                 let mut search_engine = engine.lock().await;
-                                match search_engine.search(&embedding, &query, 20).await {
-                                    Ok(chunk_results) => {
+                                match search_engine
+                                    .search_with_timings(&embedding, &query, 20)
+                                    .await
+                                {
+                                    Ok((chunk_results, timings)) => {
+                                        // Calculate score statistics for metrics
+                                        let top_score = chunk_results.first().map(|r| r.score);
+                                        let median_score = if chunk_results.is_empty() {
+                                            None
+                                        } else {
+                                            chunk_results
+                                                .get(chunk_results.len() / 2)
+                                                .map(|r| r.score)
+                                        };
+
+                                        // Record search metrics
+                                        global_metrics().record_search(
+                                            embed_ms,
+                                            timings.vector_ms,
+                                            timings.keyword_ms,
+                                            timings.fusion_ms,
+                                            chunk_results.len(),
+                                            timings.vector_count,
+                                            timings.keyword_count,
+                                            top_score,
+                                            median_score,
+                                        );
+
                                         info!(
-                                            "✅ Search completed: {} chunk results",
-                                            chunk_results.len()
+                                            "✅ Search completed: {} results in {:.1}ms (embed: {:.1}ms, vector: {:.1}ms, keyword: {:.1}ms, fusion: {:.1}ms)",
+                                            chunk_results.len(),
+                                            timings.total_ms + embed_ms,
+                                            embed_ms,
+                                            timings.vector_ms,
+                                            timings.keyword_ms,
+                                            timings.fusion_ms
                                         );
 
                                         // Aggregate chunks into file-level results
@@ -137,8 +177,14 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                                             file_results.len()
                                         );
 
+                                        // Calculate total query time (embedding + search)
+                                        let total_query_ms = timings.total_ms + embed_ms;
+
                                         if file_results.is_empty() {
-                                            status.set("No results found.".into());
+                                            status.set(format!(
+                                                "No results found ({:.0} ms)",
+                                                total_query_ms
+                                            ));
                                         } else {
                                             let file_count = file_results.len();
                                             let chunk_count: usize =
@@ -149,12 +195,20 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                                             let chunk_word =
                                                 if chunk_count == 1 { "chunk" } else { "chunks" };
 
+                                            // Google/Bing style: "About X results (0.42 seconds)"
                                             status.set(format!(
-                                                "Found {} {} ({} {})",
-                                                file_count, file_word, chunk_count, chunk_word
+                                                "{} {} ({} {}) in {:.0} ms",
+                                                file_count,
+                                                file_word,
+                                                chunk_count,
+                                                chunk_word,
+                                                total_query_ms
                                             ));
                                         }
                                         results.set(file_results);
+
+                                        // Trigger metrics pane refresh to show updated search stats
+                                        trigger_metrics_refresh();
                                     }
                                     Err(e) => {
                                         error!("❌ Search failed: {:?}", e);

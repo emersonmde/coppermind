@@ -73,8 +73,9 @@ use crate::gpu::{
     get_scheduler, init_scheduler, is_scheduler_initialized, BatchEmbedRequest, EmbedRequest,
     ModelId, ModelLoadConfig, Priority,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::metrics::global_metrics;
+
+// Metrics - available on all platforms via coppermind-core
+use coppermind_core::metrics::global_metrics;
 
 use crate::platform::run_blocking;
 use std::sync::Arc;
@@ -382,13 +383,18 @@ async fn compute_embedding_wasm(text: &str) -> Result<EmbeddingComputation, Embe
     let max_positions = model.max_position_embeddings();
     let tokenizer = ensure_tokenizer(max_positions).await?;
 
+    // Time tokenization for metrics
+    let tokenize_start = instant::Instant::now();
     let token_ids = tokenizer::tokenize_text_async(tokenizer, text).await?;
+    let tokenize_duration_ms = tokenize_start.elapsed().as_secs_f64() * 1000.0;
+    global_metrics().record_tokenization(tokenize_duration_ms);
+
     let token_count = token_ids.len();
 
     web_sys::console::log_1(
         &format!(
-            "[compute_embedding_wasm] Tokenized into {} tokens",
-            token_count
+            "[compute_embedding_wasm] Tokenized into {} tokens ({:.1}ms)",
+            token_count, tokenize_duration_ms
         )
         .into(),
     );
@@ -629,7 +635,12 @@ where
         .unwrap_or(chunking::FileType::Text);
 
     let chunker = chunking::create_chunker(file_type, effective_chunk, tokenizer);
+
+    // Time chunking operation
+    let chunk_start = instant::Instant::now();
     let text_chunks = chunker.chunk(text)?;
+    let chunk_duration_ms = chunk_start.elapsed().as_secs_f64() * 1000.0;
+    global_metrics().record_chunking(chunk_duration_ms);
 
     if text_chunks.is_empty() {
         return Ok(vec![]);
@@ -642,10 +653,11 @@ where
     let using_worker = worker.is_some();
 
     info!(
-        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking, worker: {})",
+        "🧩 Embedding {} chunks ({} tokens max per chunk, {:?} chunking, {:.1}ms, worker: {})",
         total_chunks,
         effective_chunk,
         file_type,
+        chunk_duration_ms,
         if using_worker { "yes" } else { "no" }
     );
 
@@ -663,6 +675,9 @@ where
             text_chunk.text.len()
         );
 
+        // Time embedding operation (includes worker round-trip on web)
+        let embed_start = instant::Instant::now();
+
         // Use worker if available, otherwise fall back to main thread
         let computation = if let Some(ref w) = worker {
             w.embed(text_chunk.text.clone())
@@ -671,6 +686,9 @@ where
         } else {
             compute_embedding(&text_chunk.text).await?
         };
+
+        let embed_duration_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
+        global_metrics().record_embedding(embed_duration_ms);
 
         results.push(ChunkEmbeddingResult {
             chunk_index: text_chunk.index,

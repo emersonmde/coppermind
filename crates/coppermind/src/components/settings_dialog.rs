@@ -3,7 +3,7 @@
 use crate::components::{
     use_batches, use_search_engine, use_search_engine_status, SearchEngineStatus,
 };
-use crate::metrics::global_metrics;
+use coppermind_core::metrics::global_metrics;
 use dioxus::logger::tracing::{error, info};
 use dioxus::prelude::*;
 

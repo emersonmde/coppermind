@@ -9,7 +9,6 @@
 
 use crate::embedding::ChunkEmbeddingResult;
 use crate::error::FileProcessingError;
-use crate::metrics::global_metrics;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::platform::run_blocking;
 use crate::search::types::{get_current_timestamp, Chunk, ChunkSourceMetadata};
@@ -358,11 +357,7 @@ pub async fn index_chunks<S: DocumentStore + Send + Sync + 'static>(
 
                     let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                     total_index_time_ms += insert_duration_ms;
-                    // Split metrics between HNSW (vector) and BM25 (keyword) indexing.
-                    // 70/30 is an estimate - HNSW graph insertion is typically more expensive
-                    // than BM25 term frequency updates. Actual ratio varies by document size.
-                    global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
-                    global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
+                    // Note: HNSW/BM25 metrics are now recorded separately inside the engine
                     indexed_count += 1;
                 }
                 Err(e) => {
@@ -465,11 +460,7 @@ pub async fn index_chunks<S: DocumentStore + 'static>(
 
                 let insert_duration_ms = insert_start.elapsed().as_secs_f64() * 1000.0;
                 total_index_time_ms += insert_duration_ms;
-                // Split metrics between HNSW (vector) and BM25 (keyword) indexing.
-                // 70/30 is an estimate - HNSW graph insertion is typically more expensive
-                // than BM25 term frequency updates. Actual ratio varies by document size.
-                global_metrics().record_hnsw_indexing(insert_duration_ms * 0.7);
-                global_metrics().record_bm25_indexing(insert_duration_ms * 0.3);
+                // Note: HNSW/BM25 metrics are now recorded separately inside the engine
                 indexed_count += 1;
             }
             Err(e) => {
