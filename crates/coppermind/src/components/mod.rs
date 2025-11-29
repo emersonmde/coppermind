@@ -334,9 +334,12 @@ pub fn calculate_live_metrics(batches: &[Batch]) -> Option<LiveIndexingMetrics> 
 
 /// Initialize document store.
 ///
-/// - Desktop: Uses RedbDocumentStore with platform-idiomatic paths
+/// - Desktop/Mobile: Uses RedbDocumentStore with platform-idiomatic paths
 ///   (e.g., ~/Library/Application Support/dev.errorsignal.Coppermind/ on macOS)
 /// - Web: Uses IndexedDbDocumentStore for persistent browser storage
+///
+/// The path uses the bundle identifier format (dev.errorsignal.Coppermind) to ensure
+/// compatibility with macOS/iOS sandboxing requirements.
 #[cfg(target_arch = "wasm32")]
 async fn create_platform_document_store() -> Result<PlatformDocumentStore, String> {
     // Web: Use IndexedDB for persistent storage across page refreshes
@@ -347,11 +350,12 @@ async fn create_platform_document_store() -> Result<PlatformDocumentStore, Strin
 
 #[cfg(any(feature = "desktop", feature = "mobile"))]
 async fn create_platform_document_store() -> Result<PlatformDocumentStore, String> {
-    // Desktop: Use redb for document storage with platform-idiomatic paths
-    // Get the platform-specific data directory
+    // Desktop/Mobile: Use redb for document storage with platform-idiomatic paths
+    // Uses bundle identifier format for macOS/iOS sandbox compatibility
     use directories::ProjectDirs;
 
-    let project_dirs = ProjectDirs::from("", "", "Coppermind")
+    // Bundle identifier: dev.errorsignal.Coppermind (matches Dioxus.toml)
+    let project_dirs = ProjectDirs::from("dev", "errorsignal", "Coppermind")
         .ok_or_else(|| "Failed to determine data directory".to_string())?;
 
     let data_dir = project_dirs.data_dir();
