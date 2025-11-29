@@ -11,21 +11,20 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# Syntax-aware code chunking (requires tree-sitter C library, native only)
-tree-sitter = [
-    "dep:tree-sitter",
-    "dep:tree-sitter-rust",
-    "dep:tree-sitter-python",
-    "dep:tree-sitter-javascript",
-    "dep:tree-sitter-typescript",
-    "dep:tree-sitter-java",
-    "dep:tree-sitter-c",
-    "dep:tree-sitter-cpp",
-    "dep:tree-sitter-go",
-    "text-splitter/code",
-]
+
+# Profiling instrumentation (tracing spans)
+profile = []
+
+# Platform-specific Candle acceleration (enables optimized backends)
+candle-metal = ["candle-core/metal", "candle-core/accelerate", "candle-nn/metal", "candle-nn/accelerate", "candle-transformers/metal", "candle-transformers/accelerate"]
+candle-accelerate = ["candle-core/accelerate", "candle-nn/accelerate", "candle-transformers/accelerate"]
+candle-cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+candle-cudnn = ["candle-cuda", "candle-core/cudnn"]
+candle-mkl = ["candle-core/mkl", "candle-nn/mkl", "candle-transformers/mkl"]
+
 # Web crawler (native only - CORS blocks web platform)
 crawler = ["dep:reqwest", "dep:url"]
+
 # Redb-backed document store (native only - for desktop persistence)
 redb-store = ["dep:redb"]
 
@@ -48,17 +47,17 @@ instant = { version = "0.1", features = ["wasm-bindgen"] }
 # Logging (platform-agnostic)
 tracing = "0.1"
 
-# Optional: tree-sitter for code chunking (native only)
-tree-sitter = { version = "0.24", optional = true }
-tree-sitter-rust = { version = "0.23", optional = true }
-tree-sitter-python = { version = "0.23", optional = true }
-tree-sitter-javascript = { version = "0.23", optional = true }
-tree-sitter-typescript = { version = "0.23", optional = true }
-tree-sitter-java = { version = "0.23", optional = true }
-tree-sitter-c = { version = "0.23", optional = true }
-tree-sitter-cpp = { version = "0.23", optional = true }
-tree-sitter-go = { version = "0.23", optional = true }
-text-splitter = { version = "0.18", default-features = false, optional = true }
+# Candle ML framework for embedding model inference (always required)
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
+once_cell = "1.19"
+safetensors = "0.4"
+
+# Text chunking (always required for semantic chunking)
+# Note: The "code" feature requires tree-sitter which is native-only (added below)
+text-splitter = { version = "0.18", default-features = false, features = ["markdown"] }
 
 # Optional: crawler dependencies (native only)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
@@ -66,6 +65,40 @@ url = { version = "2.5", optional = true }
 
 # Optional: redb document store (native only)
 redb = { version = "2.4", optional = true }
+
+# Async runtime for GPU scheduler (native only)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync"] }
+# Text chunking with tree-sitter for code (native only - C library doesn't compile to WASM)
+text-splitter = { version = "0.18", default-features = false, features = ["markdown", "code"] }
+
+# Tree-sitter for code chunking (native only - C library doesn't compile to WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter]
+version = "0.24"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-rust]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-python]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-javascript]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-typescript]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-java]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-c]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-cpp]
+version = "0.23"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tree-sitter-go]
+version = "0.23"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

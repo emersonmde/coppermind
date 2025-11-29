@@ -20,7 +20,7 @@ cargo clippy -p coppermind --target wasm32-unknown-unknown --features web -- -D 
 echo "→ Running cargo clippy (app - desktop target)"
 cargo clippy -p coppermind --features desktop --all-targets -- -D warnings
 
-echo "→ Running cargo test (core crate)"
+echo "→ Running cargo test (core crate with integration tests)"
 cargo test -p coppermind-core --verbose
 
 echo "→ Running cargo test (app - desktop)"

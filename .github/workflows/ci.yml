@@ -57,6 +57,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Models needed for integration tests that use embedding
+      - name: Download model assets
+        run: ./download-models.sh
+
       - name: Run core tests
         run: cargo test -p coppermind-core --verbose
 

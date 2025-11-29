@@ -72,28 +72,37 @@ Coppermind uses a Cargo workspace with two crates:
 - **src/storage/**: `DocumentStore` trait and implementations
   - **document_store.rs**: `DocumentStore` trait, `InMemoryDocumentStore`
   - **redb_store.rs**: `RedbDocumentStore` for desktop (feature-gated)
+- **src/embedding/**: ML model abstractions and implementations (Candle-based)
+  - **traits.rs**: `AssetLoader`, `Embedder`, `ModelConfig` traits
+  - **config.rs**: `JinaBertConfig` implementation
+  - **model.rs**: `JinaBertEmbedder` (Candle-based inference)
+  - **tokenizer.rs**: `TokenizerHandle` wrapper for HuggingFace tokenizers
+  - **types.rs**: `EmbeddingResult`, `ChunkEmbeddingResult`
+- **src/chunking/**: Text chunking strategies
+  - **mod.rs**: `ChunkingStrategy` trait, `FileType` enum, `create_chunker()`
+  - **text_splitter_adapter.rs**: ICU4X sentence-based chunking
+  - **markdown_splitter_adapter.rs**: Markdown-aware chunking (pulldown-cmark)
+  - **code_splitter_adapter.rs**: Syntax-aware chunking with tree-sitter (native only)
+  - **tokenizer_sizer.rs**: Token-based chunk sizing
+- **src/gpu/**: GPU scheduler for thread-safe Metal access (native only)
+  - **scheduler.rs**: `GpuScheduler` trait
+  - **serial_scheduler.rs**: `SerialScheduler` with dedicated worker thread
+  - **types.rs**: `EmbedRequest`, `Priority`, `ModelId`
+  - **error.rs**: `GpuError` types
+- **src/processing/**: Document processing and indexing pipeline
+  - **pipeline.rs**: `IndexingPipeline` for chunking → tokenization → embedding
+  - **progress.rs**: `IndexingProgress`, `BatchProgress` for UI feedback
+- **src/error.rs**: Error types (`EmbeddingError`, `ChunkingError`, `GpuError`)
+- **src/config.rs**: Production configuration constants
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs**: Entry point with platform-specific launch (desktop/mobile/web)
 - **src/lib.rs**: Public API surface, module exports
-- **src/error.rs**: Error types (`EmbeddingError`, `FileProcessingError`)
+- **src/error.rs**: Error types (`FileProcessingError`)
 
-- **src/embedding/**: ML model inference and text processing
+- **src/embedding/**: App-specific embedding utilities
   - **mod.rs**: High-level API (`compute_embedding`, `embed_text_chunks_auto`)
-  - **config.rs**: `ModelConfig` trait and `JinaBertConfig` implementation
-  - **model.rs**: `Embedder` trait and `JinaBertEmbedder` (Candle-based)
-  - **tokenizer.rs**: Singleton tokenizer initialization with truncation config
   - **assets.rs**: Platform-agnostic asset loading (Fetch API on web, tokio::fs on desktop)
-  - **chunking/**: Text chunking strategies
-    - **text_splitter_adapter.rs**: ICU4X sentence-based chunking
-    - **markdown_splitter_adapter.rs**: Markdown-aware chunking (pulldown-cmark)
-    - **code_splitter_adapter.rs**: Syntax-aware chunking with tree-sitter (native only)
-
-- **src/gpu/**: GPU scheduler for thread-safe Metal access (desktop only)
-  - **mod.rs**: Global scheduler initialization, `GpuScheduler` trait
-  - **serial_scheduler.rs**: `SerialScheduler` with dedicated worker thread
-  - **types.rs**: `EmbedRequest`, `Priority`, `ModelId`
-  - **error.rs**: `GpuError` types
 
 - **src/crawler/**: Web page crawling (native only, CORS blocks web)
   - **engine.rs**: BFS crawl with depth limits and cycle detection
@@ -202,11 +211,11 @@ The codebase uses traits for extensibility and testing:
 
 | Trait | Location | Purpose | Implementations |
 |-------|----------|---------|-----------------|
-| `Embedder` | `crates/coppermind/src/embedding/model.rs` | Abstract ML inference | `JinaBertEmbedder` |
-| `ModelConfig` | `crates/coppermind/src/embedding/config.rs` | Model parameters | `JinaBertConfig` |
-| `ChunkingStrategy` | `crates/coppermind/src/embedding/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
+| `Embedder` | `crates/coppermind-core/src/embedding/traits.rs` | Abstract ML inference | `JinaBertEmbedder` |
+| `ModelConfig` | `crates/coppermind-core/src/embedding/traits.rs` | Model parameters | `JinaBertConfig` |
+| `ChunkingStrategy` | `crates/coppermind-core/src/chunking/mod.rs` | Text splitting | `TextSplitterAdapter`, `MarkdownSplitterAdapter`, `CodeSplitterAdapter` |
 | `DocumentStore` | `crates/coppermind-core/src/storage/document_store.rs` | Persistence | `RedbDocumentStore`, `IndexedDbDocumentStore`, `InMemoryDocumentStore` |
-| `GpuScheduler` | `crates/coppermind/src/gpu/scheduler.rs` | GPU access | `SerialScheduler` |
+| `GpuScheduler` | `crates/coppermind-core/src/gpu/scheduler.rs` | GPU access | `SerialScheduler` |
 
 These traits define clean boundaries for:
 - Swapping implementations (e.g., different embedding models)

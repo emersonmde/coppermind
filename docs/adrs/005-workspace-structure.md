@@ -1,8 +1,30 @@
 # ADR-005: Workspace Structure for Library Extraction
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2025-11-25
 **Supersedes:** None
+
+## Update (2025-11-29): Feature Flags vs Platform Cfg
+
+The original ADR proposed using feature flags (`tree-sitter`, `candle`) to gate optional functionality. After implementation, we revised this approach:
+
+**Original Decision (ADR proposal):**
+- `candle` feature flag to optionally enable embedding support
+- `tree-sitter` feature flag for syntax-aware code chunking
+
+**Revised Decision (current implementation):**
+- **Candle is always-on**: All platforms require embedding capability - there's no use case for coppermind-core without embedding
+- **Tree-sitter uses platform cfg**: `#[cfg(not(target_arch = "wasm32"))]` instead of feature flag, because tree-sitter's C code simply doesn't compile to WASM
+
+**Rationale for change:**
+1. Feature flags add cognitive overhead when the choice isn't actually optional
+2. Candle is required for the core value proposition (semantic search)
+3. Tree-sitter availability is determined by platform capability, not user choice
+4. Platform cfg is more accurate: "this code physically cannot compile on WASM" vs "user chose not to enable this"
+
+The rest of the ADR remains valid for understanding the workspace structure and module boundaries.
+
+---
 
 ## Summary
 
