@@ -212,7 +212,29 @@ use packed_simd::*;
 - JIT compilation overhead
 - No access to some CPU features (AVX, etc.)
 
-### Candle Limitations in WASM
+### Candle Limitations
+
+For detailed documentation of Candle bugs and workarounds, see [candle-known-issues.md](candle-known-issues.md).
+
+#### Native/Desktop Limitations
+
+**1. JinaBERT F16 Inference Not Supported**
+
+Candle's `jina_bert.rs` hardcodes F32 for ALiBi positional bias, preventing F16/BF16 inference:
+```rust
+// candle-transformers/src/models/jina_bert.rs line 9
+pub const DTYPE: DType = DType::F32;
+```
+
+**Impact:** Must load F16 weights as F32, losing potential performance gains on Metal (F16) and CUDA (BF16).
+
+**Workaround:** Load with `DType::F32` - conversion happens at load time, GPU still accelerates inference.
+
+**2. Metal Threading Issues**
+
+Multi-threaded access to Metal device causes crashes. See [candle-known-issues.md](candle-known-issues.md) for details and workarounds (dedicated worker thread pattern).
+
+#### WASM Limitations
 
 **1. CPU-Only (For Now)**
 ```rust

@@ -121,14 +121,14 @@ impl JinaBertEmbedder {
             // Desktop: Try CUDA -> Metal -> CPU (with MKL/Accelerate)
             if let Ok(cuda_device) = Device::new_cuda(0) {
                 #[cfg(feature = "candle-cudnn")]
-                info!("Using CUDA device (with cuDNN)");
+                info!("Using CUDA GPU (with cuDNN)");
                 #[cfg(not(feature = "candle-cudnn"))]
-                info!("Using CUDA device");
+                info!("Using CUDA GPU");
                 return cuda_device;
             }
 
             if let Ok(metal_device) = Device::new_metal(0) {
-                info!("Using Metal device (with Accelerate)");
+                info!("Using Metal GPU");
                 return metal_device;
             }
 
@@ -137,16 +137,16 @@ impl JinaBertEmbedder {
                 not(any(target_os = "macos", target_os = "ios")),
                 any(target_arch = "x86_64", target_arch = "x86")
             ))]
-            info!("Using CPU device (with Intel MKL)");
+            info!("Using CPU (with Intel MKL)");
 
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            info!("Using CPU device (with Accelerate)");
+            info!("Using CPU (with Accelerate)");
 
             #[cfg(all(
                 not(any(target_os = "macos", target_os = "ios")),
                 not(any(target_arch = "x86_64", target_arch = "x86"))
             ))]
-            info!("Using CPU device");
+            info!("Using CPU");
 
             Device::Cpu
         }
@@ -154,9 +154,41 @@ impl JinaBertEmbedder {
         #[cfg(target_arch = "wasm32")]
         {
             // WASM: CPU only (WebGPU not yet supported in Candle)
-            info!("Using CPU device (WASM)");
+            info!("Using CPU (WASM)");
             Device::Cpu
         }
+    }
+
+    /// Selects the data type for model weights.
+    ///
+    /// Currently uses F32 for all devices. The safetensors file stores weights as F16,
+    /// which are converted to F32 at load time.
+    ///
+    /// # Why F32?
+    ///
+    /// Candle's `jina_bert.rs` hardcodes F32 for ALiBi positional bias:
+    /// - `pub const DTYPE: DType = DType::F32;` (line 9)
+    /// - `alibi_bias.to_dtype(DType::F32)?` in `build_alibi_bias()` (line 270)
+    ///
+    /// Loading model weights as F16 causes dtype mismatch errors:
+    /// `dtype mismatch in add, lhs: F16, rhs: F32`
+    ///
+    /// This is an upstream limitation in candle-transformers, not fixable without
+    /// forking. See: https://github.com/huggingface/candle/blob/main/candle-transformers/src/models/jina_bert.rs
+    ///
+    /// # Performance Impact
+    ///
+    /// The F16→F32 conversion happens at load time (once), not inference time.
+    /// GPU acceleration (Metal/CUDA) still provides significant speedups for
+    /// the matrix operations during inference.
+    ///
+    /// # Future Optimization
+    ///
+    /// If candle-transformers adds dtype flexibility, we could use:
+    /// - **Metal GPU**: F16 (faster than BF16 on Apple Silicon)
+    /// - **CUDA GPU**: BF16 (native support on modern NVIDIA GPUs)
+    pub fn select_dtype(_device: &Device) -> DType {
+        DType::F32
     }
 
     /// Creates the BertModel from bytes and configuration.
@@ -211,11 +243,15 @@ impl JinaBertEmbedder {
         ]);
         info!("Safetensors header size: {} bytes", header_size);
 
-        // Load model weights (F16 -> F32 conversion for WASM compatibility)
-        info!("Loading VarBuilder from safetensors (converting to F32)...");
-        let vb = VarBuilder::from_buffered_safetensors(model_bytes, DType::F32, device).map_err(
-            |e| EmbeddingError::ModelLoad(format!("Failed to create VarBuilder: {}", e)),
-        )?;
+        // Select optimal dtype for the device
+        let dtype = Self::select_dtype(device);
+
+        // Load model weights with device-appropriate precision
+        info!("Loading VarBuilder from safetensors...");
+        let vb =
+            VarBuilder::from_buffered_safetensors(model_bytes, dtype, device).map_err(|e| {
+                EmbeddingError::ModelLoad(format!("Failed to create VarBuilder: {}", e))
+            })?;
         info!("VarBuilder created successfully");
 
         info!("Creating BertModel...");

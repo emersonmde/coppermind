@@ -1,6 +1,80 @@
-# Candle Metal Threading Issue
+# Candle Known Issues
 
-This document details a Metal command buffer threading issue discovered while using Candle for embedding inference on macOS.
+This document details issues discovered while using Candle for embedding inference.
+
+---
+
+## Issue: JinaBERT F16 Inference Not Supported
+
+### Summary
+
+Candle's JinaBERT implementation hardcodes F32 for ALiBi positional bias, preventing F16 inference even when model weights are stored as F16.
+
+### Environment
+
+- **Candle version**: 0.9.x
+- **Model**: JinaBERT (jinaai/jina-embeddings-v2-small-en)
+- **Safetensors dtype**: F16
+
+### Error
+
+When loading model weights as F16 and running inference:
+
+```
+dtype mismatch in add, lhs: F16, rhs: F32
+```
+
+### Root Cause
+
+In `candle-transformers/src/models/jina_bert.rs`:
+
+```rust
+// Line 9 - hardcoded dtype constant
+pub const DTYPE: DType = DType::F32;
+
+// Line 270 in build_alibi_bias() - forced F32 conversion
+alibi_bias.to_dtype(DType::F32)?.broadcast_mul(&slopes)
+```
+
+The ALiBi positional bias is always created as F32, regardless of model weight dtype. When model weights are loaded as F16, the `add` operation during forward pass fails due to dtype mismatch.
+
+### Impact
+
+- Cannot use F16 inference on Metal (which is faster than F32 on Apple Silicon)
+- Cannot use BF16 inference on CUDA
+- Must convert F16 weights to F32 at load time
+
+### Workaround
+
+Load model weights as F32 (Candle auto-converts from safetensors F16):
+
+```rust
+let vb = VarBuilder::from_buffered_safetensors(
+    model_bytes,
+    DType::F32,  // Force F32, even though safetensors has F16
+    &device
+)?;
+```
+
+The F16→F32 conversion happens at load time (once), not inference time, so performance impact is minimal. GPU acceleration still works for all matrix operations.
+
+### Potential Fix
+
+The `jina_bert.rs` module would need to:
+1. Accept dtype as a parameter instead of using `DTYPE` constant
+2. Create ALiBi bias in the same dtype as model weights
+3. Or cast the bias to match weights before `add` operation
+
+### References
+
+- Source: https://github.com/huggingface/candle/blob/main/candle-transformers/src/models/jina_bert.rs
+- Related: F16 generally faster than BF16 on Apple Silicon ([Stack Overflow](https://stackoverflow.com/questions/79167526/why-do-bf16-models-have-slower-inference-on-mac-m-series-chips-compared-to-f16-m))
+
+---
+
+## Issue: Metal Command Buffer Threading
+
+This section details a Metal command buffer threading issue discovered while using Candle for embedding inference on macOS.
 
 ## Summary
 

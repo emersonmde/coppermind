@@ -1,0 +1,21 @@
+[package]
+name = "coppermind-cli"
+version = "0.1.0"
+authors = ["Matthew Emerson <emersonmde@protonmail.com>"]
+edition = "2021"
+description = "Command-line interface for Coppermind semantic search"
+
+[[bin]]
+name = "cm"
+path = "src/main.rs"
+
+[dependencies]
+coppermind-core = { path = "../coppermind-core", features = ["candle-metal", "redb-store"] }
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

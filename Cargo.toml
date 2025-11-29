@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/coppermind-core", "crates/coppermind"]
+members = ["crates/coppermind-core", "crates/coppermind", "crates/coppermind-cli"]
 
 # Workspace-wide profile settings
 [profile.wasm-dev]

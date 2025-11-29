@@ -1276,6 +1276,6 @@ scheduler.load_model(ModelId::Embedding("new".into()), config).await?;
 - [Candle Issue #2637](https://github.com/huggingface/candle/issues/2637) - Metal threading bug
 - [Candle PR #3079](https://github.com/huggingface/candle/pull/3079) - Thread-isolated command buffers
 - [Apple Metal Threading Guide](https://developer.apple.com/documentation/metal/mtlcommandqueue)
-- [docs/candle-metal-threading-issue.md](./candle-metal-threading-issue.md) - Detailed crash analysis
+- [docs/candle-known-issues.md](../candle-known-issues.md) - Detailed crash analysis and other Candle issues
 - [tokio::sync::mpsc](https://docs.rs/tokio/latest/tokio/sync/mpsc/) - Channel documentation
 - [std::collections::BinaryHeap](https://doc.rust-lang.org/std/collections/struct.BinaryHeap.html) - Priority queue
