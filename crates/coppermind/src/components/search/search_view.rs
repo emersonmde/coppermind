@@ -92,6 +92,9 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
     // Track the last executed query for "load more" functionality
     let last_query = use_signal(String::new);
 
+    // Track if more results can be loaded (None = unknown, true = more available, false = exhausted)
+    let can_load_more = use_signal(|| None::<bool>);
+
     // Search controls
     let result_count = use_signal(|| DEFAULT_RESULT_COUNT);
     let search_mode = use_signal(SearchMode::default);
@@ -110,6 +113,7 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
         let mut is_loading_more = loading_more;
         let engine = search_engine;
         let mut stored_query = last_query;
+        let mut loadable = can_load_more;
 
         move |mut rx: UnboundedReceiver<SearchMessage>| async move {
             while let Some(msg) = rx.next().await {
@@ -241,6 +245,9 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                                         }
                                         results.set(doc_results);
 
+                                        // Reset load more state for fresh search
+                                        loadable.set(None);
+
                                         // Trigger metrics pane refresh to show updated search stats
                                         trigger_metrics_refresh();
                                     }
@@ -334,8 +341,14 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                                                 "{} {} ({} {})",
                                                 total_docs, doc_word, total_chunks, chunk_word
                                             ));
+
+                                            // If we got fewer results than requested, we've exhausted
+                                            if new_count < load_count {
+                                                loadable.set(Some(false));
+                                            }
                                         } else {
                                             info!("No more results to load");
+                                            loadable.set(Some(false));
                                         }
                                     }
                                     Err(e) => {
@@ -465,18 +478,26 @@ pub fn SearchView(on_navigate: EventHandler<View>) -> Element {
                         }
                     }
 
-                    // Load more button - always show when we have results
-                    // It will be hidden automatically if no more results are available
+                    // Load more section - show button or "no more results" message
                     if has_results {
                         div { class: "cm-results-load-more",
-                            button {
-                                class: "cm-btn cm-btn--secondary",
-                                disabled: searching(),
-                                onclick: handle_load_more,
-                                if loading_more() {
-                                    "Loading..."
-                                } else {
-                                    "Load more results"
+                            if can_load_more() == Some(false) {
+                                // All results loaded - show message
+                                span {
+                                    class: "cm-results-exhausted",
+                                    "No more results"
+                                }
+                            } else {
+                                // More results may be available - show button
+                                button {
+                                    class: "cm-btn cm-btn--secondary",
+                                    disabled: searching(),
+                                    onclick: handle_load_more,
+                                    if loading_more() {
+                                        "Loading..."
+                                    } else {
+                                        "Load more results"
+                                    }
                                 }
                             }
                         }

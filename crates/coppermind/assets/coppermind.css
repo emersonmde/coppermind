@@ -825,6 +825,12 @@ body.cm-body {
     justify-content: center;
 }
 
+.cm-results-exhausted {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    padding: 0.5rem 1rem;
+}
+
 /* Skeleton loading animation */
 @keyframes cm-skeleton-pulse {
     0%, 100% {
