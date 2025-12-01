@@ -78,8 +78,8 @@ Coppermind uses a Cargo workspace with four crates:
   - **vector.rs**: HNSW semantic search using `hnsw` crate (cosine distance)
   - **keyword.rs**: BM25 full-text search using `bm25` crate
   - **fusion.rs**: Reciprocal Rank Fusion (RRF) algorithm for merging rankings
-  - **aggregation.rs**: `aggregate_chunks_by_file()` for file-level result grouping
-  - **types.rs**: `DocId`, `Document`, `SearchResult`, `SearchError`
+  - **document_keyword.rs**: Document-level BM25 keyword search
+  - **types.rs**: `DocumentId`, `ChunkId`, `DocumentSearchResult`, `SearchResult`, `SearchError`
 - **src/storage/**: `DocumentStore` trait and implementations
   - **document_store.rs**: `DocumentStore` trait, `InMemoryDocumentStore`
   - **redb_store.rs**: `RedbDocumentStore` for desktop (feature-gated)

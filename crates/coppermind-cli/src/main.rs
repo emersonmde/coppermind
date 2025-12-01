@@ -8,11 +8,15 @@
 //! cm "rust embeddings" -n 5
 //! cm "query" --json
 //!
+//! # Run as MCP server (for AI assistants)
+//! cm --mcp
+//!
 //! # Show help
 //! cm --help
 //! ```
 
 mod config;
+mod mcp;
 mod output;
 mod search;
 
@@ -46,13 +50,22 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Run as MCP (Model Context Protocol) server for AI assistants
+    #[arg(long)]
+    mcp: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
+    // MCP mode: run as stdio server (no logging to stdout/stderr - it interferes with MCP)
+    if cli.mcp {
+        return mcp::run_mcp_server(cli.data_dir).await;
+    }
+
+    // Initialize logging for CLI mode
     let filter = if cli.verbose {
         EnvFilter::new("info")
     } else {

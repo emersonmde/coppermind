@@ -7,7 +7,7 @@
 //! # Tables
 //!
 //! - `documents`: ChunkId (u64) -> ChunkRecord (JSON) [table name kept for backward compat]
-//! - `embeddings`: ChunkId (u64) -> Vec<f32> (raw bytes, little-endian)
+//! - `embeddings`: ChunkId (u64) -> `Vec<f32>` (raw bytes, little-endian)
 //! - `sources`: source_id (string) -> SourceRecord (JSON)
 //! - `metadata`: key (string) -> value (JSON) - stores tombstones, etc.
 

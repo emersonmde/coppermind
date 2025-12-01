@@ -106,7 +106,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
     /// The assigned ChunkId
     ///
     /// # Note
-    /// This method does not track token counts. Use [`add_chunk_to_document_with_tokens`]
+    /// This method does not track token counts. Use [`Self::add_chunk_to_document_with_tokens`]
     /// if you need to track token counts in the index manifest.
     #[instrument(skip_all, fields(doc_id = document_id.as_u64()))]
     pub async fn add_chunk_to_document(
@@ -121,7 +121,7 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
 
     /// Add a chunk belonging to a document with token count tracking.
     ///
-    /// Like [`add_chunk_to_document`] but also tracks token count in the index manifest
+    /// Like [`Self::add_chunk_to_document`] but also tracks token count in the index manifest
     /// for metrics display and persistence.
     ///
     /// # Arguments

@@ -335,62 +335,6 @@ pub struct SearchTimings {
     pub keyword_count: usize,
 }
 
-/// File-level search result aggregating multiple chunks from the same source.
-///
-/// Used for displaying search results at the file level (like Google shows pages)
-/// rather than individual chunks (paragraphs). This provides a cleaner UX while
-/// preserving access to individual chunk scores and content.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FileSearchResult {
-    /// Source file path or URL (from metadata.source)
-    pub file_path: String,
-    /// File display name (extracted from path)
-    pub file_name: String,
-    /// Best chunk's RRF score (represents file relevance)
-    pub score: f32,
-    /// Best chunk's vector score (if available)
-    pub vector_score: Option<f32>,
-    /// Best chunk's keyword score (if available)
-    pub keyword_score: Option<f32>,
-    /// All chunks from this file, sorted by score (descending)
-    pub chunks: Vec<SearchResult>,
-    /// Timestamp from first indexed chunk
-    pub created_at: u64,
-}
-
-impl From<DocumentSearchResult> for FileSearchResult {
-    /// Convert a DocumentSearchResult to a FileSearchResult for UI compatibility.
-    ///
-    /// Maps document-level metadata to file-level fields used by the UI.
-    fn from(doc: DocumentSearchResult) -> Self {
-        // Extract file name from source_id (last component of path)
-        let file_name = doc
-            .metadata
-            .source_id
-            .rsplit('/')
-            .next()
-            .unwrap_or(&doc.metadata.source_id)
-            .to_string();
-
-        // Use the title as file name if available, otherwise use extracted name
-        let display_name = if doc.metadata.title.is_empty() {
-            file_name.clone()
-        } else {
-            doc.metadata.title.clone()
-        };
-
-        FileSearchResult {
-            file_path: doc.metadata.source_id.clone(),
-            file_name: display_name,
-            score: doc.score,
-            vector_score: doc.best_chunk_score,
-            keyword_score: doc.doc_keyword_score,
-            chunks: doc.chunks,
-            created_at: doc.metadata.created_at,
-        }
-    }
-}
-
 /// Error types for search operations.
 #[derive(Debug, Clone, Error)]
 pub enum SearchError {

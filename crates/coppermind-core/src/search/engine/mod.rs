@@ -943,28 +943,46 @@ impl<S: DocumentStore> HybridSearchEngine<S> {
                 }
             };
 
-            // Get chunk search results for this document
+            // Get ALL chunks for this document (not just matching ones)
+            // This ensures full document content is returned for RAG/LLM consumption
+            let chunk_scores: HashMap<ChunkId, f32> = doc_chunks
+                .get(&doc_id)
+                .map(|scores| scores.iter().copied().collect())
+                .unwrap_or_default();
+
             let mut chunks = Vec::new();
-            if let Some(chunk_scores) = doc_chunks.get(&doc_id) {
-                for (chunk_id, chunk_score) in chunk_scores {
-                    if let Ok(Some(chunk_record)) = self.store.get_chunk(*chunk_id).await {
-                        chunks.push(SearchResult {
-                            chunk_id: *chunk_id,
-                            score: *chunk_score,
-                            vector_score: Some(*chunk_score),
-                            keyword_score: None,
-                            text: chunk_record.text,
-                            metadata: chunk_record.metadata,
-                        });
-                    }
+            for chunk_id in &doc_record.chunk_ids {
+                if let Ok(Some(chunk_record)) = self.store.get_chunk(*chunk_id).await {
+                    // Use matching chunk's score if available, otherwise 0.0
+                    let chunk_score = chunk_scores.get(chunk_id).copied().unwrap_or(0.0);
+                    chunks.push(SearchResult {
+                        chunk_id: *chunk_id,
+                        score: chunk_score,
+                        vector_score: if chunk_scores.contains_key(chunk_id) {
+                            Some(chunk_score)
+                        } else {
+                            None
+                        },
+                        keyword_score: None,
+                        text: chunk_record.text,
+                        metadata: chunk_record.metadata,
+                    });
                 }
             }
 
-            // Sort chunks by score descending
+            // Sort chunks: matching chunks first (by score desc), then non-matching
             chunks.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                // Matching chunks (score > 0) come first
+                let a_matched = a.vector_score.is_some();
+                let b_matched = b.vector_score.is_some();
+                match (a_matched, b_matched) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => b
+                        .score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                }
             });
 
             let best_chunk_score = chunks.first().map(|c| c.score);

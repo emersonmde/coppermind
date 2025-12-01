@@ -5,7 +5,7 @@
 use crate::config;
 use anyhow::{anyhow, Context, Result};
 use coppermind_core::embedding::{Embedder, JinaBertConfig, JinaBertEmbedder, TokenizerHandle};
-use coppermind_core::search::{aggregate_chunks_by_file, FileSearchResult, HybridSearchEngine};
+use coppermind_core::search::{DocumentSearchResult, HybridSearchEngine};
 use coppermind_core::storage::RedbDocumentStore;
 use std::path::PathBuf;
 use tracing::info;
@@ -17,24 +17,23 @@ use tracing::info;
 /// 2. Loads the search engine with existing index data
 /// 3. Loads the embedding model and tokenizer
 /// 4. Embeds the query
-/// 5. Performs hybrid search (vector + keyword)
-/// 6. Aggregates chunks into file-level results
+/// 5. Performs document-level hybrid search (vector + keyword with RRF fusion)
 ///
 /// # Arguments
 ///
 /// * `query` - The search query text
-/// * `limit` - Maximum number of file results to return
+/// * `limit` - Maximum number of document results to return
 /// * `data_dir` - Optional custom data directory
 ///
 /// # Returns
 ///
-/// Vector of file-level search results (chunks aggregated by source),
-/// sorted by relevance. Each file contains its matching chunks.
+/// Vector of document-level search results, sorted by relevance.
+/// Each document contains its matching chunks with full text.
 pub async fn execute_search(
     query: &str,
     limit: usize,
     data_dir: Option<&PathBuf>,
-) -> Result<Vec<FileSearchResult>> {
+) -> Result<Vec<DocumentSearchResult>> {
     // 1. Open existing store
     let db_path = config::database_path(data_dir)?;
 
@@ -57,13 +56,13 @@ pub async fn execute_search(
         .await
         .context("Failed to load search engine")?;
 
-    let doc_count = engine.len();
-    if doc_count == 0 {
+    let chunk_count = engine.len();
+    if chunk_count == 0 {
         return Err(anyhow!(
             "Index is empty. Please index some files using the desktop app first."
         ));
     }
-    info!("Loaded index with {} documents", doc_count);
+    info!("Loaded index with {} chunks", chunk_count);
 
     // 3. Load model and tokenizer
     info!("Loading embedding model...");
@@ -88,22 +87,15 @@ pub async fn execute_search(
         .embed_tokens(tokens)
         .map_err(|e| anyhow!("Failed to embed query: {}", e))?;
 
-    // 5. Search (get more chunks than limit since we'll aggregate by file)
+    // 5. Search using document-level search (ADR-008)
     info!("Searching for: \"{}\"", query);
-    let chunk_limit = limit * 5; // Fetch extra chunks to ensure we have enough files
-    let chunk_results = engine
-        .search(&query_embedding, query, chunk_limit)
+    let results = engine
+        .search_documents(&query_embedding, query, limit)
         .await
         .map_err(|e| anyhow!("Search failed: {}", e))?;
 
-    info!("Found {} chunks", chunk_results.len());
-
-    // 6. Aggregate chunks into file-level results
-    let mut file_results = aggregate_chunks_by_file(chunk_results);
-    file_results.truncate(limit);
-
-    info!("Aggregated into {} file results", file_results.len());
-    Ok(file_results)
+    info!("Found {} document results", results.len());
+    Ok(results)
 }
 
 #[cfg(test)]

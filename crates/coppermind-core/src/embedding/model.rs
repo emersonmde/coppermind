@@ -174,7 +174,7 @@ impl JinaBertEmbedder {
     /// `dtype mismatch in add, lhs: F16, rhs: F32`
     ///
     /// This is an upstream limitation in candle-transformers, not fixable without
-    /// forking. See: https://github.com/huggingface/candle/blob/main/candle-transformers/src/models/jina_bert.rs
+    /// forking. See: <https://github.com/huggingface/candle/blob/main/candle-transformers/src/models/jina_bert.rs>
     ///
     /// # Performance Impact
     ///
