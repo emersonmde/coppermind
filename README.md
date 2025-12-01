@@ -29,6 +29,7 @@ Unlike traditional search engines that rely on heavy server-side infrastructure,
 - **Platform-Specific Features**:
   - **Web**: Background embedding via Web Workers, IndexedDB storage
   - **Desktop**: Web crawler with parallel requests, native GPU acceleration (Metal/CUDA), redb storage
+- **CLI Tool**: Search your indexed documents from the command line with `cm "query"`
 - **Fully Local**: All processing happens on your device - no cloud APIs, works offline
 
 ## Getting Started
@@ -72,7 +73,26 @@ dx bundle -p coppermind --release
 
 # Production build (desktop)
 dx bundle -p coppermind --release --platform desktop
+
+# Install CLI tool
+cargo install --path crates/coppermind-cli
 ```
+
+### CLI Usage
+
+The `cm` CLI lets you search your indexed documents from the terminal:
+
+```bash
+# Search your index
+cm "rust embeddings"
+cm "machine learning" -n 5
+cm "query" --json
+
+# Show help
+cm --help
+```
+
+The CLI shares the same index as the desktop app, so documents indexed in the GUI are searchable from the command line.
 
 ### Running macOS Desktop App
 
@@ -170,6 +190,37 @@ Storage, asset loading, and threading are also platform-specific: IndexedDB/HTTP
 Documents and search indexes are persisted locally using platform-appropriate backends via the `DocumentStore` trait. **Web** uses [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API), the browser-native key-value store with zero bundle cost and excellent performance for structured data. **Desktop/iOS** uses [redb](https://github.com/cberner/redb), a pure Rust B-tree database providing ACID transactions and fast O(log n) lookups without external dependencies.
 
 The storage layer tracks document sources with content hashes (SHA-256), enabling intelligent re-upload handling - unchanged files are skipped, modified files are updated in-place, and removed files are cleaned up. Vector index deletions use tombstone marking with automatic compaction when the ratio exceeds 30%, maintaining index efficiency across document updates.
+
+## Evaluation & Benchmarks
+
+Coppermind includes a scientific evaluation framework for measuring search quality:
+
+```bash
+# Run search quality evaluation
+cargo run -p coppermind-eval --release
+
+# Run with RRF ablation study
+cargo run -p coppermind-eval --release -- --ablation rrf
+```
+
+The evaluation uses standard IR metrics (NDCG, MAP, MRR, Precision, Recall) with statistical significance testing. See [`crates/coppermind-eval/README.md`](crates/coppermind-eval/README.md) for details.
+
+Performance benchmarks for indexing throughput and search latency:
+
+```bash
+# Run all benchmarks
+cargo bench -p coppermind-core
+```
+
+## Project Structure
+
+```
+crates/
+├── coppermind-core/   # Platform-independent search engine library
+├── coppermind/        # Cross-platform GUI application (Dioxus)
+├── coppermind-cli/    # Command-line search tool
+└── coppermind-eval/   # Search quality evaluation framework
+```
 
 ## License
 

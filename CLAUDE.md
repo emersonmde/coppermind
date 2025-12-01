@@ -42,6 +42,17 @@ cargo doc --no-deps                # Build documentation
 cargo audit                        # Security audit (requires cargo-audit)
 ```
 
+### CLI & Evaluation
+```bash
+cargo install --path crates/coppermind-cli  # Install CLI tool
+cm "search query"                            # Search existing index
+cm "query" -n 5 --json                       # JSON output, limit 5
+
+cargo run -p coppermind-eval --release       # Run search quality evaluation
+cargo run -p coppermind-eval --release -- --ablation rrf  # RRF ablation study
+cargo bench -p coppermind-core               # Run performance benchmarks
+```
+
 ### Setup
 ```bash
 ./download-models.sh               # Download JinaBERT model (65MB + 695KB tokenizer)
@@ -58,7 +69,7 @@ cargo install cargo-audit --locked
 
 ### Workspace Structure
 
-Coppermind uses a Cargo workspace with three crates:
+Coppermind uses a Cargo workspace with four crates:
 
 #### `crates/coppermind-core/` - Platform-Independent Core Library
 - **src/lib.rs**: Public API exports
@@ -94,16 +105,28 @@ Coppermind uses a Cargo workspace with three crates:
   - **progress.rs**: `IndexingProgress`, `BatchProgress` for UI feedback
 - **src/error.rs**: Error types (`EmbeddingError`, `ChunkingError`, `GpuError`)
 - **src/config.rs**: Production configuration constants (`MAX_CHUNK_TOKENS=1024`, `EMBEDDING_DIM=512`)
+- **src/metrics.rs**: Performance metrics with rolling averages (indexing, search, scheduler)
 - **src/evaluation/**: IR evaluation framework
   - **mod.rs**: Two-tier evaluation (synthetic for CI, real datasets for quality)
   - **metrics.rs**: NDCG, MAP, MRR, Precision@k, Recall@k, F1@k
   - **stats.rs**: Bootstrap CI, paired t-test, Cohen's d effect size
   - **datasets/**: Synthetic and Natural Questions dataset loaders
+- **benches/**: Performance benchmarks (Criterion)
+  - **indexing.rs**: Indexing throughput, batch processing, concurrent operations
+  - **search.rs**: Search latency, hybrid search rebuild, result quality
+  - **throughput.rs**: End-to-end throughput measurements
 
 #### `crates/coppermind-eval/` - Standalone Evaluation Tool
 - **src/main.rs**: CLI for running evaluation benchmarks
 - **src/datasets/**: Custom dataset definitions (coppermind-eval dataset)
 - Uses `elinor` crate for additional IR metrics validation
+
+#### `crates/coppermind-cli/` - Command-Line Search Tool
+- **src/main.rs**: `cm` CLI entry point with clap argument parsing
+- **src/search.rs**: Search execution against existing index
+- **src/config.rs**: Platform-specific data directory detection
+- **src/output.rs**: Human-readable and JSON output formatting
+- Shares index with desktop app (same redb database location)
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs**: Entry point with platform-specific launch (desktop/mobile/web)
@@ -128,8 +151,6 @@ Coppermind uses a Cargo workspace with three crates:
 - **src/processing/**: File processing pipeline
   - **embedder.rs**: `PlatformEmbedder` (worker on web, direct on desktop)
   - **processor.rs**: High-level `process_file_chunks()` pipeline
-
-- **src/metrics.rs**: Performance metrics with rolling averages
 
 - **src/components/**: Dioxus UI components
   - **mod.rs**: `App` component, context providers
