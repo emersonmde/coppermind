@@ -106,7 +106,13 @@ Hardcoded constants documented in [config-options.md](config-options.md) for fut
 
 - No integration tests for end-to-end search pipeline
 - No UI component tests (Dioxus components)
-- No performance benchmarks
+
+### Evaluation Framework
+
+Implemented in `crates/coppermind-eval/`:
+- **IR Metrics**: NDCG, MAP, MRR, Precision@k, Recall@k, F1@k
+- **Statistical Rigor**: Bootstrap confidence intervals, paired t-tests, Cohen's d effect size
+- **Benchmarks**: Indexing throughput, search latency, hybrid rebuild time (`crates/coppermind-core/benches/`)
 
 ### Platform
 

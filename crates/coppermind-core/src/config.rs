@@ -45,8 +45,9 @@ pub const EMBEDDINGS_NORMALIZED: bool = true;
 /// semantic boundaries (sentences, paragraphs). The actual token count
 /// may be slightly lower due to boundary alignment.
 ///
-/// Source: `crates/coppermind/src/processing/processor.rs` - `embed_text_chunks_auto(..., 512, ...)`
-pub const MAX_CHUNK_TOKENS: usize = 512;
+/// JinaBERT supports up to 2048 tokens, but we use 1024 to leave buffer
+/// for edge cases and reduce memory pressure from ALiBi bias computation.
+pub const MAX_CHUNK_TOKENS: usize = 1024;
 
 /// Approximate characters per token for English text.
 ///
@@ -77,8 +78,8 @@ mod tests {
 
     #[test]
     fn test_target_chunk_chars_calculation() {
-        // 512 tokens * 4 chars/token = 2048 chars
-        assert_eq!(TARGET_CHUNK_CHARS, 2048);
+        // 1024 tokens * 4 chars/token = 4096 chars
+        assert_eq!(TARGET_CHUNK_CHARS, 4096);
     }
 
     #[test]

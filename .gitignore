@@ -27,3 +27,5 @@ debug/
 logs/
 
 trace*
+
+.env

@@ -1,0 +1,20 @@
+{"doc_id":"d1","title":"Rust Programming","text":"Rust is a systems programming language focused on safety, speed, and concurrency. It achieves memory safety without garbage collection through its ownership system and borrow checker."}
+{"doc_id":"d2","title":"Python Overview","text":"Python is a high-level, interpreted programming language known for its readability and versatility. It supports multiple programming paradigms including procedural, object-oriented, and functional programming."}
+{"doc_id":"d3","title":"Machine Learning Basics","text":"Machine learning is a subset of artificial intelligence that enables systems to learn from data. Common algorithms include linear regression, decision trees, and neural networks."}
+{"doc_id":"d4","title":"Neural Networks","text":"Neural networks are computing systems inspired by biological neural networks. They consist of layers of interconnected nodes that process information using connectionist approaches."}
+{"doc_id":"d5","title":"Database Systems","text":"A database is an organized collection of structured data stored electronically. Relational databases use SQL for querying, while NoSQL databases offer flexible schemas."}
+{"doc_id":"d6","title":"Web Development","text":"Web development involves building websites and web applications. Frontend development uses HTML, CSS, and JavaScript, while backend development handles server-side logic."}
+{"doc_id":"d7","title":"Operating Systems","text":"An operating system manages computer hardware and software resources. It provides services like process management, memory management, and file system operations."}
+{"doc_id":"d8","title":"Computer Networks","text":"Computer networks connect devices to share resources and communicate. The internet is a global network using TCP/IP protocols for data transmission."}
+{"doc_id":"d9","title":"Cryptography","text":"Cryptography is the practice of secure communication in the presence of adversaries. It includes symmetric encryption, public-key cryptography, and hash functions."}
+{"doc_id":"d10","title":"Data Structures","text":"Data structures organize and store data efficiently. Common structures include arrays, linked lists, trees, graphs, and hash tables."}
+{"doc_id":"d11","title":"Algorithms","text":"Algorithms are step-by-step procedures for solving problems. Important concepts include time complexity, space complexity, and algorithm design techniques."}
+{"doc_id":"d12","title":"Version Control","text":"Version control systems track changes to files over time. Git is a distributed version control system widely used for source code management."}
+{"doc_id":"d13","title":"Cloud Computing","text":"Cloud computing delivers computing services over the internet. It includes infrastructure as a service, platform as a service, and software as a service."}
+{"doc_id":"d14","title":"Containers","text":"Containers package software with dependencies for consistent deployment. Docker is a popular container platform that uses OS-level virtualization."}
+{"doc_id":"d15","title":"API Design","text":"APIs define how software components interact. REST APIs use HTTP methods and are widely used for web services integration."}
+{"doc_id":"d16","title":"Testing","text":"Software testing verifies that programs work correctly. Types include unit testing, integration testing, and end-to-end testing."}
+{"doc_id":"d17","title":"Concurrency","text":"Concurrent programming handles multiple tasks simultaneously. Challenges include race conditions, deadlocks, and synchronization."}
+{"doc_id":"d18","title":"Memory Management","text":"Memory management allocates and deallocates computer memory. Techniques include stack allocation, heap allocation, and garbage collection."}
+{"doc_id":"d19","title":"Compilers","text":"Compilers translate source code into machine code. Phases include lexical analysis, parsing, semantic analysis, and code generation."}
+{"doc_id":"d20","title":"Search Engines","text":"Search engines index and retrieve information from documents. They use crawlers, indexers, and ranking algorithms to provide relevant results."}

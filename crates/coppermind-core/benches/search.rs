@@ -293,72 +293,6 @@ fn bench_hybrid_search(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark: Hybrid search with varying k values
-fn bench_hybrid_search_varying_k(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    let mut group = c.benchmark_group("hybrid/search_by_k");
-    group.sample_size(50);
-
-    let size = 600;
-    let query_text = "machine learning semantic search";
-    let query_embedding = seeded_embedding(QUERY_EMBEDDING_SEED);
-
-    let mut engine = build_hybrid_engine(&rt, size);
-
-    for k in [1, 5, 10, 20, 50] {
-        group.bench_with_input(BenchmarkId::from_parameter(k), &k, |b, &k| {
-            b.iter(|| {
-                rt.block_on(async {
-                    engine
-                        .search(black_box(&query_embedding), black_box(query_text), k)
-                        .await
-                        .unwrap()
-                })
-            });
-        });
-    }
-    group.finish();
-}
-
-// ============================================================================
-// Cold vs Warm Search Benchmarks
-// ============================================================================
-
-/// Benchmark: First search vs subsequent searches
-///
-/// HNSW has internal caching in the searcher. This tests if there's
-/// a "warm-up" effect we should account for.
-fn bench_hnsw_cold_vs_warm(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hnsw/cold_vs_warm");
-    group.sample_size(100);
-
-    let size = 600;
-    let k = 10;
-    let query = seeded_embedding(QUERY_EMBEDDING_SEED);
-
-    // Cold search: fresh engine each iteration (measures setup + search)
-    group.bench_function("cold", |b| {
-        b.iter_with_setup(
-            || build_vector_engine(size),
-            |mut engine| engine.search(black_box(&query), k).unwrap(),
-        );
-    });
-
-    // Warm search: reuse same engine (searcher state persists)
-    let mut warm_engine = build_vector_engine(size);
-    // Warm up with a few queries
-    for _ in 0..5 {
-        let _ = warm_engine.search(&query, k);
-    }
-
-    group.bench_function("warm", |b| {
-        b.iter(|| warm_engine.search(black_box(&query), k).unwrap());
-    });
-
-    group.finish();
-}
-
 // ============================================================================
 // RRF Fusion Benchmarks
 // ============================================================================
@@ -408,7 +342,7 @@ fn bench_search_modality_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("hybrid/modality_comparison");
     group.sample_size(50);
 
-    let size = 1000;
+    let size = 600; // Reduced from 1000 for CI speed
 
     // Build all three engines with same data
     let mut vector_engine = VectorSearchEngine::new(EMBEDDING_DIM);
@@ -462,191 +396,6 @@ fn bench_search_modality_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Query Distribution Benchmarks
-// ============================================================================
-
-/// Benchmark: Search performance across query complexity.
-///
-/// Tests how query length and specificity affect performance.
-fn bench_query_complexity(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    let mut group = c.benchmark_group("query/complexity");
-    group.sample_size(50);
-
-    let size = 2000;
-
-    // Build hybrid engine
-    let store = Arc::new(InMemoryDocumentStore::new());
-    let mut engine = rt
-        .block_on(HybridSearchEngine::new(Arc::clone(&store), EMBEDDING_DIM))
-        .unwrap();
-
-    for i in 0..size {
-        rt.block_on(engine.add_chunk(create_chunk(i as u64), seeded_embedding(i as u64)))
-            .unwrap();
-    }
-
-    let k = 10;
-
-    // Different query types
-    let queries = [
-        (
-            "single_word",
-            "machine",
-            seeded_embedding(QUERY_EMBEDDING_SEED),
-        ),
-        (
-            "short_phrase",
-            "machine learning",
-            seeded_embedding(QUERY_EMBEDDING_SEED + 1),
-        ),
-        (
-            "medium_phrase",
-            "machine learning neural networks",
-            seeded_embedding(QUERY_EMBEDDING_SEED + 2),
-        ),
-        (
-            "long_query",
-            "machine learning neural networks for semantic search and information retrieval",
-            seeded_embedding(QUERY_EMBEDDING_SEED + 3),
-        ),
-        (
-            "question_format",
-            "how do transformer models work for text understanding",
-            seeded_embedding(QUERY_EMBEDDING_SEED + 4),
-        ),
-    ];
-
-    for (name, text, embedding) in queries {
-        group.bench_function(name, |b| {
-            b.iter(|| {
-                rt.block_on(async {
-                    engine
-                        .search(black_box(&embedding), black_box(text), k)
-                        .await
-                        .unwrap()
-                })
-            });
-        });
-    }
-
-    group.finish();
-}
-
-// ============================================================================
-// Dimension Sensitivity Benchmarks
-// ============================================================================
-
-/// Benchmark: HNSW search performance vs embedding dimension.
-///
-/// Tests how search latency scales with vector dimensionality.
-/// Useful for comparing different embedding models (e.g., 384 vs 512 vs 768 vs 1024).
-fn bench_dimension_sensitivity(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dimension/search_latency");
-    group.sample_size(50);
-
-    let corpus_size = 5000;
-    let k = 10;
-
-    // Test various embedding dimensions
-    let dimensions = [128, 256, 384, 512, 768, 1024];
-
-    for dim in dimensions {
-        // Generate embeddings for this dimension
-        let embeddings: Vec<Vec<f32>> = (0..corpus_size)
-            .map(|seed| {
-                let raw: Vec<f32> = (0..dim)
-                    .map(|i| {
-                        use std::collections::hash_map::DefaultHasher;
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = DefaultHasher::new();
-                        (seed as u64).hash(&mut hasher);
-                        i.hash(&mut hasher);
-                        let h = hasher.finish();
-                        ((h as f32 / u64::MAX as f32) * 2.0) - 1.0
-                    })
-                    .collect();
-                let norm: f32 = raw.iter().map(|x| x * x).sum::<f32>().sqrt();
-                raw.into_iter().map(|x| x / norm).collect()
-            })
-            .collect();
-
-        // Build index
-        let mut engine = VectorSearchEngine::new(dim);
-        for (i, embedding) in embeddings.iter().enumerate() {
-            let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
-        }
-
-        // Query embedding
-        let query: Vec<f32> = {
-            let raw: Vec<f32> = (0..dim)
-                .map(|i| {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    QUERY_EMBEDDING_SEED.hash(&mut hasher);
-                    i.hash(&mut hasher);
-                    let h = hasher.finish();
-                    ((h as f32 / u64::MAX as f32) * 2.0) - 1.0
-                })
-                .collect();
-            let norm: f32 = raw.iter().map(|x| x * x).sum::<f32>().sqrt();
-            raw.into_iter().map(|x| x / norm).collect()
-        };
-
-        group.bench_with_input(BenchmarkId::from_parameter(dim), &dim, |b, _| {
-            b.iter(|| engine.search(black_box(&query), k).unwrap());
-        });
-    }
-
-    group.finish();
-}
-
-/// Benchmark: HNSW index build time vs embedding dimension.
-fn bench_dimension_build_time(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dimension/build_time");
-    group.sample_size(10);
-
-    let corpus_size = 2000;
-
-    let dimensions = [128, 256, 384, 512, 768, 1024];
-
-    for dim in dimensions {
-        // Pre-generate embeddings
-        let embeddings: Vec<Vec<f32>> = (0..corpus_size)
-            .map(|seed| {
-                let raw: Vec<f32> = (0..dim)
-                    .map(|i| {
-                        use std::collections::hash_map::DefaultHasher;
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = DefaultHasher::new();
-                        (seed as u64).hash(&mut hasher);
-                        i.hash(&mut hasher);
-                        let h = hasher.finish();
-                        ((h as f32 / u64::MAX as f32) * 2.0) - 1.0
-                    })
-                    .collect();
-                let norm: f32 = raw.iter().map(|x| x * x).sum::<f32>().sqrt();
-                raw.into_iter().map(|x| x / norm).collect()
-            })
-            .collect();
-
-        group.bench_with_input(BenchmarkId::from_parameter(dim), &dim, |b, &dim| {
-            b.iter(|| {
-                let mut engine = VectorSearchEngine::new(dim);
-                for (i, embedding) in embeddings.iter().enumerate() {
-                    let _ = engine.add_chunk(ChunkId::from_u64(i as u64), embedding.clone());
-                }
-                engine
-            });
-        });
-    }
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_hnsw_search_varying_k,
@@ -654,13 +403,8 @@ criterion_group!(
     bench_bm25_search_varying_size,
     bench_bm25_search_varying_query,
     bench_hybrid_search,
-    bench_hybrid_search_varying_k,
-    bench_hnsw_cold_vs_warm,
     bench_rrf_fusion,
     bench_search_modality_comparison,
-    bench_query_complexity,
-    bench_dimension_sensitivity,
-    bench_dimension_build_time,
 );
 
 criterion_main!(benches);

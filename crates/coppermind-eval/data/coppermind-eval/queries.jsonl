@@ -1,0 +1,1160 @@
+{"_id":"q0_short_keyword","text":"photosynthesis process"}
+{"_id":"q1_short_keyword","text":"plant energy conversion"}
+{"_id":"q2_phrase","text":"how plants convert sunlight"}
+{"_id":"q3_question","text":"what is photosynthesis?"}
+{"_id":"q4_question","text":"how do plants produce oxygen?"}
+{"_id":"q5_short_keyword","text":"DNA structure"}
+{"_id":"q6_short_keyword","text":"genetic material"}
+{"_id":"q7_phrase","text":"double helix polymer"}
+{"_id":"q8_question","text":"what is DNA?"}
+{"_id":"q9_question","text":"what are the four DNA bases?"}
+{"_id":"q10_short_keyword","text":"atom structure"}
+{"_id":"q11_short_keyword","text":"chemical elements"}
+{"_id":"q12_phrase","text":"basic building blocks matter"}
+{"_id":"q13_question","text":"what are atoms made of?"}
+{"_id":"q14_question","text":"how small are atoms compared to human hair?"}
+{"_id":"q15_short_keyword","text":"electron subatomic particle"}
+{"_id":"q16_short_keyword","text":"negative charge elementary"}
+{"_id":"q17_phrase","text":"electron atomic orbitals nucleus"}
+{"_id":"q18_question","text":"what is an electron?"}
+{"_id":"q19_question","text":"how do electrons form chemical bonds?"}
+{"_id":"q20_short_keyword","text":"proton subatomic particle"}
+{"_id":"q21_short_keyword","text":"atomic nucleus charge"}
+{"_id":"q22_phrase","text":"positive electric charge particle"}
+{"_id":"q23_question","text":"what is a proton?"}
+{"_id":"q24_question","text":"who discovered the proton?"}
+{"_id":"q25_short_keyword","text":"neutron subatomic particle"}
+{"_id":"q26_short_keyword","text":"James Chadwick discovery"}
+{"_id":"q27_phrase","text":"neutron mass no charge"}
+{"_id":"q28_question","text":"what is a neutron?"}
+{"_id":"q29_question","text":"who discovered the neutron in 1932?"}
+{"_id":"q30_short_keyword","text":"visible light"}
+{"_id":"q31_short_keyword","text":"electromagnetic radiation"}
+{"_id":"q32_phrase","text":"what is visible light"}
+{"_id":"q33_question","text":"What is light and how does it work?"}
+{"_id":"q34_question","text":"What wavelength range defines visible light?"}
+{"_id":"q35_short_keyword","text":"sound waves physics"}
+{"_id":"q36_short_keyword","text":"acoustic vibration"}
+{"_id":"q37_phrase","text":"what is sound definition"}
+{"_id":"q38_question","text":"what is sound in physics?"}
+{"_id":"q39_question","text":"what frequencies can humans hear?"}
+{"_id":"q40_short_keyword","text":"gravity physics"}
+{"_id":"q41_short_keyword","text":"gravitational force"}
+{"_id":"q42_phrase","text":"what is gravity"}
+{"_id":"q43_question","text":"What is gravity and how does it work?"}
+{"_id":"q44_question","text":"How does Einstein's theory describe gravity?"}
+{"_id":"q45_short_keyword","text":"magnetism physics"}
+{"_id":"q46_short_keyword","text":"magnetic field"}
+{"_id":"q47_phrase","text":"what is magnetism"}
+{"_id":"q48_question","text":"How do magnets attract and repel objects?"}
+{"_id":"q49_question","text":"What materials are ferromagnetic?"}
+{"_id":"q50_short_keyword","text":"electricity physics"}
+{"_id":"q51_short_keyword","text":"electric charge"}
+{"_id":"q52_phrase","text":"what is electricity phenomena"}
+{"_id":"q53_question","text":"What is electricity and how does it work?"}
+{"_id":"q54_question","text":"How are electricity and magnetism related?"}
+{"_id":"q55_short_keyword","text":"energy physics"}
+{"_id":"q56_short_keyword","text":"kinetic potential energy"}
+{"_id":"q57_phrase","text":"law of conservation energy"}
+{"_id":"q58_question","text":"what is energy in physics?"}
+{"_id":"q59_question","text":"what are the different forms of energy?"}
+{"_id":"q60_short_keyword","text":"mass physics"}
+{"_id":"q61_short_keyword","text":"inertia property"}
+{"_id":"q62_phrase","text":"what is mass matter"}
+{"_id":"q63_question","text":"what is mass in physics?"}
+{"_id":"q64_question","text":"why is mass different from weight?"}
+{"_id":"q65_short_keyword","text":"velocity physics"}
+{"_id":"q66_short_keyword","text":"speed direction"}
+{"_id":"q67_phrase","text":"velocity vector quantity definition"}
+{"_id":"q68_question","text":"what is velocity in physics?"}
+{"_id":"q69_question","text":"what is the difference between velocity and speed?"}
+{"_id":"q70_short_keyword","text":"acceleration physics"}
+{"_id":"q71_short_keyword","text":"velocity change rate"}
+{"_id":"q72_phrase","text":"rate of change velocity"}
+{"_id":"q73_question","text":"what is acceleration in physics?"}
+{"_id":"q74_question","text":"what is the SI unit for acceleration?"}
+{"_id":"q75_short_keyword","text":"force physics"}
+{"_id":"q76_short_keyword","text":"newton laws"}
+{"_id":"q77_phrase","text":"what is force in physics"}
+{"_id":"q78_question","text":"What is a force in physics?"}
+{"_id":"q79_question","text":"What is the SI unit of force?"}
+{"_id":"q80_short_keyword","text":"momentum physics"}
+{"_id":"q81_short_keyword","text":"linear momentum"}
+{"_id":"q82_phrase","text":"momentum mass times velocity"}
+{"_id":"q83_question","text":"what is momentum in physics?"}
+{"_id":"q84_question","text":"what units measure momentum?"}
+{"_id":"q85_short_keyword","text":"wave physics"}
+{"_id":"q86_short_keyword","text":"electromagnetic waves"}
+{"_id":"q87_phrase","text":"types of waves physics"}
+{"_id":"q88_question","text":"what is a wave in physics?"}
+{"_id":"q89_question","text":"what is the difference between mechanical and electromagnetic waves?"}
+{"_id":"q90_short_keyword","text":"frequency definition"}
+{"_id":"q91_short_keyword","text":"hertz unit"}
+{"_id":"q92_phrase","text":"frequency period relationship formula"}
+{"_id":"q93_question","text":"what is frequency in physics?"}
+{"_id":"q94_question","text":"how is frequency related to period?"}
+{"_id":"q95_short_keyword","text":"wavelength physics"}
+{"_id":"q96_short_keyword","text":"wave frequency"}
+{"_id":"q97_phrase","text":"distance between wave crests"}
+{"_id":"q98_question","text":"what is wavelength in physics?"}
+{"_id":"q99_question","text":"how does wavelength relate to frequency?"}
+{"_id":"q100_short_keyword","text":"sun star"}
+{"_id":"q101_short_keyword","text":"solar system center"}
+{"_id":"q102_phrase","text":"sun nuclear fusion reactions"}
+{"_id":"q103_question","text":"what is the sun made of?"}
+{"_id":"q104_question","text":"how far is the sun from earth?"}
+{"_id":"q105_short_keyword","text":"Earth moon"}
+{"_id":"q106_short_keyword","text":"lunar satellite"}
+{"_id":"q107_phrase","text":"natural satellite of Earth"}
+{"_id":"q108_question","text":"What is the Moon?"}
+{"_id":"q109_question","text":"How far is the Moon from Earth?"}
+{"_id":"q110_short_keyword","text":"planet Earth"}
+{"_id":"q111_short_keyword","text":"third planet"}
+{"_id":"q112_phrase","text":"Earth third planet from Sun"}
+{"_id":"q113_question","text":"What planet is third from the Sun?"}
+{"_id":"q114_question","text":"How much of Earth is covered by water?"}
+{"_id":"q115_short_keyword","text":"Mars red planet"}
+{"_id":"q116_short_keyword","text":"fourth planet sun"}
+{"_id":"q117_phrase","text":"Mars atmosphere carbon dioxide"}
+{"_id":"q118_question","text":"What is the Red Planet?"}
+{"_id":"q119_question","text":"How tall is Olympus Mons on Mars?"}
+{"_id":"q120_short_keyword","text":"Jupiter planet"}
+{"_id":"q121_short_keyword","text":"gas giant"}
+{"_id":"q122_phrase","text":"largest planet solar system"}
+{"_id":"q123_question","text":"What is Jupiter?"}
+{"_id":"q124_question","text":"What is the Great Red Spot on Jupiter?"}
+{"_id":"q125_short_keyword","text":"Saturn planet"}
+{"_id":"q126_short_keyword","text":"Saturn rings"}
+{"_id":"q127_phrase","text":"sixth planet from sun"}
+{"_id":"q128_question","text":"What is Saturn?"}
+{"_id":"q129_question","text":"How many moons does Saturn have?"}
+{"_id":"q130_short_keyword","text":"Venus planet"}
+{"_id":"q131_short_keyword","text":"morning star"}
+{"_id":"q132_phrase","text":"second planet from sun"}
+{"_id":"q133_question","text":"What is Venus planet like?"}
+{"_id":"q134_question","text":"Why is Venus called Earth's twin?"}
+{"_id":"q135_short_keyword","text":"Mercury planet"}
+{"_id":"q136_short_keyword","text":"closest planet sun"}
+{"_id":"q137_phrase","text":"smallest planet solar system"}
+{"_id":"q138_question","text":"What is the first planet from the Sun?"}
+{"_id":"q139_question","text":"How long is a day on Mercury?"}
+{"_id":"q140_short_keyword","text":"Neptune planet"}
+{"_id":"q141_short_keyword","text":"eighth planet"}
+{"_id":"q142_phrase","text":"farthest planet from sun"}
+{"_id":"q143_question","text":"What is Neptune the planet?"}
+{"_id":"q144_question","text":"How was Neptune discovered mathematically?"}
+{"_id":"q145_short_keyword","text":"Uranus planet"}
+{"_id":"q146_short_keyword","text":"ice giant"}
+{"_id":"q147_phrase","text":"seventh planet from sun"}
+{"_id":"q148_question","text":"What is Uranus made of?"}
+{"_id":"q149_question","text":"Why does Uranus have continuous darkness?"}
+{"_id":"q150_short_keyword","text":"Pluto dwarf planet"}
+{"_id":"q151_short_keyword","text":"Kuiper belt objects"}
+{"_id":"q152_phrase","text":"Pluto status changed planet"}
+{"_id":"q153_question","text":"What is Pluto classified as now?"}
+{"_id":"q154_question","text":"How many moons does Pluto have?"}
+{"_id":"q155_short_keyword","text":"asteroid definition"}
+{"_id":"q156_short_keyword","text":"minor planets"}
+{"_id":"q157_phrase","text":"asteroid belt between Mars Jupiter"}
+{"_id":"q158_question","text":"what is an asteroid?"}
+{"_id":"q159_question","text":"how are asteroids classified by type?"}
+{"_id":"q160_short_keyword","text":"comet definition"}
+{"_id":"q161_short_keyword","text":"solar system bodies"}
+{"_id":"q162_phrase","text":"icy objects with tails"}
+{"_id":"q163_question","text":"what is a comet?"}
+{"_id":"q164_question","text":"how do comets form their tails?"}
+{"_id":"q165_short_keyword","text":"galaxy definition"}
+{"_id":"q166_short_keyword","text":"stellar systems"}
+{"_id":"q167_phrase","text":"types of galaxies spiral elliptical"}
+{"_id":"q168_question","text":"what is a galaxy?"}
+{"_id":"q169_question","text":"how many galaxies are in the universe?"}
+{"_id":"q170_short_keyword","text":"space nebula"}
+{"_id":"q171_short_keyword","text":"star formation"}
+{"_id":"q172_phrase","text":"interstellar gas and dust"}
+{"_id":"q173_question","text":"what is a nebula?"}
+{"_id":"q174_question","text":"how dense are nebulae compared to Earth's atmosphere?"}
+{"_id":"q175_short_keyword","text":"supernova explosion"}
+{"_id":"q176_short_keyword","text":"stellar death"}
+{"_id":"q177_phrase","text":"massive star explosion"}
+{"_id":"q178_question","text":"what is a supernova?"}
+{"_id":"q179_question","text":"when was the last supernova in Milky Way?"}
+{"_id":"q180_short_keyword","text":"star constellations"}
+{"_id":"q181_short_keyword","text":"zodiac signs"}
+{"_id":"q182_phrase","text":"patterns of stars sky"}
+{"_id":"q183_question","text":"What are constellations in astronomy?"}
+{"_id":"q184_question","text":"How many zodiac constellations are there?"}
+{"_id":"q185_short_keyword","text":"telescope definition"}
+{"_id":"q186_short_keyword","text":"optical instruments"}
+{"_id":"q187_phrase","text":"how telescopes work"}
+{"_id":"q188_question","text":"what is a telescope used for?"}
+{"_id":"q189_question","text":"who invented the first telescope?"}
+{"_id":"q190_short_keyword","text":"oxygen element"}
+{"_id":"q191_short_keyword","text":"chemical symbol O"}
+{"_id":"q192_phrase","text":"oxygen periodic table chalcogen"}
+{"_id":"q193_question","text":"what is oxygen?"}
+{"_id":"q194_question","text":"why do organisms need oxygen for cellular respiration?"}
+{"_id":"q195_short_keyword","text":"hydrogen element"}
+{"_id":"q196_short_keyword","text":"chemical symbol H"}
+{"_id":"q197_phrase","text":"lightest element universe"}
+{"_id":"q198_question","text":"what is hydrogen?"}
+{"_id":"q199_question","text":"who discovered hydrogen gas?"}
+{"_id":"q200_short_keyword","text":"carbon element"}
+{"_id":"q201_short_keyword","text":"atomic number 6"}
+{"_id":"q202_phrase","text":"carbon chemical element properties"}
+{"_id":"q203_question","text":"what is carbon?"}
+{"_id":"q204_question","text":"what are carbon allotropes like diamond and graphite?"}
+{"_id":"q205_short_keyword","text":"nitrogen element"}
+{"_id":"q206_short_keyword","text":"atomic number 7"}
+{"_id":"q207_phrase","text":"nitrogen chemical element symbol"}
+{"_id":"q208_question","text":"what is nitrogen?"}
+{"_id":"q209_question","text":"who discovered nitrogen first?"}
+{"_id":"q210_short_keyword","text":"iron element"}
+{"_id":"q211_short_keyword","text":"Fe atomic number"}
+{"_id":"q212_phrase","text":"iron chemical element properties"}
+{"_id":"q213_question","text":"what is iron?"}
+{"_id":"q214_question","text":"why does iron rust?"}
+{"_id":"q215_short_keyword","text":"gold element"}
+{"_id":"q216_short_keyword","text":"chemical symbol Au"}
+{"_id":"q217_phrase","text":"gold atomic number 79"}
+{"_id":"q218_question","text":"What is gold made of?"}
+{"_id":"q219_question","text":"Why does gold dissolve in aqua regia?"}
+{"_id":"q220_short_keyword","text":"silver element"}
+{"_id":"q221_short_keyword","text":"precious metal"}
+{"_id":"q222_phrase","text":"silver atomic number 47"}
+{"_id":"q223_question","text":"what is silver used for?"}
+{"_id":"q224_question","text":"why does silver have symbol Ag?"}
+{"_id":"q225_short_keyword","text":"copper element"}
+{"_id":"q226_short_keyword","text":"Cu metal"}
+{"_id":"q227_phrase","text":"copper atomic number 29"}
+{"_id":"q228_question","text":"what is copper used for?"}
+{"_id":"q229_question","text":"why does copper turn green?"}
+{"_id":"q230_short_keyword","text":"acid definition"}
+{"_id":"q231_short_keyword","text":"Brønsted Lowry"}
+{"_id":"q232_phrase","text":"what is an acid"}
+{"_id":"q233_question","text":"What is the definition of an acid?"}
+{"_id":"q234_question","text":"What is the difference between Brønsted-Lowry and Lewis acids?"}
+{"_id":"q235_short_keyword","text":"chemistry bases"}
+{"_id":"q236_short_keyword","text":"arrhenius bronsted lewis"}
+{"_id":"q237_phrase","text":"what are bases chemistry"}
+{"_id":"q238_question","text":"what is a base in chemistry?"}
+{"_id":"q239_question","text":"what are the three definitions of bases?"}
+{"_id":"q240_short_keyword","text":"sodium chloride"}
+{"_id":"q241_short_keyword","text":"table salt"}
+{"_id":"q242_phrase","text":"salt food preservation methods"}
+{"_id":"q243_question","text":"what is salt made of?"}
+{"_id":"q244_question","text":"how was salt used in ancient times?"}
+{"_id":"q245_short_keyword","text":"water H2O"}
+{"_id":"q246_short_keyword","text":"universal solvent"}
+{"_id":"q247_phrase","text":"water chemical formula properties"}
+{"_id":"q248_question","text":"what is water made of?"}
+{"_id":"q249_question","text":"why is water called the universal solvent?"}
+{"_id":"q250_short_keyword","text":"what is molecule"}
+{"_id":"q251_short_keyword","text":"chemical bonds atoms"}
+{"_id":"q252_phrase","text":"group of atoms held together"}
+{"_id":"q253_question","text":"What is a molecule in chemistry?"}
+{"_id":"q254_question","text":"What is the difference between homonuclear and heteronuclear molecules?"}
+{"_id":"q255_short_keyword","text":"ion definition"}
+{"_id":"q256_short_keyword","text":"cation anion"}
+{"_id":"q257_phrase","text":"atom with electrical charge"}
+{"_id":"q258_question","text":"what is an ion?"}
+{"_id":"q259_question","text":"what is the difference between cations and anions?"}
+{"_id":"q260_short_keyword","text":"isotope definition"}
+{"_id":"q261_short_keyword","text":"atomic mass"}
+{"_id":"q262_phrase","text":"same element different neutrons"}
+{"_id":"q263_question","text":"what are isotopes in chemistry?"}
+{"_id":"q264_question","text":"why do carbon-12 and carbon-14 have different mass numbers?"}
+{"_id":"q265_short_keyword","text":"cell biology"}
+{"_id":"q266_short_keyword","text":"prokaryote eukaryote"}
+{"_id":"q267_phrase","text":"basic unit of life"}
+{"_id":"q268_question","text":"what is a biological cell?"}
+{"_id":"q269_question","text":"what is the difference between prokaryotic and eukaryotic cells?"}
+{"_id":"q270_short_keyword","text":"virus definition"}
+{"_id":"q271_short_keyword","text":"viral infection"}
+{"_id":"q272_phrase","text":"what is a virus"}
+{"_id":"q273_question","text":"What are viruses and how do they work?"}
+{"_id":"q274_question","text":"How small are viruses compared to bacteria?"}
+{"_id":"q275_short_keyword","text":"bacteria microorganisms"}
+{"_id":"q276_short_keyword","text":"prokaryotic cells"}
+{"_id":"q277_phrase","text":"single cell living organisms"}
+{"_id":"q278_question","text":"what are bacteria and how do they work?"}
+{"_id":"q279_question","text":"how do bacteria help with nutrient cycling?"}
+{"_id":"q280_short_keyword","text":"fungus definition"}
+{"_id":"q281_short_keyword","text":"fungi kingdom"}
+{"_id":"q282_phrase","text":"what are fungi organisms"}
+{"_id":"q283_question","text":"What is a fungus?"}
+{"_id":"q284_question","text":"How do fungi differ from plants?"}
+{"_id":"q285_short_keyword","text":"plant kingdom"}
+{"_id":"q286_short_keyword","text":"photosynthesis chlorophyll"}
+{"_id":"q287_phrase","text":"eukaryotes that comprise plantae"}
+{"_id":"q288_question","text":"what are plants and how do they get energy?"}
+{"_id":"q289_question","text":"how many known species of plants exist?"}
+{"_id":"q290_short_keyword","text":"animal kingdom"}
+{"_id":"q291_short_keyword","text":"multicellular organisms"}
+{"_id":"q292_phrase","text":"biological kingdom Animalia"}
+{"_id":"q293_question","text":"what are animals in biology?"}
+{"_id":"q294_question","text":"how many animal species exist on Earth?"}
+{"_id":"q295_short_keyword","text":"mammal definition"}
+{"_id":"q296_short_keyword","text":"mammary glands"}
+{"_id":"q297_phrase","text":"what are mammal characteristics"}
+{"_id":"q298_question","text":"What is a mammal?"}
+{"_id":"q299_question","text":"How many species of mammals exist?"}
+{"_id":"q300_short_keyword","text":"bird species"}
+{"_id":"q301_short_keyword","text":"avian characteristics"}
+{"_id":"q302_phrase","text":"warm blooded feathered animals"}
+{"_id":"q303_question","text":"what are the main characteristics of birds?"}
+{"_id":"q304_question","text":"how are birds related to dinosaurs?"}
+{"_id":"q305_short_keyword","text":"fish definition"}
+{"_id":"q306_short_keyword","text":"aquatic vertebrates"}
+{"_id":"q307_phrase","text":"what are fish animals"}
+{"_id":"q308_question","text":"What is a fish?"}
+{"_id":"q309_question","text":"How many species of fish are there?"}
+{"_id":"q310_short_keyword","text":"reptiles definition"}
+{"_id":"q311_short_keyword","text":"herpetology study"}
+{"_id":"q312_phrase","text":"four orders of reptiles"}
+{"_id":"q313_question","text":"what are reptiles and their characteristics?"}
+{"_id":"q314_question","text":"how many living species of reptiles exist?"}
+{"_id":"q315_short_keyword","text":"insect facts"}
+{"_id":"q316_short_keyword","text":"arthropod hexapod"}
+{"_id":"q317_phrase","text":"largest group arthropod phylum"}
+{"_id":"q318_question","text":"what are insects?"}
+{"_id":"q319_question","text":"how do insects breathe oxygen?"}
+{"_id":"q320_short_keyword","text":"spider facts"}
+{"_id":"q321_short_keyword","text":"arachnid arthropods"}
+{"_id":"q322_phrase","text":"eight legged spiders"}
+{"_id":"q323_question","text":"what are spiders and their characteristics?"}
+{"_id":"q324_question","text":"how many spider species exist worldwide?"}
+{"_id":"q325_short_keyword","text":"tree definition"}
+{"_id":"q326_short_keyword","text":"plant botany"}
+{"_id":"q327_phrase","text":"what is a tree"}
+{"_id":"q328_question","text":"What defines a tree in botany?"}
+{"_id":"q329_question","text":"How long have trees been evolving?"}
+{"_id":"q330_short_keyword","text":"flower parts"}
+{"_id":"q331_short_keyword","text":"plant reproduction"}
+{"_id":"q332_phrase","text":"structure of flowering plants"}
+{"_id":"q333_question","text":"what are flowers and how do they work?"}
+{"_id":"q334_question","text":"what is the difference between sepals and petals?"}
+{"_id":"q335_short_keyword","text":"plant seeds"}
+{"_id":"q336_short_keyword","text":"seed botany"}
+{"_id":"q337_phrase","text":"what is a seed"}
+{"_id":"q338_question","text":"What is a seed in botany?"}
+{"_id":"q339_question","text":"How do seeds form in plants?"}
+{"_id":"q340_short_keyword","text":"protein structure"}
+{"_id":"q341_short_keyword","text":"amino acids"}
+{"_id":"q342_phrase","text":"protein folding 3D structure"}
+{"_id":"q343_question","text":"what are proteins made of?"}
+{"_id":"q344_question","text":"how do amino acids form proteins?"}
+{"_id":"q345_short_keyword","text":"biological catalysts"}
+{"_id":"q346_short_keyword","text":"enzyme function"}
+{"_id":"q347_phrase","text":"what are biological enzymes"}
+{"_id":"q348_question","text":"what is an enzyme?"}
+{"_id":"q349_question","text":"how do enzymes lower activation energy?"}
+{"_id":"q350_short_keyword","text":"chromosome DNA"}
+{"_id":"q351_short_keyword","text":"genetic material"}
+{"_id":"q352_phrase","text":"DNA packaging in cells"}
+{"_id":"q353_question","text":"what is a chromosome?"}
+{"_id":"q354_question","text":"when are chromosomes visible under microscope?"}
+{"_id":"q355_short_keyword","text":"gene definition"}
+{"_id":"q356_short_keyword","text":"DNA heredity"}
+{"_id":"q357_phrase","text":"basic unit of heredity"}
+{"_id":"q358_question","text":"what is a gene in biology?"}
+{"_id":"q359_question","text":"what is the difference between genotype and phenotype?"}
+{"_id":"q360_short_keyword","text":"DNA mutation"}
+{"_id":"q361_short_keyword","text":"genetic alteration"}
+{"_id":"q362_phrase","text":"changes in nucleic acid sequence"}
+{"_id":"q363_question","text":"what is a mutation in biology?"}
+{"_id":"q364_question","text":"how do mutations affect gene function?"}
+{"_id":"q365_short_keyword","text":"human heart"}
+{"_id":"q366_short_keyword","text":"heart anatomy"}
+{"_id":"q367_phrase","text":"heart pumps blood vessels"}
+{"_id":"q368_question","text":"what is the heart?"}
+{"_id":"q369_question","text":"how many chambers does the heart have?"}
+{"_id":"q370_short_keyword","text":"brain anatomy"}
+{"_id":"q371_short_keyword","text":"nervous system"}
+{"_id":"q372_phrase","text":"brain central nervous system"}
+{"_id":"q373_question","text":"what is the brain?"}
+{"_id":"q374_question","text":"how many neurons in cerebral cortex?"}
+{"_id":"q375_short_keyword","text":"lung anatomy"}
+{"_id":"q376_short_keyword","text":"respiratory system"}
+{"_id":"q377_phrase","text":"how lungs work breathing"}
+{"_id":"q378_question","text":"what do lungs do in the body?"}
+{"_id":"q379_question","text":"why is the right lung bigger than the left?"}
+{"_id":"q380_short_keyword","text":"liver function"}
+{"_id":"q381_short_keyword","text":"hepatic anatomy"}
+{"_id":"q382_phrase","text":"liver produces bile digestion"}
+{"_id":"q383_question","text":"what does the liver do?"}
+{"_id":"q384_question","text":"where is the liver located in humans?"}
+{"_id":"q385_short_keyword","text":"kidney function"}
+{"_id":"q386_short_keyword","text":"renal anatomy"}
+{"_id":"q387_phrase","text":"blood filtering organs humans"}
+{"_id":"q388_question","text":"what do kidneys do?"}
+{"_id":"q389_question","text":"how many nephrons in kidney?"}
+{"_id":"q390_short_keyword","text":"stomach anatomy"}
+{"_id":"q391_short_keyword","text":"gastric digestive"}
+{"_id":"q392_phrase","text":"stomach digestive system organ"}
+{"_id":"q393_question","text":"what is the stomach?"}
+{"_id":"q394_question","text":"where is the stomach located?"}
+{"_id":"q395_short_keyword","text":"bone anatomy"}
+{"_id":"q396_short_keyword","text":"skeletal system"}
+{"_id":"q397_phrase","text":"what are bones made of"}
+{"_id":"q398_question","text":"What is the function of bones?"}
+{"_id":"q399_question","text":"How many bones are in the human body?"}
+{"_id":"q400_short_keyword","text":"muscle tissue"}
+{"_id":"q401_short_keyword","text":"skeletal cardiac smooth"}
+{"_id":"q402_phrase","text":"types of muscle tissue"}
+{"_id":"q403_question","text":"what are the three types of muscle?"}
+{"_id":"q404_question","text":"how do actin and myosin cause movement?"}
+{"_id":"q405_short_keyword","text":"human blood"}
+{"_id":"q406_short_keyword","text":"blood cells"}
+{"_id":"q407_phrase","text":"what is blood made of"}
+{"_id":"q408_question","text":"What is blood and what does it do?"}
+{"_id":"q409_question","text":"Why is blood red in color?"}
+{"_id":"q410_short_keyword","text":"human skin"}
+{"_id":"q411_short_keyword","text":"skin functions"}
+{"_id":"q412_phrase","text":"skin protection regulation sensation"}
+{"_id":"q413_question","text":"what is skin and what does it do?"}
+{"_id":"q414_question","text":"how does skin regulate body temperature?"}
+{"_id":"q415_short_keyword","text":"human eye"}
+{"_id":"q416_short_keyword","text":"vision organ"}
+{"_id":"q417_phrase","text":"how eyes detect light"}
+{"_id":"q418_question","text":"what is an eye?"}
+{"_id":"q419_question","text":"how do compound eyes work?"}
+{"_id":"q420_short_keyword","text":"human ear anatomy"}
+{"_id":"q421_short_keyword","text":"hearing organ"}
+{"_id":"q422_phrase","text":"parts of the ear"}
+{"_id":"q423_question","text":"what are the three parts of the ear?"}
+{"_id":"q424_question","text":"how does the inner ear control balance?"}
+{"_id":"q425_short_keyword","text":"nose anatomy"}
+{"_id":"q426_short_keyword","text":"nasal cavity"}
+{"_id":"q427_phrase","text":"respiratory structure in vertebrates"}
+{"_id":"q428_question","text":"what is the function of the nose?"}
+{"_id":"q429_question","text":"how do nostrils filter air?"}
+{"_id":"q430_short_keyword","text":"tooth structure"}
+{"_id":"q431_short_keyword","text":"teeth anatomy"}
+{"_id":"q432_phrase","text":"hard calcified structure jaws"}
+{"_id":"q433_question","text":"what are teeth made of?"}
+{"_id":"q434_question","text":"how do sharks replace their teeth?"}
+{"_id":"q435_short_keyword","text":"hair structure"}
+{"_id":"q436_short_keyword","text":"keratin protein"}
+{"_id":"q437_phrase","text":"hair follicle dermis growth"}
+{"_id":"q438_question","text":"what is hair made of?"}
+{"_id":"q439_question","text":"where do hair follicles grow from?"}
+{"_id":"q440_short_keyword","text":"ocean facts"}
+{"_id":"q441_short_keyword","text":"earth oceans"}
+{"_id":"q442_phrase","text":"ocean covers earth surface"}
+{"_id":"q443_question","text":"what percentage of earth is covered by ocean?"}
+{"_id":"q444_question","text":"how many oceans are there on earth?"}
+{"_id":"q445_short_keyword","text":"mountain definition"}
+{"_id":"q446_short_keyword","text":"mountain formation"}
+{"_id":"q447_phrase","text":"how mountains are formed"}
+{"_id":"q448_question","text":"what is a mountain?"}
+{"_id":"q449_question","text":"what is the highest mountain on Earth?"}
+{"_id":"q450_short_keyword","text":"river definition"}
+{"_id":"q451_short_keyword","text":"freshwater streams"}
+{"_id":"q452_phrase","text":"natural stream fresh water"}
+{"_id":"q453_question","text":"what is a river?"}
+{"_id":"q454_question","text":"how do rivers form and flow?"}
+{"_id":"q455_short_keyword","text":"lake definition"}
+{"_id":"q456_short_keyword","text":"freshwater bodies"}
+{"_id":"q457_phrase","text":"what are natural lakes"}
+{"_id":"q458_question","text":"What is a lake?"}
+{"_id":"q459_question","text":"How are lakes different from ponds?"}
+{"_id":"q460_short_keyword","text":"desert landscape"}
+{"_id":"q461_short_keyword","text":"arid climate"}
+{"_id":"q462_phrase","text":"what are desert ecosystems"}
+{"_id":"q463_question","text":"What is a desert?"}
+{"_id":"q464_question","text":"How are sand dunes formed?"}
+{"_id":"q465_short_keyword","text":"forest ecosystem"}
+{"_id":"q466_short_keyword","text":"tree density"}
+{"_id":"q467_phrase","text":"what defines a forest"}
+{"_id":"q468_question","text":"What is a forest ecosystem?"}
+{"_id":"q469_question","text":"How much of Earth's land is covered by forests?"}
+{"_id":"q470_short_keyword","text":"island definition"}
+{"_id":"q471_short_keyword","text":"types islands"}
+{"_id":"q472_phrase","text":"land surrounded by water"}
+{"_id":"q473_question","text":"what is an island?"}
+{"_id":"q474_question","text":"how are oceanic islands formed?"}
+{"_id":"q475_short_keyword","text":"volcano definition"}
+{"_id":"q476_short_keyword","text":"tectonic plates"}
+{"_id":"q477_phrase","text":"how volcanoes are formed"}
+{"_id":"q478_question","text":"what is a volcano?"}
+{"_id":"q479_question","text":"why are most volcanoes found underwater?"}
+{"_id":"q480_short_keyword","text":"earthquake definition"}
+{"_id":"q481_short_keyword","text":"seismic waves"}
+{"_id":"q482_phrase","text":"what causes ground shaking"}
+{"_id":"q483_question","text":"what is an earthquake?"}
+{"_id":"q484_question","text":"what is the difference between epicenter and hypocenter?"}
+{"_id":"q485_short_keyword","text":"tsunami waves"}
+{"_id":"q486_short_keyword","text":"harbor wave"}
+{"_id":"q487_phrase","text":"series of ocean waves"}
+{"_id":"q488_question","text":"what causes a tsunami?"}
+{"_id":"q489_question","text":"why are tsunamis called tidal waves?"}
+{"_id":"q490_short_keyword","text":"tornado twister"}
+{"_id":"q491_short_keyword","text":"rotating wind column"}
+{"_id":"q492_phrase","text":"what causes tornado formation"}
+{"_id":"q493_question","text":"what is a tornado?"}
+{"_id":"q494_question","text":"how fast can tornado winds get?"}
+{"_id":"q495_short_keyword","text":"climate definition"}
+{"_id":"q496_short_keyword","text":"weather patterns"}
+{"_id":"q497_phrase","text":"long term weather patterns"}
+{"_id":"q498_question","text":"what is climate?"}
+{"_id":"q499_question","text":"what is the Köppen climate classification system?"}
+{"_id":"q500_short_keyword","text":"weather definition"}
+{"_id":"q501_short_keyword","text":"atmospheric conditions"}
+{"_id":"q502_phrase","text":"what is weather phenomena"}
+{"_id":"q503_question","text":"What is the difference between weather and climate?"}
+{"_id":"q504_question","text":"What causes weather systems in middle latitudes?"}
+{"_id":"q505_short_keyword","text":"rain precipitation"}
+{"_id":"q506_short_keyword","text":"water cycle"}
+{"_id":"q507_phrase","text":"how rain is formed"}
+{"_id":"q508_question","text":"what is rain and how does it form?"}
+{"_id":"q509_question","text":"why does it rain more in cities?"}
+{"_id":"q510_short_keyword","text":"snow formation"}
+{"_id":"q511_short_keyword","text":"ice crystals"}
+{"_id":"q512_phrase","text":"how snowflakes are formed"}
+{"_id":"q513_question","text":"what is snow made of?"}
+{"_id":"q514_question","text":"why are snowflakes hexagonal shaped?"}
+{"_id":"q515_short_keyword","text":"wind definition"}
+{"_id":"q516_short_keyword","text":"atmospheric circulation"}
+{"_id":"q517_phrase","text":"natural movement of air"}
+{"_id":"q518_question","text":"what causes wind to blow?"}
+{"_id":"q519_question","text":"what is the Coriolis effect?"}
+{"_id":"q520_short_keyword","text":"cloud meteorology"}
+{"_id":"q521_short_keyword","text":"nephology science"}
+{"_id":"q522_phrase","text":"water droplets ice crystals"}
+{"_id":"q523_question","text":"what are clouds made of?"}
+{"_id":"q524_question","text":"how are clouds formed in atmosphere?"}
+{"_id":"q525_short_keyword","text":"France country"}
+{"_id":"q526_short_keyword","text":"French Republic"}
+{"_id":"q527_phrase","text":"Western Europe France borders"}
+{"_id":"q528_question","text":"What is the capital of France?"}
+{"_id":"q529_question","text":"What overseas territories does France have?"}
+{"_id":"q530_short_keyword","text":"Germany country"}
+{"_id":"q531_short_keyword","text":"Federal Republic Germany"}
+{"_id":"q532_phrase","text":"Germany Western Central Europe"}
+{"_id":"q533_question","text":"What is the capital of Germany?"}
+{"_id":"q534_question","text":"How many people live in Germany?"}
+{"_id":"q535_short_keyword","text":"Italy country"}
+{"_id":"q536_short_keyword","text":"Italian Republic"}
+{"_id":"q537_phrase","text":"Italy Southern Western Europe"}
+{"_id":"q538_question","text":"What is the capital of Italy?"}
+{"_id":"q539_question","text":"Which countries border Italy?"}
+{"_id":"q540_short_keyword","text":"Spain country"}
+{"_id":"q541_short_keyword","text":"Kingdom Spain"}
+{"_id":"q542_phrase","text":"Spain Southern Western Europe"}
+{"_id":"q543_question","text":"What is the capital of Spain?"}
+{"_id":"q544_question","text":"What territories does Spain include besides mainland?"}
+{"_id":"q545_short_keyword","text":"Japan country"}
+{"_id":"q546_short_keyword","text":"Japanese islands"}
+{"_id":"q547_phrase","text":"island country East Asia"}
+{"_id":"q548_question","text":"What is Japan?"}
+{"_id":"q549_question","text":"How many islands does Japan have?"}
+{"_id":"q550_short_keyword","text":"China country"}
+{"_id":"q551_short_keyword","text":"People's Republic China"}
+{"_id":"q552_phrase","text":"China East Asia population"}
+{"_id":"q553_question","text":"What is the People's Republic of China?"}
+{"_id":"q554_question","text":"What is the capital of China?"}
+{"_id":"q555_short_keyword","text":"India country"}
+{"_id":"q556_short_keyword","text":"Republic India"}
+{"_id":"q557_phrase","text":"most populous democracy world"}
+{"_id":"q558_question","text":"What is the Republic of India?"}
+{"_id":"q559_question","text":"When did India gain independence from Britain?"}
+{"_id":"q560_short_keyword","text":"Brazil country"}
+{"_id":"q561_short_keyword","text":"South America largest"}
+{"_id":"q562_phrase","text":"largest country South America"}
+{"_id":"q563_question","text":"What is the largest country in South America?"}
+{"_id":"q564_question","text":"What is the capital of Brazil?"}
+{"_id":"q565_short_keyword","text":"Canada country"}
+{"_id":"q566_short_keyword","text":"Canadian provinces territories"}
+{"_id":"q567_phrase","text":"second largest country world"}
+{"_id":"q568_question","text":"What is the capital of Canada?"}
+{"_id":"q569_question","text":"How many provinces does Canada have?"}
+{"_id":"q570_short_keyword","text":"Australia country"}
+{"_id":"q571_short_keyword","text":"Commonwealth Australia"}
+{"_id":"q572_phrase","text":"largest country in Oceania"}
+{"_id":"q573_question","text":"What is the Commonwealth of Australia?"}
+{"_id":"q574_question","text":"When did Australia become independent from Britain?"}
+{"_id":"q575_short_keyword","text":"Egypt country"}
+{"_id":"q576_short_keyword","text":"Arab Republic Egypt"}
+{"_id":"q577_phrase","text":"Egypt Africa Asia country"}
+{"_id":"q578_question","text":"What is the capital of Egypt?"}
+{"_id":"q579_question","text":"How many people live in Egypt?"}
+{"_id":"q580_short_keyword","text":"Greece country"}
+{"_id":"q581_short_keyword","text":"Hellenic Republic"}
+{"_id":"q582_phrase","text":"cradle of Western civilization"}
+{"_id":"q583_question","text":"What is the capital of Greece?"}
+{"_id":"q584_question","text":"Where is Greece located in Europe?"}
+{"_id":"q585_short_keyword","text":"Russia country"}
+{"_id":"q586_short_keyword","text":"Russian Federation"}
+{"_id":"q587_phrase","text":"largest country in world"}
+{"_id":"q588_question","text":"What is the capital of Russia?"}
+{"_id":"q589_question","text":"How many time zones does Russia span?"}
+{"_id":"q590_short_keyword","text":"Mexico country"}
+{"_id":"q591_short_keyword","text":"United Mexican States"}
+{"_id":"q592_phrase","text":"Mexico North America borders"}
+{"_id":"q593_question","text":"What is the capital of Mexico?"}
+{"_id":"q594_question","text":"When did Spanish colonization of Mexico begin?"}
+{"_id":"q595_short_keyword","text":"Rome Italy"}
+{"_id":"q596_short_keyword","text":"Italian capital"}
+{"_id":"q597_phrase","text":"Rome capital city Italy"}
+{"_id":"q598_question","text":"What is the capital of Italy?"}
+{"_id":"q599_question","text":"Why is Rome called the Eternal City?"}
+{"_id":"q600_short_keyword","text":"Athens Greece"}
+{"_id":"q601_short_keyword","text":"Greek capital"}
+{"_id":"q602_phrase","text":"capital city of Greece"}
+{"_id":"q603_question","text":"What is the capital of Greece?"}
+{"_id":"q604_question","text":"How old is Athens Greece?"}
+{"_id":"q605_short_keyword","text":"Egypt country"}
+{"_id":"q606_short_keyword","text":"Arab Republic Egypt"}
+{"_id":"q607_phrase","text":"Egypt Africa Asia Sinai"}
+{"_id":"q608_question","text":"What is the capital of Egypt?"}
+{"_id":"q609_question","text":"How many people live in Egypt?"}
+{"_id":"q610_short_keyword","text":"Renaissance period"}
+{"_id":"q611_short_keyword","text":"European cultural movement"}
+{"_id":"q612_phrase","text":"15th 16th century Italy"}
+{"_id":"q613_question","text":"What was the Renaissance?"}
+{"_id":"q614_question","text":"Where did the Renaissance start?"}
+{"_id":"q615_short_keyword","text":"pyramid structure"}
+{"_id":"q616_short_keyword","text":"ancient pyramids"}
+{"_id":"q617_phrase","text":"triangular structures ancient civilizations"}
+{"_id":"q618_question","text":"What is a pyramid?"}
+{"_id":"q619_question","text":"What is the largest pyramid by volume?"}
+{"_id":"q620_short_keyword","text":"medieval castles"}
+{"_id":"q621_short_keyword","text":"fortified structures"}
+{"_id":"q622_phrase","text":"castle fortified residence nobility"}
+{"_id":"q623_question","text":"what is a castle?"}
+{"_id":"q624_question","text":"when were European castles first built?"}
+{"_id":"q625_short_keyword","text":"medieval knights"}
+{"_id":"q626_short_keyword","text":"chivalry code"}
+{"_id":"q627_phrase","text":"knight honorary title service"}
+{"_id":"q628_question","text":"what is a knight?"}
+{"_id":"q629_question","text":"how did knights get paid in medieval times?"}
+{"_id":"q630_short_keyword","text":"Japanese samurai"}
+{"_id":"q631_short_keyword","text":"warrior class Japan"}
+{"_id":"q632_phrase","text":"samurai Meiji era abolition"}
+{"_id":"q633_question","text":"what were samurai in Japan?"}
+{"_id":"q634_question","text":"when were samurai abolished in Japan?"}
+{"_id":"q635_short_keyword","text":"Roman gladiators"}
+{"_id":"q636_short_keyword","text":"arena fighters"}
+{"_id":"q637_phrase","text":"gladiator games Roman Empire"}
+{"_id":"q638_question","text":"What were gladiators in ancient Rome?"}
+{"_id":"q639_question","text":"How long did gladiator games last?"}
+{"_id":"q640_short_keyword","text":"emperor definition"}
+{"_id":"q641_short_keyword","text":"empress ruler"}
+{"_id":"q642_phrase","text":"emperor vs king difference"}
+{"_id":"q643_question","text":"What is an emperor?"}
+{"_id":"q644_question","text":"Why is the Japanese emperor the only current emperor?"}
+{"_id":"q645_short_keyword","text":"king definition"}
+{"_id":"q646_short_keyword","text":"royal monarch"}
+{"_id":"q647_phrase","text":"what is a king"}
+{"_id":"q648_question","text":"What does the title king mean?"}
+{"_id":"q649_question","text":"What is the etymology of the word king?"}
+{"_id":"q650_short_keyword","text":"queen meaning"}
+{"_id":"q651_short_keyword","text":"queen definition"}
+{"_id":"q652_phrase","text":"what does queen refer to"}
+{"_id":"q653_question","text":"What are the different meanings of queen?"}
+{"_id":"q654_question","text":"What is the difference between queen regnant and queen consort?"}
+{"_id":"q655_short_keyword","text":"war definition"}
+{"_id":"q656_short_keyword","text":"armed conflict"}
+{"_id":"q657_phrase","text":"what is total war"}
+{"_id":"q658_question","text":"What is the definition of war?"}
+{"_id":"q659_question","text":"What does the word war mean etymologically?"}
+{"_id":"q660_short_keyword","text":"political revolution"}
+{"_id":"q661_short_keyword","text":"social transformation"}
+{"_id":"q662_phrase","text":"what is a revolution"}
+{"_id":"q663_question","text":"What defines a political revolution?"}
+{"_id":"q664_question","text":"What causes revolutions to happen?"}
+{"_id":"q665_short_keyword","text":"democracy government"}
+{"_id":"q666_short_keyword","text":"representative democracy"}
+{"_id":"q667_phrase","text":"forms of democratic government"}
+{"_id":"q668_question","text":"what is democracy?"}
+{"_id":"q669_question","text":"what is the difference between direct and representative democracy?"}
+{"_id":"q670_short_keyword","text":"republic definition"}
+{"_id":"q671_short_keyword","text":"res publica"}
+{"_id":"q672_phrase","text":"republic vs monarchy government"}
+{"_id":"q673_question","text":"what is a republic?"}
+{"_id":"q674_question","text":"when did the Roman Republic end?"}
+{"_id":"q675_short_keyword","text":"empire definition"}
+{"_id":"q676_short_keyword","text":"emperor empress"}
+{"_id":"q677_phrase","text":"what is an empire"}
+{"_id":"q678_question","text":"What is the definition of an empire?"}
+{"_id":"q679_question","text":"What is the difference between land empires and sea empires?"}
+{"_id":"q680_short_keyword","text":"computer machine"}
+{"_id":"q681_short_keyword","text":"digital electronic"}
+{"_id":"q682_phrase","text":"what is a computer"}
+{"_id":"q683_question","text":"What is a computer and how does it work?"}
+{"_id":"q684_question","text":"When were the first digital computers developed?"}
+{"_id":"q685_short_keyword","text":"internet definition"}
+{"_id":"q686_short_keyword","text":"computer networks"}
+{"_id":"q687_phrase","text":"global system interconnected networks"}
+{"_id":"q688_question","text":"what is the internet?"}
+{"_id":"q689_question","text":"how does TCP/IP protocol work?"}
+{"_id":"q690_short_keyword","text":"computer software"}
+{"_id":"q691_short_keyword","text":"programming languages"}
+{"_id":"q692_phrase","text":"what is computer software"}
+{"_id":"q693_question","text":"What is software and how does it work?"}
+{"_id":"q694_question","text":"What are the main types of software?"}
+{"_id":"q695_short_keyword","text":"computer hardware"}
+{"_id":"q696_short_keyword","text":"electronic components"}
+{"_id":"q697_phrase","text":"types of hardware technology"}
+{"_id":"q698_question","text":"what does hardware refer to?"}
+{"_id":"q699_question","text":"what is the difference between computer hardware and household hardware?"}
+{"_id":"q700_short_keyword","text":"algorithm definition"}
+{"_id":"q701_short_keyword","text":"computer science algorithms"}
+{"_id":"q702_phrase","text":"finite sequence of instructions"}
+{"_id":"q703_question","text":"what is an algorithm?"}
+{"_id":"q704_question","text":"what is the difference between algorithms and heuristics?"}
+{"_id":"q705_short_keyword","text":"database management"}
+{"_id":"q706_short_keyword","text":"data storage"}
+{"_id":"q707_phrase","text":"organized collection of data"}
+{"_id":"q708_question","text":"what is a database?"}
+{"_id":"q709_question","text":"what is a DBMS system?"}
+{"_id":"q710_short_keyword","text":"network theory"}
+{"_id":"q711_short_keyword","text":"biological networks"}
+{"_id":"q712_phrase","text":"types of computer networks"}
+{"_id":"q713_question","text":"what does network mean in science?"}
+{"_id":"q714_question","text":"what is a scale-free network?"}
+{"_id":"q715_short_keyword","text":"server definition"}
+{"_id":"q716_short_keyword","text":"server meaning"}
+{"_id":"q717_phrase","text":"what does server mean"}
+{"_id":"q718_question","text":"What are the different meanings of server?"}
+{"_id":"q719_question","text":"What is a server in computing?"}
+{"_id":"q720_short_keyword","text":"robot definition"}
+{"_id":"q721_short_keyword","text":"robotics technology"}
+{"_id":"q722_phrase","text":"programmable machines automatic actions"}
+{"_id":"q723_question","text":"what is a robot?"}
+{"_id":"q724_question","text":"what are examples of autonomous robots?"}
+{"_id":"q725_short_keyword","text":"artificial satellite"}
+{"_id":"q726_short_keyword","text":"satellite orbit"}
+{"_id":"q727_phrase","text":"satellites communication weather GPS"}
+{"_id":"q728_question","text":"what is an artificial satellite?"}
+{"_id":"q729_question","text":"how do satellites stay in orbit?"}
+{"_id":"q730_short_keyword","text":"radar technology"}
+{"_id":"q731_short_keyword","text":"radio detection ranging"}
+{"_id":"q732_phrase","text":"how radar systems work"}
+{"_id":"q733_question","text":"what is radar used for?"}
+{"_id":"q734_question","text":"when was the term radar coined?"}
+{"_id":"q735_short_keyword","text":"laser device"}
+{"_id":"q736_short_keyword","text":"optical amplification"}
+{"_id":"q737_phrase","text":"stimulated emission of radiation"}
+{"_id":"q738_question","text":"what is a laser?"}
+{"_id":"q739_question","text":"who invented the first laser?"}
+{"_id":"q740_short_keyword","text":"semiconductor materials"}
+{"_id":"q741_short_keyword","text":"silicon doping"}
+{"_id":"q742_phrase","text":"electrical conductivity between conductor insulator"}
+{"_id":"q743_question","text":"what is a semiconductor?"}
+{"_id":"q744_question","text":"how does semiconductor doping work?"}
+{"_id":"q745_short_keyword","text":"transistor electronics"}
+{"_id":"q746_short_keyword","text":"semiconductor amplifier"}
+{"_id":"q747_phrase","text":"basic building blocks electronics"}
+{"_id":"q748_question","text":"what is a transistor?"}
+{"_id":"q749_question","text":"who invented the first transistor?"}
+{"_id":"q750_short_keyword","text":"microprocessor CPU"}
+{"_id":"q751_short_keyword","text":"integrated circuit processor"}
+{"_id":"q752_phrase","text":"single chip processing unit"}
+{"_id":"q753_question","text":"what is a microprocessor?"}
+{"_id":"q754_question","text":"how do microprocessors execute program instructions?"}
+{"_id":"q755_short_keyword","text":"smartphone definition"}
+{"_id":"q756_short_keyword","text":"mobile phone features"}
+{"_id":"q757_phrase","text":"touchscreen mobile computing device"}
+{"_id":"q758_question","text":"what is a smartphone?"}
+{"_id":"q759_question","text":"what sensors do smartphones have?"}
+{"_id":"q760_short_keyword","text":"television TV"}
+{"_id":"q761_short_keyword","text":"broadcast medium"}
+{"_id":"q762_phrase","text":"what is television broadcasting"}
+{"_id":"q763_question","text":"What is television and how does it work?"}
+{"_id":"q764_question","text":"When did color television broadcasting start?"}
+{"_id":"q765_short_keyword","text":"radio technology"}
+{"_id":"q766_short_keyword","text":"electromagnetic waves"}
+{"_id":"q767_phrase","text":"radio wave communication principles"}
+{"_id":"q768_question","text":"what is radio technology?"}
+{"_id":"q769_question","text":"how do radio waves carry information?"}
+{"_id":"q770_short_keyword","text":"camera definition"}
+{"_id":"q771_short_keyword","text":"photography equipment"}
+{"_id":"q772_phrase","text":"how cameras work"}
+{"_id":"q773_question","text":"what is a camera?"}
+{"_id":"q774_question","text":"what are the different types of cameras?"}
+{"_id":"q775_short_keyword","text":"mathematical numbers"}
+{"_id":"q776_short_keyword","text":"numeral systems"}
+{"_id":"q777_phrase","text":"what is a number"}
+{"_id":"q778_question","text":"What is a number in mathematics?"}
+{"_id":"q779_question","text":"What is the Hindu-Arabic numeral system?"}
+{"_id":"q780_short_keyword","text":"algebra mathematics"}
+{"_id":"q781_short_keyword","text":"algebraic structures"}
+{"_id":"q782_phrase","text":"branch of mathematics variables"}
+{"_id":"q783_question","text":"what is algebra in mathematics?"}
+{"_id":"q784_question","text":"what is the difference between elementary and abstract algebra?"}
+{"_id":"q785_short_keyword","text":"geometry mathematics"}
+{"_id":"q786_short_keyword","text":"euclidean geometry"}
+{"_id":"q787_phrase","text":"branch of mathematics space"}
+{"_id":"q788_question","text":"what is geometry in mathematics?"}
+{"_id":"q789_question","text":"what is a geometer called?"}
+{"_id":"q790_short_keyword","text":"calculus mathematics"}
+{"_id":"q791_short_keyword","text":"differential integral"}
+{"_id":"q792_phrase","text":"mathematical study continuous change"}
+{"_id":"q793_question","text":"what is calculus in mathematics?"}
+{"_id":"q794_question","text":"who invented infinitesimal calculus?"}
+{"_id":"q795_short_keyword","text":"statistics definition"}
+{"_id":"q796_short_keyword","text":"data analysis"}
+{"_id":"q797_phrase","text":"collection organization analysis data"}
+{"_id":"q798_question","text":"what is statistics?"}
+{"_id":"q799_question","text":"what is the difference between descriptive and inferential statistics?"}
+{"_id":"q800_short_keyword","text":"probability mathematics"}
+{"_id":"q801_short_keyword","text":"probability theory"}
+{"_id":"q802_phrase","text":"what is probability definition"}
+{"_id":"q803_question","text":"What is probability in mathematics?"}
+{"_id":"q804_question","text":"How is probability expressed as a percentage?"}
+{"_id":"q805_short_keyword","text":"math equation"}
+{"_id":"q806_short_keyword","text":"solving equations"}
+{"_id":"q807_phrase","text":"what is mathematical equation"}
+{"_id":"q808_question","text":"what is an equation in mathematics?"}
+{"_id":"q809_question","text":"who invented the equals sign?"}
+{"_id":"q810_short_keyword","text":"mathematical functions"}
+{"_id":"q811_short_keyword","text":"domain codomain"}
+{"_id":"q812_phrase","text":"function domain and codomain"}
+{"_id":"q813_question","text":"what is a function in mathematics?"}
+{"_id":"q814_question","text":"how is function notation written?"}
+{"_id":"q815_short_keyword","text":"triangle geometry"}
+{"_id":"q816_short_keyword","text":"three sided polygon"}
+{"_id":"q817_phrase","text":"basic shapes in geometry"}
+{"_id":"q818_question","text":"what is a triangle?"}
+{"_id":"q819_question","text":"why do triangle angles equal 180 degrees?"}
+{"_id":"q820_short_keyword","text":"circle geometry"}
+{"_id":"q821_short_keyword","text":"radius diameter"}
+{"_id":"q822_phrase","text":"what is a circle"}
+{"_id":"q823_question","text":"What is the definition of a circle?"}
+{"_id":"q824_question","text":"What is the difference between radius and diameter?"}
+{"_id":"q825_short_keyword","text":"square geometry"}
+{"_id":"q826_short_keyword","text":"quadrilateral shapes"}
+{"_id":"q827_phrase","text":"four equal sides angles"}
+{"_id":"q828_question","text":"what is a square in geometry?"}
+{"_id":"q829_question","text":"how do you calculate square area?"}
+{"_id":"q830_short_keyword","text":"pi mathematical constant"}
+{"_id":"q831_short_keyword","text":"circle circumference diameter"}
+{"_id":"q832_phrase","text":"ratio of circle circumference"}
+{"_id":"q833_question","text":"what is the mathematical constant pi?"}
+{"_id":"q834_question","text":"why is pi an irrational number?"}
+{"_id":"q835_short_keyword","text":"infinity symbol"}
+{"_id":"q836_short_keyword","text":"mathematical infinity"}
+{"_id":"q837_phrase","text":"what is infinity concept"}
+{"_id":"q838_question","text":"What does infinity mean in mathematics?"}
+{"_id":"q839_question","text":"Who was Georg Cantor and what did he discover about infinity?"}
+{"_id":"q840_short_keyword","text":"prime number"}
+{"_id":"q841_short_keyword","text":"composite numbers"}
+{"_id":"q842_phrase","text":"fundamental theorem of arithmetic"}
+{"_id":"q843_question","text":"what is a prime number?"}
+{"_id":"q844_question","text":"how do you test for primality?"}
+{"_id":"q845_short_keyword","text":"math fractions"}
+{"_id":"q846_short_keyword","text":"numerator denominator"}
+{"_id":"q847_phrase","text":"what are fractions math"}
+{"_id":"q848_question","text":"What is a fraction in mathematics?"}
+{"_id":"q849_question","text":"What do numerator and denominator mean?"}
+{"_id":"q850_short_keyword","text":"decimal system"}
+{"_id":"q851_short_keyword","text":"base ten"}
+{"_id":"q852_phrase","text":"decimal numeral system explanation"}
+{"_id":"q853_question","text":"what is the decimal system?"}
+{"_id":"q854_question","text":"how do decimal separators work?"}
+{"_id":"q855_short_keyword","text":"percentage meaning"}
+{"_id":"q856_short_keyword","text":"percent calculation"}
+{"_id":"q857_phrase","text":"what is a percentage"}
+{"_id":"q858_question","text":"What does percentage mean in mathematics?"}
+{"_id":"q859_question","text":"How do you convert fractions to percentages?"}
+{"_id":"q860_short_keyword","text":"painting art"}
+{"_id":"q861_short_keyword","text":"visual art medium"}
+{"_id":"q862_phrase","text":"applying paint to surface"}
+{"_id":"q863_question","text":"what is painting as an art form?"}
+{"_id":"q864_question","text":"what surfaces can be used for painting?"}
+{"_id":"q865_short_keyword","text":"sculpture art"}
+{"_id":"q866_short_keyword","text":"three dimensional art"}
+{"_id":"q867_phrase","text":"visual arts three dimensions"}
+{"_id":"q868_question","text":"what is sculpture in art?"}
+{"_id":"q869_question","text":"what materials are used for sculpture?"}
+{"_id":"q870_short_keyword","text":"music definition"}
+{"_id":"q871_short_keyword","text":"sound arrangement"}
+{"_id":"q872_phrase","text":"what is music composition"}
+{"_id":"q873_question","text":"What is music and how is it created?"}
+{"_id":"q874_question","text":"How is music used in social events and ceremonies?"}
+{"_id":"q875_short_keyword","text":"dance art form"}
+{"_id":"q876_short_keyword","text":"theatrical dance"}
+{"_id":"q877_phrase","text":"body movements aesthetic value"}
+{"_id":"q878_question","text":"what is dance as an art form?"}
+{"_id":"q879_question","text":"what are theatrical and participatory dance types?"}
+{"_id":"q880_short_keyword","text":"poetry definition"}
+{"_id":"q881_short_keyword","text":"poetic devices"}
+{"_id":"q882_phrase","text":"literary art form language"}
+{"_id":"q883_question","text":"what is poetry?"}
+{"_id":"q884_question","text":"what are poetic structures?"}
+{"_id":"q885_short_keyword","text":"novel definition"}
+{"_id":"q886_short_keyword","text":"narrative fiction"}
+{"_id":"q887_phrase","text":"what is a novel"}
+{"_id":"q888_question","text":"What is the definition of a novel?"}
+{"_id":"q889_question","text":"What is the difference between a novel and a romance?"}
+{"_id":"q890_short_keyword","text":"film definition"}
+{"_id":"q891_short_keyword","text":"movie art"}
+{"_id":"q892_phrase","text":"what is a film"}
+{"_id":"q893_question","text":"What is the definition of film?"}
+{"_id":"q894_question","text":"How do moving pictures create the illusion of motion?"}
+{"_id":"q895_short_keyword","text":"photography basics"}
+{"_id":"q896_short_keyword","text":"camera techniques"}
+{"_id":"q897_phrase","text":"art of creating images"}
+{"_id":"q898_question","text":"what is photography?"}
+{"_id":"q899_question","text":"how does a camera sensor work?"}
+{"_id":"q900_short_keyword","text":"architecture design"}
+{"_id":"q901_short_keyword","text":"building art"}
+{"_id":"q902_phrase","text":"art and technique of designing"}
+{"_id":"q903_question","text":"what is architecture?"}
+{"_id":"q904_question","text":"who wrote the earliest surviving text on architectural theories?"}
+{"_id":"q905_short_keyword","text":"opera music"}
+{"_id":"q906_short_keyword","text":"classical theatre"}
+{"_id":"q907_phrase","text":"western musical theatre form"}
+{"_id":"q908_question","text":"what is opera?"}
+{"_id":"q909_question","text":"where did opera originate?"}
+{"_id":"q910_short_keyword","text":"ballet dance"}
+{"_id":"q911_short_keyword","text":"classical ballet"}
+{"_id":"q912_phrase","text":"ballet performance dance history"}
+{"_id":"q913_question","text":"what is ballet dance?"}
+{"_id":"q914_question","text":"where did ballet originate from?"}
+{"_id":"q915_short_keyword","text":"jazz music"}
+{"_id":"q916_short_keyword","text":"New Orleans music"}
+{"_id":"q917_phrase","text":"African American music genre"}
+{"_id":"q918_question","text":"What is jazz music?"}
+{"_id":"q919_question","text":"Where did jazz originate from?"}
+{"_id":"q920_short_keyword","text":"classical symphony"}
+{"_id":"q921_short_keyword","text":"orchestral music"}
+{"_id":"q922_phrase","text":"symphony four movements structure"}
+{"_id":"q923_question","text":"what is a symphony in classical music?"}
+{"_id":"q924_question","text":"how many musicians play in a symphony orchestra?"}
+{"_id":"q925_short_keyword","text":"guitar instrument"}
+{"_id":"q926_short_keyword","text":"stringed musical"}
+{"_id":"q927_phrase","text":"six string fretted instrument"}
+{"_id":"q928_question","text":"what is a guitar?"}
+{"_id":"q929_question","text":"how many strings does a guitar have?"}
+{"_id":"q930_short_keyword","text":"piano instrument"}
+{"_id":"q931_short_keyword","text":"grand upright piano"}
+{"_id":"q932_phrase","text":"keyboard instrument 88 keys"}
+{"_id":"q933_question","text":"what is a piano?"}
+{"_id":"q934_question","text":"how do piano hammers work?"}
+{"_id":"q935_short_keyword","text":"violin instrument"}
+{"_id":"q936_short_keyword","text":"fiddle music"}
+{"_id":"q937_phrase","text":"wooden string instrument bow"}
+{"_id":"q938_question","text":"what is a violin?"}
+{"_id":"q939_question","text":"when was the violin invented?"}
+{"_id":"q940_short_keyword","text":"drum instrument"}
+{"_id":"q941_short_keyword","text":"percussion membranophone"}
+{"_id":"q942_phrase","text":"drumhead skin stretched shell"}
+{"_id":"q943_question","text":"what is a drum musical instrument?"}
+{"_id":"q944_question","text":"how are drums classified in music?"}
+{"_id":"q945_short_keyword","text":"bread ingredients"}
+{"_id":"q946_short_keyword","text":"baking yeast"}
+{"_id":"q947_phrase","text":"how bread is made"}
+{"_id":"q948_question","text":"what is bread made of?"}
+{"_id":"q949_question","text":"what makes bread rise and become fluffy?"}
+{"_id":"q950_short_keyword","text":"rice grain"}
+{"_id":"q951_short_keyword","text":"staple food"}
+{"_id":"q952_phrase","text":"rice cereal grain Asia"}
+{"_id":"q953_question","text":"What is rice and where is it grown?"}
+{"_id":"q954_question","text":"How much rice is produced worldwide annually?"}
+{"_id":"q955_short_keyword","text":"wheat cereal grain"}
+{"_id":"q956_short_keyword","text":"triticum cultivation"}
+{"_id":"q957_phrase","text":"wheat production worldwide statistics"}
+{"_id":"q958_question","text":"What is wheat and where is it grown?"}
+{"_id":"q959_question","text":"When was wheat first cultivated in history?"}
+{"_id":"q960_short_keyword","text":"potato facts"}
+{"_id":"q961_short_keyword","text":"tuberous vegetable"}
+{"_id":"q962_phrase","text":"potato origin South America"}
+{"_id":"q963_question","text":"What is a potato?"}
+{"_id":"q964_question","text":"Where do potatoes originally come from?"}
+{"_id":"q965_short_keyword","text":"tomato plant"}
+{"_id":"q966_short_keyword","text":"Solanum lycopersicum"}
+{"_id":"q967_phrase","text":"tomato nightshade family origin"}
+{"_id":"q968_question","text":"What is a tomato?"}
+{"_id":"q969_question","text":"Where did tomatoes originally come from?"}
+{"_id":"q970_short_keyword","text":"apple fruit"}
+{"_id":"q971_short_keyword","text":"malus domestica"}
+{"_id":"q972_phrase","text":"apple tree cultivation worldwide"}
+{"_id":"q973_question","text":"what is an apple?"}
+{"_id":"q974_question","text":"how many apple cultivars exist?"}
+{"_id":"q975_short_keyword","text":"banana fruit"}
+{"_id":"q976_short_keyword","text":"Musa genus"}
+{"_id":"q977_phrase","text":"edible tropical fruit berry"}
+{"_id":"q978_question","text":"what is a banana?"}
+{"_id":"q979_question","text":"what countries produce the most bananas?"}
+{"_id":"q980_short_keyword","text":"coffee beans"}
+{"_id":"q981_short_keyword","text":"caffeine beverage"}
+{"_id":"q982_phrase","text":"roasted ground coffee brewing"}
+{"_id":"q983_question","text":"what is coffee made from?"}
+{"_id":"q984_question","text":"where did coffee originate historically?"}
+{"_id":"q985_short_keyword","text":"tea beverage"}
+{"_id":"q986_short_keyword","text":"Camellia sinensis"}
+{"_id":"q987_phrase","text":"most consumed drink world"}
+{"_id":"q988_question","text":"What is tea made from?"}
+{"_id":"q989_question","text":"Where did tea originate from?"}
+{"_id":"q990_short_keyword","text":"wine definition"}
+{"_id":"q991_short_keyword","text":"fermented grapes"}
+{"_id":"q992_phrase","text":"alcoholic drink from grapes"}
+{"_id":"q993_question","text":"what is wine made from?"}
+{"_id":"q994_question","text":"when was wine first produced?"}
+{"_id":"q995_short_keyword","text":"beer brewing"}
+{"_id":"q996_short_keyword","text":"alcoholic beverages"}
+{"_id":"q997_phrase","text":"how beer is made"}
+{"_id":"q998_question","text":"what is beer?"}
+{"_id":"q999_question","text":"what alcohol percentage does beer have?"}
+{"_id":"q1000_short_keyword","text":"chocolate cocoa beans"}
+{"_id":"q1001_short_keyword","text":"dark milk chocolate"}
+{"_id":"q1002_phrase","text":"how chocolate is made"}
+{"_id":"q1003_question","text":"what is chocolate made from?"}
+{"_id":"q1004_question","text":"how are cocoa beans processed into chocolate?"}
+{"_id":"q1005_short_keyword","text":"sugar types"}
+{"_id":"q1006_short_keyword","text":"carbohydrates monosaccharides"}
+{"_id":"q1007_phrase","text":"what are simple sugars"}
+{"_id":"q1008_question","text":"What is sugar and how is it classified?"}
+{"_id":"q1009_question","text":"What is the difference between monosaccharides and disaccharides?"}
+{"_id":"q1010_short_keyword","text":"table salt"}
+{"_id":"q1011_short_keyword","text":"sodium chloride"}
+{"_id":"q1012_phrase","text":"what is salt made of"}
+{"_id":"q1013_question","text":"What is salt and why is it essential for life?"}
+{"_id":"q1014_question","text":"How is salt processed and where does it come from?"}
+{"_id":"q1015_short_keyword","text":"pepper disambiguation"}
+{"_id":"q1016_short_keyword","text":"pepper meanings"}
+{"_id":"q1017_phrase","text":"different types of pepper"}
+{"_id":"q1018_question","text":"What does pepper refer to?"}
+{"_id":"q1019_question","text":"Is there a band called Pepper?"}
+{"_id":"q1020_short_keyword","text":"cheese dairy"}
+{"_id":"q1021_short_keyword","text":"milk casein"}
+{"_id":"q1022_phrase","text":"how cheese is made"}
+{"_id":"q1023_question","text":"what is cheese made from?"}
+{"_id":"q1024_question","text":"how does rennet work in cheesemaking?"}
+{"_id":"q1025_short_keyword","text":"milk nutrition facts"}
+{"_id":"q1026_short_keyword","text":"dairy production global"}
+{"_id":"q1027_phrase","text":"mammary glands white liquid"}
+{"_id":"q1028_question","text":"what is milk and how is it produced?"}
+{"_id":"q1029_question","text":"why do some adults have trouble digesting milk?"}
+{"_id":"q1030_short_keyword","text":"animal eggs"}
+{"_id":"q1031_short_keyword","text":"egg reproduction"}
+{"_id":"q1032_phrase","text":"how animals lay eggs"}
+{"_id":"q1033_question","text":"what is an egg in biology?"}
+{"_id":"q1034_question","text":"which animals lay eggs outside of water?"}
+{"_id":"q1035_short_keyword","text":"football sports"}
+{"_id":"q1036_short_keyword","text":"soccer history"}
+{"_id":"q1037_phrase","text":"types of football games"}
+{"_id":"q1038_question","text":"what is football?"}
+{"_id":"q1039_question","text":"when was the Football League founded?"}
+{"_id":"q1040_short_keyword","text":"basketball sport"}
+{"_id":"q1041_short_keyword","text":"team game"}
+{"_id":"q1042_phrase","text":"basketball rules and scoring"}
+{"_id":"q1043_question","text":"What is basketball?"}
+{"_id":"q1044_question","text":"How high is a basketball hoop?"}
+{"_id":"q1045_short_keyword","text":"baseball sport"}
+{"_id":"q1046_short_keyword","text":"bat ball game"}
+{"_id":"q1047_phrase","text":"nine players batting fielding"}
+{"_id":"q1048_question","text":"what is baseball?"}
+{"_id":"q1049_question","text":"how do you score runs in baseball?"}
+{"_id":"q1050_short_keyword","text":"tennis sport"}
+{"_id":"q1051_short_keyword","text":"racket game"}
+{"_id":"q1052_phrase","text":"tennis rules and history"}
+{"_id":"q1053_question","text":"what is tennis?"}
+{"_id":"q1054_question","text":"when did modern tennis originate?"}
+{"_id":"q1055_short_keyword","text":"golf sport"}
+{"_id":"q1056_short_keyword","text":"club ball game"}
+{"_id":"q1057_phrase","text":"golf course holes strokes"}
+{"_id":"q1058_question","text":"what is golf?"}
+{"_id":"q1059_question","text":"where did golf originate from?"}
+{"_id":"q1060_short_keyword","text":"swimming basics"}
+{"_id":"q1061_short_keyword","text":"water sports"}
+{"_id":"q1062_phrase","text":"swimming strokes and techniques"}
+{"_id":"q1063_question","text":"what is swimming?"}
+{"_id":"q1064_question","text":"what are the health benefits of swimming?"}
+{"_id":"q1065_short_keyword","text":"running locomotion"}
+{"_id":"q1066_short_keyword","text":"human gait"}
+{"_id":"q1067_phrase","text":"method of terrestrial locomotion"}
+{"_id":"q1068_question","text":"what is running as a form of movement?"}
+{"_id":"q1069_question","text":"when did humans first develop running ability?"}
+{"_id":"q1070_short_keyword","text":"cycling bicycling"}
+{"_id":"q1071_short_keyword","text":"bicycle riding"}
+{"_id":"q1072_phrase","text":"activity of riding bicycle"}
+{"_id":"q1073_question","text":"what is cycling and bicycling?"}
+{"_id":"q1074_question","text":"how were bicycles used in warfare?"}
+{"_id":"q1075_short_keyword","text":"boxing sport"}
+{"_id":"q1076_short_keyword","text":"combat martial arts"}
+{"_id":"q1077_phrase","text":"boxing ring protective gloves"}
+{"_id":"q1078_question","text":"what is boxing as a sport?"}
+{"_id":"q1079_question","text":"when did boxing originate in history?"}
+{"_id":"q1080_short_keyword","text":"wrestling martial art"}
+{"_id":"q1081_short_keyword","text":"grappling combat sport"}
+{"_id":"q1082_phrase","text":"wrestling techniques and holds"}
+{"_id":"q1083_question","text":"what is wrestling as a sport?"}
+{"_id":"q1084_question","text":"when did wrestling start in Olympics?"}
+{"_id":"q1085_short_keyword","text":"gymnastics sport"}
+{"_id":"q1086_short_keyword","text":"artistic gymnastics"}
+{"_id":"q1087_phrase","text":"gymnastics balance strength flexibility"}
+{"_id":"q1088_question","text":"what is gymnastics?"}
+{"_id":"q1089_question","text":"what events are in women's gymnastics?"}
+{"_id":"q1090_short_keyword","text":"skiing history"}
+{"_id":"q1091_short_keyword","text":"winter sports"}
+{"_id":"q1092_phrase","text":"skiing on snow gliding"}
+{"_id":"q1093_question","text":"What is skiing used for?"}
+{"_id":"q1094_question","text":"Where does the word ski come from?"}
+{"_id":"q1095_short_keyword","text":"skating sports"}
+{"_id":"q1096_short_keyword","text":"ice skating"}
+{"_id":"q1097_phrase","text":"types of skating activities"}
+{"_id":"q1098_question","text":"what are the different types of skating?"}
+{"_id":"q1099_question","text":"what is the difference between ice skating and roller skating?"}
+{"_id":"q1100_short_keyword","text":"cricket sport"}
+{"_id":"q1101_short_keyword","text":"bat ball game"}
+{"_id":"q1102_phrase","text":"cricket rules and gameplay"}
+{"_id":"q1103_question","text":"what is cricket sport?"}
+{"_id":"q1104_question","text":"how many players in cricket team?"}
+{"_id":"q1105_short_keyword","text":"rugby sport"}
+{"_id":"q1106_short_keyword","text":"rugby union league"}
+{"_id":"q1107_phrase","text":"rugby football different forms"}
+{"_id":"q1108_question","text":"what is rugby?"}
+{"_id":"q1109_question","text":"how many players in rugby union vs rugby league?"}
+{"_id":"q1110_short_keyword","text":"car automobile"}
+{"_id":"q1111_short_keyword","text":"motor vehicle"}
+{"_id":"q1112_phrase","text":"what is a car"}
+{"_id":"q1113_question","text":"What is an automobile?"}
+{"_id":"q1114_question","text":"Who invented the first car?"}
+{"_id":"q1115_short_keyword","text":"airplane aircraft"}
+{"_id":"q1116_short_keyword","text":"fixed wing"}
+{"_id":"q1117_phrase","text":"what is an airplane"}
+{"_id":"q1118_question","text":"How do airplanes work and fly?"}
+{"_id":"q1119_question","text":"Who invented the first airplane in 1903?"}
+{"_id":"q1120_short_keyword","text":"large watercraft"}
+{"_id":"q1121_short_keyword","text":"cargo vessels"}
+{"_id":"q1122_phrase","text":"ships vs boats difference"}
+{"_id":"q1123_question","text":"What is a ship?"}
+{"_id":"q1124_question","text":"How are ships different from boats?"}
+{"_id":"q1125_short_keyword","text":"train railway"}
+{"_id":"q1126_short_keyword","text":"locomotive transport"}
+{"_id":"q1127_phrase","text":"connected vehicles railway track"}
+{"_id":"q1128_question","text":"what is a train?"}
+{"_id":"q1129_question","text":"when were steam locomotives invented?"}
+{"_id":"q1130_short_keyword","text":"bicycle bike"}
+{"_id":"q1131_short_keyword","text":"pedal cycle"}
+{"_id":"q1132_phrase","text":"two wheel human powered vehicle"}
+{"_id":"q1133_question","text":"what is a bicycle?"}
+{"_id":"q1134_question","text":"when were bicycles invented?"}
+{"_id":"q1135_short_keyword","text":"motorcycle basics"}
+{"_id":"q1136_short_keyword","text":"motorbike types"}
+{"_id":"q1137_phrase","text":"two wheeled motor vehicle"}
+{"_id":"q1138_question","text":"what is a motorcycle?"}
+{"_id":"q1139_question","text":"who invented the first motorcycle?"}
+{"_id":"q1140_short_keyword","text":"public bus"}
+{"_id":"q1141_short_keyword","text":"motor vehicle"}
+{"_id":"q1142_phrase","text":"bus passenger capacity types"}
+{"_id":"q1143_question","text":"what is a bus vehicle?"}
+{"_id":"q1144_question","text":"how many passengers can buses carry?"}
+{"_id":"q1145_short_keyword","text":"helicopter rotorcraft"}
+{"_id":"q1146_short_keyword","text":"vertical takeoff aircraft"}
+{"_id":"q1147_phrase","text":"how helicopters fly hover"}
+{"_id":"q1148_question","text":"what is a helicopter and how does it work?"}
+{"_id":"q1149_question","text":"when was the first helicopter invented?"}
+{"_id":"q1150_short_keyword","text":"submarine underwater vessel"}
+{"_id":"q1151_short_keyword","text":"military naval boats"}
+{"_id":"q1152_phrase","text":"watercraft independent operation underwater"}
+{"_id":"q1153_question","text":"what is a submarine?"}
+{"_id":"q1154_question","text":"why are submarines called boats instead of ships?"}
+{"_id":"q1155_short_keyword","text":"rocket engine"}
+{"_id":"q1156_short_keyword","text":"space vehicle"}
+{"_id":"q1157_phrase","text":"how rockets work space"}
+{"_id":"q1158_question","text":"what is a rocket?"}
+{"_id":"q1159_question","text":"how do rockets work in space without air?"}

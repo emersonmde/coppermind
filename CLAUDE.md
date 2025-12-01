@@ -58,7 +58,7 @@ cargo install cargo-audit --locked
 
 ### Workspace Structure
 
-Coppermind uses a Cargo workspace with two crates:
+Coppermind uses a Cargo workspace with three crates:
 
 #### `crates/coppermind-core/` - Platform-Independent Core Library
 - **src/lib.rs**: Public API exports
@@ -93,7 +93,17 @@ Coppermind uses a Cargo workspace with two crates:
   - **pipeline.rs**: `IndexingPipeline` for chunking → tokenization → embedding
   - **progress.rs**: `IndexingProgress`, `BatchProgress` for UI feedback
 - **src/error.rs**: Error types (`EmbeddingError`, `ChunkingError`, `GpuError`)
-- **src/config.rs**: Production configuration constants
+- **src/config.rs**: Production configuration constants (`MAX_CHUNK_TOKENS=1024`, `EMBEDDING_DIM=512`)
+- **src/evaluation/**: IR evaluation framework
+  - **mod.rs**: Two-tier evaluation (synthetic for CI, real datasets for quality)
+  - **metrics.rs**: NDCG, MAP, MRR, Precision@k, Recall@k, F1@k
+  - **stats.rs**: Bootstrap CI, paired t-test, Cohen's d effect size
+  - **datasets/**: Synthetic and Natural Questions dataset loaders
+
+#### `crates/coppermind-eval/` - Standalone Evaluation Tool
+- **src/main.rs**: CLI for running evaluation benchmarks
+- **src/datasets/**: Custom dataset definitions (coppermind-eval dataset)
+- Uses `elinor` crate for additional IR metrics validation
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs**: Entry point with platform-specific launch (desktop/mobile/web)

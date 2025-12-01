@@ -194,9 +194,10 @@ pub enum FileType {
 ///
 /// ```ignore
 /// use coppermind::embedding::chunking::{create_chunker, detect_file_type, FileType};
+/// use coppermind_core::config::MAX_CHUNK_TOKENS;
 ///
 /// let file_type = detect_file_type("README.md");
-/// let chunker = create_chunker(file_type, 512, tokenizer);
+/// let chunker = create_chunker(file_type, MAX_CHUNK_TOKENS, tokenizer);
 /// let chunks = chunker.chunk("# Heading\n\nContent...")?;
 /// ```
 pub fn create_chunker(

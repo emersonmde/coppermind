@@ -63,7 +63,7 @@ pub fn ensure_tokenizer(
 ///
 /// * `tokenizer` - Mutable reference to tokenizer
 /// * `max_positions` - Maximum sequence length
-fn configure_tokenizer(
+pub(crate) fn configure_tokenizer(
     tokenizer: &mut Tokenizer,
     max_positions: usize,
 ) -> Result<(), EmbeddingError> {
@@ -150,27 +150,12 @@ pub async fn tokenize_text_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Load test tokenizer from assets
-    fn load_test_tokenizer(max_positions: usize) -> Tokenizer {
-        let tokenizer_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/jina-bert-tokenizer.json"
-        );
-        let tokenizer_bytes =
-            std::fs::read(tokenizer_path).expect("Failed to read tokenizer file for tests");
-
-        let mut tokenizer =
-            Tokenizer::from_bytes(tokenizer_bytes).expect("Failed to deserialize tokenizer");
-
-        configure_tokenizer(&mut tokenizer, max_positions).expect("Failed to configure tokenizer");
-
-        tokenizer
-    }
+    use crate::test_utils::create_configured_tokenizer;
+    use coppermind_core::config::MAX_CHUNK_TOKENS;
 
     #[test]
     fn test_tokenize_text_basic() {
-        let tokenizer = load_test_tokenizer(512);
+        let tokenizer = create_configured_tokenizer(512);
         let result = tokenize_text(&tokenizer, "hello world");
 
         assert!(result.is_ok());
@@ -196,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_text_empty_string() {
-        let tokenizer = load_test_tokenizer(512);
+        let tokenizer = create_configured_tokenizer(512);
         let result = tokenize_text(&tokenizer, "");
 
         // Empty string should still return special tokens [CLS] [SEP]
@@ -210,7 +195,7 @@ mod tests {
     #[test]
     fn test_tokenize_text_with_truncation() {
         let max_positions = 10;
-        let tokenizer = load_test_tokenizer(max_positions);
+        let tokenizer = create_configured_tokenizer(max_positions);
 
         // Create a long text that will exceed max_positions
         let long_text = "word ".repeat(100); // 100 words, will be truncated
@@ -230,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_text_special_characters() {
-        let tokenizer = load_test_tokenizer(512);
+        let tokenizer = create_configured_tokenizer(512);
         let text = "Hello, world! This is a test: 123 @#$%";
         let result = tokenize_text(&tokenizer, text);
 
@@ -241,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_text_unicode() {
-        let tokenizer = load_test_tokenizer(512);
+        let tokenizer = create_configured_tokenizer(512);
         let text = "Hello 世界 🌍 café";
         let result = tokenize_text(&tokenizer, text);
 
@@ -252,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tokenize_text_async_basic() {
-        let tokenizer = load_test_tokenizer(512);
+        let tokenizer = create_configured_tokenizer(512);
         let result = tokenize_text_async(&tokenizer, "async test").await;
 
         assert!(result.is_ok());
@@ -281,7 +266,7 @@ mod tests {
 
         // Note: Singleton may already be initialized by other tests
         // We just verify ensure_tokenizer succeeds (either initializing or returning cached)
-        let result = ensure_tokenizer(tokenizer_bytes, 512);
+        let result = ensure_tokenizer(tokenizer_bytes, MAX_CHUNK_TOKENS);
         assert!(
             result.is_ok(),
             "ensure_tokenizer should succeed: {:?}",
@@ -307,7 +292,7 @@ mod tests {
 
         // Note: Singleton may already be initialized by previous tests
         // First call either initializes or returns cached
-        let result1 = ensure_tokenizer(tokenizer_bytes.clone(), 512);
+        let result1 = ensure_tokenizer(tokenizer_bytes.clone(), MAX_CHUNK_TOKENS);
         assert!(
             result1.is_ok(),
             "First ensure_tokenizer call failed: {:?}",

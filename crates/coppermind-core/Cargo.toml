@@ -114,13 +114,5 @@ name = "search"
 harness = false
 
 [[bench]]
-name = "scalability"
-harness = false
-
-[[bench]]
-name = "recall"
-harness = false
-
-[[bench]]
 name = "throughput"
 harness = false

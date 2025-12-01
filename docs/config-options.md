@@ -30,7 +30,7 @@ These are already configurable via the crawler UI:
 
 | Option | Location | Default | Description |
 |--------|----------|---------|-------------|
-| `max_tokens` | `crates/coppermind/src/embedding/mod.rs` | `512` | Max tokens per chunk (model limit: 8192) |
+| `MAX_CHUNK_TOKENS` | `crates/coppermind-core/src/config.rs` | `1024` | Max tokens per chunk (model supports 2048, we use 1024 for headroom) |
 
 ### GPU Scheduler (Desktop)
 
@@ -73,11 +73,11 @@ GPU access is serialized via `SerialScheduler` to work around Candle's Metal thr
 
 | Option | Location | Default | Description |
 |--------|----------|---------|-------------|
-| `hidden_size` | `crates/coppermind/src/embedding/config.rs` | `512` | JinaBERT hidden dimension |
-| `num_hidden_layers` | `crates/coppermind/src/embedding/config.rs` | `4` | Transformer layers |
-| `num_attention_heads` | `crates/coppermind/src/embedding/config.rs` | `8` | Attention heads |
-| `max_position_embeddings` | `crates/coppermind/src/embedding/config.rs` | `8192` | Max sequence length |
-| `intermediate_size` | `crates/coppermind/src/embedding/config.rs` | `2048` | FFN intermediate size |
+| `hidden_size` | `crates/coppermind-core/src/embedding/config.rs` | `512` | JinaBERT hidden dimension |
+| `num_hidden_layers` | `crates/coppermind-core/src/embedding/config.rs` | `4` | Transformer layers |
+| `num_attention_heads` | `crates/coppermind-core/src/embedding/config.rs` | `8` | Attention heads |
+| `max_position_embeddings` | `crates/coppermind-core/src/embedding/config.rs` | `2048` | Max sequence length (configured runtime) |
+| `intermediate_size` | `crates/coppermind-core/src/embedding/config.rs` | `2048` | FFN intermediate size |
 
 **Note**: Model config is fixed at compile time and tied to the model weights. These are not user-configurable.
 

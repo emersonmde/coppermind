@@ -22,8 +22,8 @@
 //! let result = compute_embedding("hello world").await?;
 //! println!("Embedding: {:?}", result.embedding);
 //!
-//! // Process long document in chunks
-//! let chunks = embed_text_chunks("long document...", 512).await?;
+//! // Process long document in chunks (using MAX_CHUNK_TOKENS from config)
+//! let chunks = embed_text_chunks("long document...", MAX_CHUNK_TOKENS).await?;
 //! for chunk in chunks {
 //!     println!("Chunk {}: {} tokens", chunk.chunk_index, chunk.token_count);
 //! }
@@ -445,7 +445,8 @@ async fn compute_embedding_wasm(text: &str) -> Result<EmbeddingComputation, Embe
 /// # Examples
 ///
 /// ```ignore
-/// let results = embed_text_chunks("Long document with many paragraphs...", 512).await?;
+/// use coppermind_core::config::MAX_CHUNK_TOKENS;
+/// let results = embed_text_chunks("Long document with many paragraphs...", MAX_CHUNK_TOKENS).await?;
 /// for chunk in &results {
 ///     println!("Chunk {}: {} tokens, text: {:.50}...",
 ///              chunk.chunk_index,
@@ -473,14 +474,15 @@ async fn compute_embedding_wasm(text: &str) -> Result<EmbeddingComputation, Embe
 /// # Examples
 ///
 /// ```ignore
+/// use coppermind_core::config::MAX_CHUNK_TOKENS;
 /// // Markdown file - will use MarkdownSplitter
-/// let chunks = embed_text_chunks_auto(markdown_content, 512, Some("README.md")).await?;
+/// let chunks = embed_text_chunks_auto(markdown_content, MAX_CHUNK_TOKENS, Some("README.md")).await?;
 ///
 /// // Plain text - will use TextSplitter
-/// let chunks = embed_text_chunks_auto(text_content, 512, Some("document.txt")).await?;
+/// let chunks = embed_text_chunks_auto(text_content, MAX_CHUNK_TOKENS, Some("document.txt")).await?;
 ///
 /// // No filename - defaults to TextSplitter
-/// let chunks = embed_text_chunks_auto(content, 512, None, |_, _| {}).await?;
+/// let chunks = embed_text_chunks_auto(content, MAX_CHUNK_TOKENS, None, |_, _| {}).await?;
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "profile", instrument(skip_all, fields(text_len = text.len(), chunk_tokens, filename)))]
@@ -723,7 +725,8 @@ where
 /// # Examples
 ///
 /// ```ignore
-/// let results = embed_text_chunks("Long document with many paragraphs...", 512).await?;
+/// use coppermind_core::config::MAX_CHUNK_TOKENS;
+/// let results = embed_text_chunks("Long document with many paragraphs...", MAX_CHUNK_TOKENS).await?;
 /// for chunk in results {
 ///     println!("Chunk {} has {} tokens: {}",
 ///              chunk.chunk_index, chunk.token_count, chunk.text);

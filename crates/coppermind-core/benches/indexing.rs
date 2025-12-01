@@ -126,7 +126,7 @@ fn create_chunk(id: u64) -> Chunk {
 /// Useful for detecting regressions in incremental indexing.
 fn bench_hnsw_single_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("hnsw/insert_single");
-    group.sample_size(100);
+    group.sample_size(20); // Reduced from 100 - larger base sizes take longer
 
     // Test with different pre-existing index sizes
     for base_size in [0, 100, 500, 1000] {
@@ -166,7 +166,8 @@ fn bench_hnsw_single_insert(c: &mut Criterion) {
 /// Measures total time to insert N vectors into an empty index.
 fn bench_hnsw_batch_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("hnsw/insert_batch");
-    group.sample_size(10); // Fewer samples for larger batches
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(15)); // 1000 docs takes ~1.3s per iteration
 
     // Test various corpus sizes - these match real-world usage patterns
     for size in [100, 300, 600, 1000] {
@@ -198,6 +199,7 @@ fn bench_hnsw_batch_insert(c: &mut Criterion) {
 fn bench_bm25_batch_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("bm25/insert_batch");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(10)); // 1000 docs takes ~65ms per iteration
 
     for size in [100, 300, 600, 1000] {
         group.throughput(Throughput::Elements(size as u64));
@@ -290,15 +292,19 @@ async fn populate_store(store: &InMemoryDocumentStore, size: usize) {
 /// Benchmark: Index rebuild from storage
 ///
 /// This is the most critical benchmark - simulates app startup with existing data.
-/// The 10-second issue manifests here for 600 chunks.
+/// Measures how long users wait when opening the app with an existing index.
+///
+/// Sizes tested:
+/// - 100-600: Quick startup scenarios
+/// - 1000-5000: Moderate usage (extended benchmark)
 fn bench_hybrid_rebuild(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("hybrid/rebuild_from_store");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30)); // Allow longer measurement
+    group.measurement_time(Duration::from_secs(45)); // 1000 docs takes ~1.3s per iteration
 
-    for size in [100, 300, 600] {
+    for size in [100, 300, 600, 1000] {
         // Pre-populate a store that can be cloned via Arc
         let store = Arc::new(InMemoryDocumentStore::new());
         rt.block_on(populate_store(&store, size));

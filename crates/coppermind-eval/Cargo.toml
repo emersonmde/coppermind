@@ -1,0 +1,39 @@
+[package]
+name = "coppermind-eval"
+version = "0.1.0"
+authors = ["Matthew Emerson <emersonmde@protonmail.com>"]
+edition = "2021"
+description = "Quality evaluation tool for Coppermind semantic search"
+
+[[bin]]
+name = "coppermind-eval"
+path = "src/main.rs"
+
+[features]
+default = ["candle-metal", "candle-accelerate"]
+
+# Platform-specific Candle acceleration
+candle-metal = ["coppermind-core/candle-metal"]
+candle-accelerate = ["coppermind-core/candle-accelerate"]
+candle-cuda = ["coppermind-core/candle-cuda"]
+candle-mkl = ["coppermind-core/candle-mkl"]
+
+[dependencies]
+# Core library
+coppermind-core = { path = "../coppermind-core" }
+
+# IR evaluation metrics and statistical tests
+elinor = "0.4"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Serialization for output
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+# Progress indication
+indicatif = "0.17"

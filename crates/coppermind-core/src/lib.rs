@@ -16,6 +16,7 @@
 //! - [`gpu`] - GPU scheduler for Metal thread-safe model inference
 //! - [`processing`] - Document processing and indexing pipeline
 //! - [`metrics`] - Performance metrics collection with rolling averages
+//! - [`evaluation`] - Retrieval quality metrics (NDCG, MAP, MRR, P@k, R@k)
 
 // Note: unsafe is used only in processing/pipeline.rs for lifetime transmute
 // of tokenizer reference to satisfy the text-splitter crate's 'static requirement.
@@ -26,8 +27,12 @@ pub mod chunking;
 pub mod config;
 pub mod embedding;
 pub mod error;
+pub mod evaluation;
 pub mod gpu;
 pub mod metrics;
 pub mod processing;
 pub mod search;
 pub mod storage;
+
+#[cfg(test)]
+pub mod test_utils;

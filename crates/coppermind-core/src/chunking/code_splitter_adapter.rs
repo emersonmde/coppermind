@@ -151,23 +151,7 @@ impl ChunkingStrategy for CodeSplitterAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Helper to load test tokenizer
-    fn load_test_tokenizer() -> &'static Tokenizer {
-        use once_cell::sync::OnceCell;
-        use std::fs;
-
-        static TOKENIZER: OnceCell<Tokenizer> = OnceCell::new();
-
-        TOKENIZER.get_or_init(|| {
-            let tokenizer_path = concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../coppermind/assets/models/jina-bert-tokenizer.json"
-            );
-            let tokenizer_bytes = fs::read(tokenizer_path).expect("Failed to read tokenizer file");
-            Tokenizer::from_bytes(tokenizer_bytes).expect("Failed to load tokenizer")
-        })
-    }
+    use crate::test_utils::load_test_tokenizer;
 
     #[test]
     fn test_language_detection() {

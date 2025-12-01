@@ -146,25 +146,11 @@ pub fn tokenize_text(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>, Embe
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    /// Load test tokenizer from assets
-    fn load_test_tokenizer(max_length: usize) -> TokenizerHandle {
-        // During tests, look for tokenizer in the coppermind crate's assets
-        let tokenizer_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../coppermind/assets/models/jina-bert-tokenizer.json"
-        );
-        let tokenizer_bytes =
-            std::fs::read(tokenizer_path).expect("Failed to read tokenizer file for tests");
-
-        TokenizerHandle::from_bytes(tokenizer_bytes, max_length)
-            .expect("Failed to create TokenizerHandle")
-    }
+    use crate::test_utils::create_test_tokenizer_handle;
 
     #[test]
     fn test_tokenize_basic() {
-        let handle = load_test_tokenizer(512);
+        let handle = create_test_tokenizer_handle(512);
         let result = handle.tokenize("hello world");
 
         assert!(result.is_ok());
@@ -190,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_empty_string() {
-        let handle = load_test_tokenizer(512);
+        let handle = create_test_tokenizer_handle(512);
         let result = handle.tokenize("");
 
         // Empty string should still return special tokens [CLS] [SEP]
@@ -204,7 +190,7 @@ mod tests {
     #[test]
     fn test_truncation() {
         let max_length = 10;
-        let handle = load_test_tokenizer(max_length);
+        let handle = create_test_tokenizer_handle(max_length);
 
         // Create a long text that will exceed max_length
         let long_text = "word ".repeat(100);
@@ -223,13 +209,13 @@ mod tests {
 
     #[test]
     fn test_max_length() {
-        let handle = load_test_tokenizer(256);
+        let handle = create_test_tokenizer_handle(256);
         assert_eq!(handle.max_length(), 256);
     }
 
     #[test]
     fn test_vocab_size() {
-        let handle = load_test_tokenizer(512);
+        let handle = create_test_tokenizer_handle(512);
         let vocab_size = handle.vocab_size();
         // JinaBERT tokenizer should have ~30k tokens
         assert!(
@@ -241,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_clone() {
-        let handle = load_test_tokenizer(512);
+        let handle = create_test_tokenizer_handle(512);
         let cloned = handle.clone();
 
         assert_eq!(handle.max_length(), cloned.max_length());

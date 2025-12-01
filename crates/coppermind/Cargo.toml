@@ -133,8 +133,10 @@ candle-transformers = { version = "0.9.1", features = ["mkl"] }
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-desktop = ["dioxus/desktop", "coppermind-core/redb-store", "rfd"]
-mobile = ["dioxus/mobile", "coppermind-core/redb-store"]
+# Desktop: Metal GPU + Accelerate CPU acceleration on macOS
+desktop = ["dioxus/desktop", "coppermind-core/redb-store", "coppermind-core/candle-metal", "rfd"]
+# Mobile: Accelerate CPU acceleration only (Metal has iOS simulator issues)
+mobile = ["dioxus/mobile", "coppermind-core/redb-store", "coppermind-core/candle-accelerate"]
 # Performance profiling - generates trace.json for chrome://tracing
 # Usage: dx serve --platform desktop --features profile
 profile = ["tracing", "tracing-subscriber", "tracing-chrome"]

@@ -112,18 +112,8 @@ impl ChunkingStrategy for TextSplitterAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embedding::tokenizer::ensure_tokenizer;
-
-    // Helper to load test tokenizer
-    fn load_test_tokenizer() -> &'static Tokenizer {
-        use std::fs;
-        let tokenizer_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/jina-bert-tokenizer.json"
-        );
-        let tokenizer_bytes = fs::read(tokenizer_path).expect("Failed to read tokenizer file");
-        ensure_tokenizer(tokenizer_bytes, 2048).expect("Failed to load test tokenizer")
-    }
+    use crate::test_utils::load_test_tokenizer;
+    use coppermind_core::config::MAX_CHUNK_TOKENS;
 
     #[test]
     fn test_text_splitter_basic() {
@@ -220,10 +210,10 @@ mod tests {
     #[test]
     fn test_chunking_strategy_trait() {
         let tokenizer = load_test_tokenizer();
-        let chunker = TextSplitterAdapter::new(512, tokenizer);
+        let chunker = TextSplitterAdapter::new(MAX_CHUNK_TOKENS, tokenizer);
 
         assert_eq!(chunker.name(), "text-splitter");
-        assert_eq!(chunker.max_tokens(), 512);
+        assert_eq!(chunker.max_tokens(), MAX_CHUNK_TOKENS);
     }
 
     #[test]

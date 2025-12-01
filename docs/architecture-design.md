@@ -37,7 +37,7 @@ Coppermind is structured around three core subsystems that work together to prov
 
 ### Module Structure
 
-Coppermind uses a Cargo workspace with two crates:
+Coppermind uses a Cargo workspace with three crates:
 
 #### `crates/coppermind-core/` - Platform-Independent Core Library
 - **src/lib.rs** - Public API exports
@@ -72,7 +72,17 @@ Coppermind uses a Cargo workspace with two crates:
   - `pipeline.rs` - `IndexingPipeline` for chunking → tokenization → embedding
   - `progress.rs` - `IndexingProgress`, `BatchProgress` for UI feedback
 - **src/error.rs** - Error types (`EmbeddingError`, `ChunkingError`, `GpuError`)
-- **src/config.rs** - Production configuration constants
+- **src/config.rs** - Production configuration constants (`MAX_CHUNK_TOKENS`, `EMBEDDING_DIM`, etc.)
+- **src/evaluation/** - IR evaluation framework
+  - `mod.rs` - Two-tier evaluation approach (synthetic + real datasets)
+  - `metrics.rs` - NDCG, MAP, MRR, Precision@k, Recall@k, F1@k
+  - `stats.rs` - Bootstrap CI, paired t-test, Cohen's d effect size
+  - `datasets/` - Dataset loaders (synthetic, Natural Questions)
+
+#### `crates/coppermind-eval/` - Standalone Evaluation Tool
+- **src/main.rs** - CLI for running evaluation benchmarks
+- **src/datasets/` - Custom dataset definitions
+- Uses `elinor` crate for additional IR metrics
 
 #### `crates/coppermind/` - Application Crate
 - **src/main.rs** - Entry point with platform-specific launch (desktop/mobile/web)

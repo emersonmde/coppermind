@@ -29,13 +29,13 @@ use std::time::{Duration, Instant};
 // =============================================================================
 
 /// Corpus size for throughput testing.
-const CORPUS_SIZE: usize = 10_000;
+const CORPUS_SIZE: usize = 2_000; // Reduced from 10k for CI speed
 
 /// Number of queries per batch for QPS measurement.
-const QUERIES_PER_BATCH: usize = 1_000;
+const QUERIES_PER_BATCH: usize = 200; // Reduced from 1000
 
 /// Concurrency levels to test.
-const CONCURRENCY_LEVELS: &[usize] = &[1, 2, 4, 8, 16];
+const CONCURRENCY_LEVELS: &[usize] = &[1, 2, 4]; // Reduced from [1, 2, 4, 8, 16]
 
 /// Query seed base.
 const QUERY_SEED_BASE: u64 = 1_000_000;
@@ -333,45 +333,6 @@ fn bench_hybrid_qps(c: &mut Criterion) {
     group.finish();
 }
 
-// =============================================================================
-// Sustained Load Benchmark
-// =============================================================================
-
-/// Benchmark: Sustained load over time.
-///
-/// Measures whether performance degrades under sustained query load
-/// (e.g., due to memory pressure, cache pollution).
-fn bench_sustained_load(c: &mut Criterion) {
-    let mut group = c.benchmark_group("throughput/sustained");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-
-    // Build index
-    let mut engine = VectorSearchEngine::new(EMBEDDING_DIM);
-    for i in 0..CORPUS_SIZE {
-        let _ = engine.add_chunk(ChunkId::from_u64(i as u64), seeded_embedding(i as u64));
-    }
-
-    // Generate many unique queries to avoid caching
-    let num_queries = 10_000;
-    let queries: Vec<_> = (0..num_queries)
-        .map(|i| seeded_embedding(QUERY_SEED_BASE + i as u64))
-        .collect();
-
-    let k = 10;
-
-    group.throughput(Throughput::Elements(num_queries as u64));
-    group.bench_function("10k_queries", |b| {
-        b.iter(|| {
-            for query in &queries {
-                let _ = engine.search(black_box(query), k);
-            }
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group!(
     name = throughput_benches;
     config = Criterion::default()
@@ -383,7 +344,6 @@ criterion_group!(
         bench_hnsw_qps_concurrent,
         bench_hnsw_latency_percentiles,
         bench_hybrid_qps,
-        bench_sustained_load,
 );
 
 criterion_main!(throughput_benches);
