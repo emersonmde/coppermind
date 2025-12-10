@@ -360,7 +360,10 @@ pub mod embedding_worker {
         let handler = Closure::wrap(Box::new(handle_worker_request) as Box<dyn FnMut(_)>);
 
         scope.set_onmessage(Some(handler.as_ref().unchecked_ref()));
-        handler.forget();
+        // Use into_js_value() instead of forget() to let JavaScript manage cleanup via WeakRef.
+        // This prevents "FnOnce called more than once" errors during page refresh by properly
+        // transferring ownership to JavaScript's garbage collector.
+        let _ = handler.into_js_value();
 
         // Pre-load the model in the worker context so first embed request is fast
         // This happens asynchronously - we send "ready" once model is loaded

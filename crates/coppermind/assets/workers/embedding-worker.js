@@ -1,5 +1,9 @@
 const workerContext = self;
 
+// Guard against double initialization (can happen on page refresh with cached modules)
+let bootStarted = false;
+let wasmInitialized = false;
+
 // Wait for init message from main thread with WASM JS path
 let wasmJsPath = null;
 let initResolve;
@@ -49,6 +53,13 @@ function shimDomForWorker() {
 }
 
 async function boot() {
+    // Prevent double initialization
+    if (bootStarted) {
+        console.warn("[EmbeddingWorker] boot() already started, skipping duplicate call");
+        return;
+    }
+    bootStarted = true;
+
     try {
         // Wait for init message from main thread
         console.log("[EmbeddingWorker] Waiting for init message...");
@@ -91,9 +102,14 @@ async function boot() {
             throw new Error("coppermind wasm init function missing");
         }
 
-        // Initialize WASM with explicit path
-        console.log("[EmbeddingWorker] Initializing WASM module...");
-        await module.default(absoluteWasmUrl);
+        // Initialize WASM with explicit path (guard against double init)
+        if (!wasmInitialized) {
+            console.log("[EmbeddingWorker] Initializing WASM module...");
+            await module.default(absoluteWasmUrl);
+            wasmInitialized = true;
+        } else {
+            console.warn("[EmbeddingWorker] WASM already initialized, skipping");
+        }
 
         if (typeof module.start_embedding_worker !== "function") {
             throw new Error("start_embedding_worker export not found");
