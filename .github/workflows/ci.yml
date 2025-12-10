@@ -180,6 +180,30 @@ jobs:
           path: target/dx/coppermind/bundle/macos/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  # Windows desktop build - optional, doesn't block CI
+  build-desktop-windows:
+    name: Build Desktop (Windows)
+    needs: [check, test-core, clippy-macos]
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Download model assets
+        shell: bash
+        run: ./download-models.sh
+
+      - name: Build desktop
+        run: cargo build -p coppermind --features desktop --release --target x86_64-pc-windows-msvc
+
   # iOS build - optional, doesn't block CI
   build-ios:
     name: Build iOS

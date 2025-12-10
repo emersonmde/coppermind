@@ -123,13 +123,6 @@ candle-core = { version = "0.9.1", features = ["accelerate"] }
 candle-nn = { version = "0.9.1", features = ["accelerate"] }
 candle-transformers = { version = "0.9.1", features = ["accelerate"] }
 
-[target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "macos", target_os = "ios")), any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
-# Intel MKL CPU optimization for x86/x86_64 platforms (Windows, Linux)
-# Excluded from Apple platforms which use Accelerate instead
-candle-core = { version = "0.9.1", features = ["mkl"] }
-candle-nn = { version = "0.9.1", features = ["mkl"] }
-candle-transformers = { version = "0.9.1", features = ["mkl"] }
-
 [features]
 default = ["web"]
 web = ["dioxus/web"]
