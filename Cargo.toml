@@ -16,5 +16,6 @@ inherits = "dev"
 # See `.cargo/config.toml` for WASM-specific rustflags and memory limits.
 
 [profile.release]
-# Strip debug info to avoid wasm-opt DWARF parsing issues
-strip = "debuginfo"
+# Disable debug info to avoid wasm-opt DWARF parsing issues
+# (strip = "debuginfo" fails on Linux CI without proper WASM strip tool)
+debug = false
