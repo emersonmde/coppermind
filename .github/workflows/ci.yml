@@ -197,12 +197,24 @@ jobs:
         with:
           key: windows
 
+      - name: Install dioxus-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7.1
+
       - name: Download model assets
         shell: bash
         run: ./download-models.sh
 
       - name: Build desktop
-        run: cargo build -p coppermind --features desktop --release --target x86_64-pc-windows-msvc
+        run: dx bundle -p coppermind --release --platform windows
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coppermind-windows
+          path: target/dx/coppermind/bundle/windows/
+          if-no-files-found: warn
 
   # iOS build - optional, doesn't block CI
   build-ios:
