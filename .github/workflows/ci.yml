@@ -133,7 +133,7 @@ jobs:
       - name: Install dioxus-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: dioxus-cli@0.7
+          tool: dioxus-cli@0.7.1
 
       - name: Download model assets
         run: ./download-models.sh
@@ -165,7 +165,7 @@ jobs:
       - name: Install dioxus-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: dioxus-cli@0.7
+          tool: dioxus-cli@0.7.1
 
       - name: Download model assets
         run: ./download-models.sh

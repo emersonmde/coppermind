@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 coppermind-core = { path = "../coppermind-core" }
 
 # Cross-platform dependencies
-dioxus = { version = "0.7.2", features = [] }
+dioxus = { version = "0.7.1", features = [] }
 sha2 = "0.10"  # SHA-256 hashing for content change detection
 futures = "0.3"
 futures-channel = "0.3"
